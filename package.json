@@ -1,0 +1,26 @@
+{
+  "name": "superhuman-cli",
+  "version": "0.1.0",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "superhuman": "src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "mcp": "bun run src/index.ts --mcp"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "chrome-remote-interface": "^0.33.3",
+    "zod": "^4.3.6"
+  }
+}
