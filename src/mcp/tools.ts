@@ -2,7 +2,6 @@
  * MCP Tools Definition
  *
  * Defines the MCP tools that wrap Superhuman automation functions.
- * Uses the internal API approach via superhuman-api.ts.
  */
 
 import { z } from "zod";
@@ -13,17 +12,19 @@ import {
   setSubject,
   setBody,
   saveDraft,
+  sendDraft,
   disconnect,
   getDraftState,
+  textToHtml,
   type SuperhumanConnection,
 } from "../superhuman-api";
 
 const CDP_PORT = 9333;
 
 /**
- * Zod schema for email draft parameters
+ * Shared schema for email composition (draft and send use the same fields)
  */
-export const DraftSchema = z.object({
+export const EmailSchema = z.object({
   to: z.string().describe("Recipient email address"),
   subject: z.string().describe("Email subject line"),
   body: z.string().describe("Email body content (plain text or HTML)"),
@@ -31,193 +32,104 @@ export const DraftSchema = z.object({
   bcc: z.string().optional().describe("BCC recipient email address (optional)"),
 });
 
-/**
- * Zod schema for email send parameters
- */
-export const SendSchema = z.object({
-  to: z.string().describe("Recipient email address"),
-  subject: z.string().describe("Email subject line"),
-  body: z.string().describe("Email body content (plain text or HTML)"),
-  cc: z.string().optional().describe("CC recipient email address (optional)"),
-  bcc: z.string().optional().describe("BCC recipient email address (optional)"),
-});
+export const DraftSchema = EmailSchema;
+export const SendSchema = EmailSchema;
 
 /**
  * Zod schema for inbox search parameters
  */
 export const SearchSchema = z.object({
   query: z.string().describe("Search query string"),
-  limit: z
-    .number()
-    .optional()
-    .describe("Maximum number of results to return (default: 10)"),
+  limit: z.number().optional().describe("Maximum number of results to return (default: 10)"),
 });
 
+type TextContent = { type: "text"; text: string };
+type ToolResult = { content: TextContent[]; isError?: boolean };
+
+function successResult(text: string): ToolResult {
+  return { content: [{ type: "text", text }] };
+}
+
+function errorResult(message: string): ToolResult {
+  return { content: [{ type: "text", text: message }], isError: true };
+}
+
 /**
- * Tool handler type for MCP tools
+ * Compose an email (shared logic for draft and send)
  */
-export type ToolHandler<T> = (args: T) => Promise<{
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-}>;
+async function composeEmail(
+  args: z.infer<typeof EmailSchema>
+): Promise<{ conn: SuperhumanConnection; draftKey: string }> {
+  const conn = await connectToSuperhuman(CDP_PORT);
+  if (!conn) {
+    throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+  }
+
+  const draftKey = await openCompose(conn);
+  if (!draftKey) {
+    await disconnect(conn);
+    throw new Error("Failed to open compose window");
+  }
+
+  await addRecipient(conn, args.to);
+  if (args.subject) await setSubject(conn, args.subject);
+  if (args.body) await setBody(conn, textToHtml(args.body));
+
+  return { conn, draftKey };
+}
 
 /**
  * Handler for superhuman_draft tool
- * Creates an email draft in Superhuman using internal API
  */
-export const draftHandler: ToolHandler<z.infer<typeof DraftSchema>> = async (
-  args
-) => {
+export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<ToolResult> {
   let conn: SuperhumanConnection | null = null;
 
   try {
-    conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
-    }
-
-    const draftKey = await openCompose(conn);
-    if (!draftKey) {
-      throw new Error("Failed to open compose window");
-    }
-
-    await addRecipient(conn, args.to);
-
-    if (args.subject) {
-      await setSubject(conn, args.subject);
-    }
-
-    if (args.body) {
-      const bodyHtml = args.body.includes("<")
-        ? args.body
-        : `<p>${args.body.replace(/\n/g, "</p><p>")}</p>`;
-      await setBody(conn, bodyHtml);
-    }
+    const composed = await composeEmail(args);
+    conn = composed.conn;
 
     await saveDraft(conn);
-
     const state = await getDraftState(conn);
 
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Draft created successfully.\nTo: ${args.to}\nSubject: ${args.subject}\nDraft ID: ${state?.id || draftKey}`,
-        },
-      ],
-    };
+    return successResult(
+      `Draft created successfully.\nTo: ${args.to}\nSubject: ${args.subject}\nDraft ID: ${state?.id || composed.draftKey}`
+    );
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Failed to create draft: ${errorMessage}`,
-        },
-      ],
-      isError: true,
-    };
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to create draft: ${message}`);
   } finally {
-    if (conn) {
-      await disconnect(conn);
-    }
+    if (conn) await disconnect(conn);
   }
-};
+}
 
 /**
  * Handler for superhuman_send tool
- * Sends an email via Superhuman using internal API
  */
-export const sendHandler: ToolHandler<z.infer<typeof SendSchema>> = async (
-  args
-) => {
+export async function sendHandler(args: z.infer<typeof SendSchema>): Promise<ToolResult> {
   let conn: SuperhumanConnection | null = null;
 
   try {
-    conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    const composed = await composeEmail(args);
+    conn = composed.conn;
+
+    const sent = await sendDraft(conn);
+    if (!sent) {
+      throw new Error("Failed to send email");
     }
 
-    const draftKey = await openCompose(conn);
-    if (!draftKey) {
-      throw new Error("Failed to open compose window");
-    }
-
-    await addRecipient(conn, args.to);
-
-    if (args.subject) {
-      await setSubject(conn, args.subject);
-    }
-
-    if (args.body) {
-      const bodyHtml = args.body.includes("<")
-        ? args.body
-        : `<p>${args.body.replace(/\n/g, "</p><p>")}</p>`;
-      await setBody(conn, bodyHtml);
-    }
-
-    // Send the email using internal API
-    const { Runtime } = conn;
-    const sendResult = await Runtime.evaluate({
-      expression: `
-        (() => {
-          try {
-            const cfc = window.ViewState?._composeFormController;
-            if (!cfc) return { error: 'No controller' };
-            const draftKey = Object.keys(cfc).find(k => k.startsWith('draft'));
-            if (!draftKey) return { error: 'No draft' };
-            const ctrl = cfc[draftKey];
-            if (!ctrl || typeof ctrl._sendDraft !== 'function') return { error: 'No send method' };
-            ctrl._sendDraft();
-            return { success: true };
-          } catch (e) {
-            return { error: e.message };
-          }
-        })()
-      `,
-      returnByValue: true,
-    });
-
-    const result = sendResult.result.value as { success?: boolean; error?: string };
-
-    if (result.success) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Email sent successfully.\nTo: ${args.to}\nSubject: ${args.subject}`,
-          },
-        ],
-      };
-    } else {
-      throw new Error(result.error || "Failed to send");
-    }
+    return successResult(`Email sent successfully.\nTo: ${args.to}\nSubject: ${args.subject}`);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Failed to send email: ${errorMessage}`,
-        },
-      ],
-      isError: true,
-    };
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to send email: ${message}`);
   } finally {
-    if (conn) {
-      await disconnect(conn);
-    }
+    if (conn) await disconnect(conn);
   }
-};
+}
 
 /**
  * Handler for superhuman_search tool
- * Searches the Superhuman inbox using internal API
  */
-export const searchHandler: ToolHandler<z.infer<typeof SearchSchema>> = async (
-  args
-) => {
+export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise<ToolResult> {
   let conn: SuperhumanConnection | null = null;
 
   try {
@@ -234,21 +146,16 @@ export const searchHandler: ToolHandler<z.infer<typeof SearchSchema>> = async (
         (async () => {
           try {
             const portal = window.GoogleAccount?.portal;
-            if (!portal) {
-              return { error: 'Superhuman portal not found' };
-            }
-
-            const query = ${JSON.stringify(args.query)};
-            const limit = ${limit};
+            if (!portal) return { error: 'Superhuman portal not found' };
 
             const listResult = await portal.invoke("threadInternal", "listAsync", [
               "INBOX",
-              { limit: limit, filters: [], query: query }
+              { limit: ${limit}, filters: [], query: ${JSON.stringify(args.query)} }
             ]);
 
             const threads = listResult?.threads || [];
             return {
-              results: threads.slice(0, limit).map(t => {
+              results: threads.slice(0, ${limit}).map(t => {
                 const json = t.json || {};
                 const shData = t.superhumanData || {};
 
@@ -293,69 +200,19 @@ export const searchHandler: ToolHandler<z.infer<typeof SearchSchema>> = async (
     const results = result.results || [];
 
     if (results.length === 0) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `No results found for query: "${args.query}"`,
-          },
-        ],
-      };
+      return successResult(`No results found for query: "${args.query}"`);
     }
 
     const resultsText = results
-      .map(
-        (r, i) =>
-          `${i + 1}. From: ${r.from}\n   Subject: ${r.subject}\n   Date: ${r.date}\n   Snippet: ${r.snippet}`
-      )
+      .map((r, i) => `${i + 1}. From: ${r.from}\n   Subject: ${r.subject}\n   Date: ${r.date}\n   Snippet: ${r.snippet}`)
       .join("\n\n");
 
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Found ${results.length} result(s) for query: "${args.query}"\n\n${resultsText}`,
-        },
-      ],
-    };
+    return successResult(`Found ${results.length} result(s) for query: "${args.query}"\n\n${resultsText}`);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Failed to search inbox: ${errorMessage}`,
-        },
-      ],
-      isError: true,
-    };
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to search inbox: ${message}`);
   } finally {
-    if (conn) {
-      await disconnect(conn);
-    }
+    if (conn) await disconnect(conn);
   }
-};
+}
 
-/**
- * All MCP tools for Superhuman automation
- */
-export const mcpTools = [
-  {
-    name: "superhuman_draft",
-    description: "Create an email draft in Superhuman",
-    inputSchema: DraftSchema,
-    handler: draftHandler,
-  },
-  {
-    name: "superhuman_send",
-    description: "Send an email via Superhuman",
-    inputSchema: SendSchema,
-    handler: sendHandler,
-  },
-  {
-    name: "superhuman_search",
-    description: "Search the Superhuman inbox",
-    inputSchema: SearchSchema,
-    handler: searchHandler,
-  },
-];

@@ -19,8 +19,10 @@ import {
   addRecipient,
   setBody,
   saveDraft,
+  sendDraft,
   closeCompose,
   disconnect,
+  textToHtml,
   type SuperhumanConnection,
 } from "./superhuman-api";
 
@@ -255,10 +257,10 @@ async function cmdCompose(options: CliOptions, keepOpen = true) {
   }
 
   // Set body
-  const bodyHtml = options.html || (options.body ? `<p>${options.body.replace(/\n/g, "</p><p>")}</p>` : "");
-  if (bodyHtml) {
+  const bodyContent = options.html || options.body;
+  if (bodyContent) {
     info("Setting body...");
-    await setBody(conn, bodyHtml);
+    await setBody(conn, textToHtml(bodyContent));
     success("Body set");
   }
 
@@ -329,41 +331,19 @@ async function cmdSend(options: CliOptions) {
   }
 
   // Set body
-  const bodyHtml = options.html || (options.body ? `<p>${options.body.replace(/\n/g, "</p><p>")}</p>` : "");
-  if (bodyHtml) {
-    await setBody(conn, bodyHtml);
+  const bodyContent = options.html || options.body;
+  if (bodyContent) {
+    await setBody(conn, textToHtml(bodyContent));
   }
 
   // Send the email
   info("Sending email...");
-  const { Runtime } = conn;
+  const sent = await sendDraft(conn);
 
-  const sendResult = await Runtime.evaluate({
-    expression: `
-      (() => {
-        try {
-          const cfc = window.ViewState?._composeFormController;
-          if (!cfc) return { error: 'No controller' };
-          const draftKey = Object.keys(cfc).find(k => k.startsWith('draft'));
-          if (!draftKey) return { error: 'No draft' };
-          const ctrl = cfc[draftKey];
-          if (!ctrl || typeof ctrl._sendDraft !== 'function') return { error: 'No send method' };
-          ctrl._sendDraft();
-          return { success: true };
-        } catch (e) {
-          return { error: e.message };
-        }
-      })()
-    `,
-    returnByValue: true,
-  });
-
-  const result = sendResult.result.value as { success?: boolean; error?: string };
-
-  if (result.success) {
+  if (sent) {
     success("Email sent!");
   } else {
-    error(`Failed to send: ${result.error}`);
+    error("Failed to send email");
   }
 
   await disconnect(conn);

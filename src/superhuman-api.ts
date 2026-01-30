@@ -1,17 +1,7 @@
 /**
  * Superhuman Internal API Wrapper
  *
- * This module provides programmatic access to Superhuman's internal APIs
- * via Chrome DevTools Protocol (CDP) for automating email composition,
- * draft management, and sending.
- *
- * Key findings from reverse engineering:
- *
- * 1. Compose form is accessed via ViewState._composeFormController
- * 2. Each compose has a draft key like "draft00c0820cca54b14a"
- * 3. The controller has methods: setSubject, getEditor, _updateDraft, _saveDraftAsync, _sendDraft
- * 4. Recipients are class instances that need proper constructor
- * 5. Full compose must be opened by clicking .ThreadListView-compose
+ * Provides programmatic access to Superhuman's internal APIs via Chrome DevTools Protocol (CDP).
  */
 
 import CDP from "chrome-remote-interface";
@@ -142,12 +132,12 @@ export async function getDraftState(
 }
 
 /**
- * Set the subject of the current draft using the controller method
+ * Helper to execute code on the draft controller
  */
-export async function setSubject(
+async function withDraftController<T>(
   conn: SuperhumanConnection,
-  subject: string
-): Promise<boolean> {
+  code: string
+): Promise<T | null> {
   const { Runtime } = conn;
 
   const result = await Runtime.evaluate({
@@ -155,135 +145,103 @@ export async function setSubject(
       (() => {
         try {
           const cfc = window.ViewState?._composeFormController;
-          if (!cfc) return false;
+          if (!cfc) return null;
           const draftKey = Object.keys(cfc).find(k => k.startsWith('draft'));
-          if (!draftKey) return false;
+          if (!draftKey) return null;
           const ctrl = cfc[draftKey];
-          if (!ctrl || typeof ctrl.setSubject !== 'function') return false;
-          ctrl.setSubject(${JSON.stringify(subject)});
-          return true;
+          if (!ctrl) return null;
+          ${code}
         } catch (e) {
-          return false;
+          return null;
         }
       })()
     `,
     returnByValue: true,
   });
 
-  return result.result.value === true;
+  return result.result.value as T | null;
 }
 
 /**
- * Add a recipient to the To field using the internal API
- * Creates a proper recipient object using the same constructor as from field
+ * Set the subject of the current draft
+ */
+export async function setSubject(
+  conn: SuperhumanConnection,
+  subject: string
+): Promise<boolean> {
+  const result = await withDraftController<boolean>(
+    conn,
+    `
+      if (typeof ctrl.setSubject !== 'function') return false;
+      ctrl.setSubject(${JSON.stringify(subject)});
+      return true;
+    `
+  );
+  return result === true;
+}
+
+/**
+ * Add a recipient to the To field
  */
 export async function addRecipient(
   conn: SuperhumanConnection,
   email: string,
   name?: string
 ): Promise<boolean> {
-  const { Runtime } = conn;
+  const result = await withDraftController<boolean>(
+    conn,
+    `
+      const draft = ctrl?.state?.draft;
+      if (!draft?.from?.constructor) return false;
 
-  const result = await Runtime.evaluate({
-    expression: `
-      (() => {
-        try {
-          const cfc = window.ViewState?._composeFormController;
-          if (!cfc) return false;
-          const draftKey = Object.keys(cfc).find(k => k.startsWith('draft'));
-          if (!draftKey) return false;
-          const ctrl = cfc[draftKey];
-          const draft = ctrl?.state?.draft;
-          if (!draft?.from?.constructor) return false;
+      const Recipient = draft.from.constructor;
+      const newRecipient = new Recipient({
+        email: ${JSON.stringify(email)},
+        name: ${JSON.stringify(name || "")},
+        raw: ${JSON.stringify(name ? `${name} <${email}>` : email)},
+      });
 
-          // Create recipient using the same constructor as the from field
-          const Recipient = draft.from.constructor;
-          const newRecipient = new Recipient({
-            email: ${JSON.stringify(email)},
-            name: ${JSON.stringify(name || "")},
-            raw: ${JSON.stringify(name ? `${name} <${email}>` : email)},
-          });
-
-          // Get existing recipients and add new one
-          const existingTo = draft.to || [];
-          ctrl._updateDraft({ to: [...existingTo, newRecipient] });
-          return true;
-        } catch (e) {
-          console.error('addRecipient error:', e);
-          return false;
-        }
-      })()
-    `,
-    returnByValue: true,
-  });
-
-  return result.result.value === true;
+      const existingTo = draft.to || [];
+      ctrl._updateDraft({ to: [...existingTo, newRecipient] });
+      return true;
+    `
+  );
+  return result === true;
 }
 
 /**
- * Set the body of the current draft using _updateDraft
- * Note: This sets the draft body but doesn't update the visual editor.
- * The body content is saved when _saveDraftAsync is called.
+ * Set the body of the current draft
  */
 export async function setBody(
   conn: SuperhumanConnection,
   html: string
 ): Promise<boolean> {
-  const { Runtime } = conn;
-
-  const result = await Runtime.evaluate({
-    expression: `
-      (() => {
-        try {
-          const cfc = window.ViewState?._composeFormController;
-          if (!cfc) return false;
-          const draftKey = Object.keys(cfc).find(k => k.startsWith('draft'));
-          if (!draftKey) return false;
-          const ctrl = cfc[draftKey];
-          if (!ctrl || typeof ctrl._updateDraft !== 'function') return false;
-          ctrl._updateDraft({ body: ${JSON.stringify(html)} });
-          return true;
-        } catch (e) {
-          return false;
-        }
-      })()
-    `,
-    returnByValue: true,
-  });
-
-  return result.result.value === true;
+  const result = await withDraftController<boolean>(
+    conn,
+    `
+      if (typeof ctrl._updateDraft !== 'function') return false;
+      ctrl._updateDraft({ body: ${JSON.stringify(html)} });
+      return true;
+    `
+  );
+  return result === true;
 }
 
 /**
- * Save the current draft using the internal _saveDraftAsync method
+ * Save the current draft
  */
 export async function saveDraft(conn: SuperhumanConnection): Promise<boolean> {
-  const { Runtime } = conn;
+  const result = await withDraftController<boolean>(
+    conn,
+    `
+      if (typeof ctrl._saveDraftAsync !== 'function') return false;
+      ctrl._saveDraftAsync();
+      return true;
+    `
+  );
 
-  const result = await Runtime.evaluate({
-    expression: `
-      (() => {
-        try {
-          const cfc = window.ViewState?._composeFormController;
-          if (!cfc) return false;
-          const draftKey = Object.keys(cfc).find(k => k.startsWith('draft'));
-          if (!draftKey) return false;
-          const ctrl = cfc[draftKey];
-          if (!ctrl || typeof ctrl._saveDraftAsync !== 'function') return false;
-          ctrl._saveDraftAsync();
-          return true;
-        } catch (e) {
-          return false;
-        }
-      })()
-    `,
-    returnByValue: true,
-  });
-
-  // Wait for save to complete
   await new Promise((r) => setTimeout(r, 2000));
-
-  return result.result.value === true;
+  return result === true;
 }
 
 /**
@@ -304,63 +262,25 @@ export async function disconnect(conn: SuperhumanConnection): Promise<void> {
   await conn.client.close();
 }
 
-// Main test function
-async function main() {
-  console.log("=== Superhuman API Test ===\n");
-
-  const conn = await connectToSuperhuman();
-  if (!conn) {
-    console.error("Failed to connect to Superhuman");
-    return;
-  }
-
-  console.log("Connected to Superhuman");
-
-  // Open compose
-  const draftKey = await openCompose(conn);
-  console.log("Opened compose:", draftKey);
-
-  if (!draftKey) {
-    console.error("Failed to open compose");
-    await disconnect(conn);
-    return;
-  }
-
-  // Get initial state
-  let state = await getDraftState(conn);
-  console.log("\nInitial draft state:", state);
-
-  // Add recipient
-  console.log("\nAdding recipient...");
-  await addRecipient(conn, "eddyhu@gmail.com");
-
-  // Set subject
-  console.log("Setting subject...");
-  await setSubject(conn, "CLI API Test: " + new Date().toISOString().slice(0, 19));
-
-  // Set body
-  console.log("Setting body...");
-  await setBody(conn, "<p>Hello from the Superhuman CLI API!</p><p>This email was composed programmatically.</p>");
-
-  // Get updated state
-  state = await getDraftState(conn);
-  console.log("\nUpdated draft state:", state);
-
-  // Save draft
-  console.log("\nSaving draft...");
-  await saveDraft(conn);
-
-  // Final state
-  state = await getDraftState(conn);
-  console.log("\nFinal draft state:", state);
-
-  console.log("\n=== Test complete ===");
-  console.log("(Compose left open for inspection)");
-
-  await disconnect(conn);
+/**
+ * Send the current draft
+ */
+export async function sendDraft(conn: SuperhumanConnection): Promise<boolean> {
+  const result = await withDraftController<boolean>(
+    conn,
+    `
+      if (typeof ctrl._sendDraft !== 'function') return false;
+      ctrl._sendDraft();
+      return true;
+    `
+  );
+  return result === true;
 }
 
-// Run if executed directly
-if (import.meta.main) {
-  main().catch(console.error);
+/**
+ * Convert plain text to HTML paragraphs (returns as-is if already HTML)
+ */
+export function textToHtml(text: string): string {
+  if (text.includes("<")) return text;
+  return `<p>${text.replace(/\n/g, "</p><p>")}</p>`;
 }
