@@ -12,11 +12,13 @@ import {
   ArchiveSchema, DeleteSchema,
   MarkReadSchema, MarkUnreadSchema, LabelsSchema, GetLabelsSchema, AddLabelSchema, RemoveLabelSchema,
   StarSchema, UnstarSchema, StarredSchema,
+  SnoozeSchema, UnsnoozeSchema, SnoozedSchema,
   draftHandler, sendHandler, searchHandler, inboxHandler, readHandler,
   accountsHandler, switchAccountHandler, replyHandler, replyAllHandler, forwardHandler,
   archiveHandler, deleteHandler,
   markReadHandler, markUnreadHandler, labelsHandler, getLabelsHandler, addLabelHandler, removeLabelHandler,
-  starHandler, unstarHandler, starredHandler
+  starHandler, unstarHandler, starredHandler,
+  snoozeHandler, unsnoozeHandler, snoozedHandler
 } from "./tools";
 
 function createMcpServer(): McpServer {
@@ -212,6 +214,33 @@ function createMcpServer(): McpServer {
       inputSchema: StarredSchema,
     },
     starredHandler
+  );
+
+  server.registerTool(
+    "superhuman_snooze",
+    {
+      description: "Snooze one or more email threads until a specific time. Use presets (tomorrow, next-week, weekend, evening) or ISO datetime.",
+      inputSchema: SnoozeSchema,
+    },
+    snoozeHandler
+  );
+
+  server.registerTool(
+    "superhuman_unsnooze",
+    {
+      description: "Unsnooze one or more email threads. Cancels the snooze and returns threads to inbox.",
+      inputSchema: UnsnoozeSchema,
+    },
+    unsnoozeHandler
+  );
+
+  server.registerTool(
+    "superhuman_snoozed",
+    {
+      description: "List all snoozed email threads. Returns thread IDs and snooze times.",
+      inputSchema: SnoozedSchema,
+    },
+    snoozedHandler
   );
 
   return server;

@@ -32,6 +32,7 @@ import { replyToThread, replyAllToThread, forwardThread } from "./reply";
 import { archiveThread, deleteThread } from "./archive";
 import { markAsRead, markAsUnread } from "./read-status";
 import { listLabels, getThreadLabels, addLabel, removeLabel, starThread, unstarThread, listStarred } from "./labels";
+import { snoozeThread, unsnoozeThread, listSnoozed, parseSnoozeTime } from "./snooze";
 
 const VERSION = "0.1.0";
 const CDP_PORT = 9333;
@@ -113,6 +114,9 @@ ${colors.bold}COMMANDS${colors.reset}
   ${colors.cyan}star${colors.reset}       Star thread(s)
   ${colors.cyan}unstar${colors.reset}     Unstar thread(s)
   ${colors.cyan}starred${colors.reset}    List all starred threads
+  ${colors.cyan}snooze${colors.reset}     Snooze thread(s) until a specific time
+  ${colors.cyan}unsnooze${colors.reset}   Unsnooze (cancel snooze) thread(s)
+  ${colors.cyan}snoozed${colors.reset}    List all snoozed threads
   ${colors.cyan}compose${colors.reset}    Open compose window and fill in email (keeps window open)
   ${colors.cyan}draft${colors.reset}      Create and save a draft
   ${colors.cyan}send${colors.reset}       Compose and send an email immediately
@@ -128,6 +132,7 @@ ${colors.bold}OPTIONS${colors.reset}
   --html <text>      Email body as HTML
   --send             Send immediately instead of saving as draft (for reply/reply-all/forward)
   --label <id>       Label ID to add or remove (for add-label/remove-label)
+  --until <time>     Snooze until time: preset (tomorrow, next-week, weekend, evening) or ISO datetime
   --limit <number>   Number of results (default: 10, for inbox/search)
   --json             Output as JSON (for inbox/search/read)
   --port <number>    CDP port (default: ${CDP_PORT})
@@ -195,6 +200,14 @@ ${colors.bold}EXAMPLES${colors.reset}
   superhuman starred
   superhuman starred --json
 
+  ${colors.dim}# Snooze/unsnooze threads${colors.reset}
+  superhuman snooze <thread-id> --until tomorrow
+  superhuman snooze <thread-id> --until next-week
+  superhuman snooze <thread-id> --until "2024-02-15T14:00:00Z"
+  superhuman unsnooze <thread-id>
+  superhuman snoozed
+  superhuman snoozed --json
+
   ${colors.dim}# Create a draft${colors.reset}
   superhuman draft --to user@example.com --subject "Hello" --body "Hi there!"
 
@@ -231,6 +244,8 @@ interface CliOptions {
   send: boolean; // send immediately instead of saving as draft
   // label options
   labelId: string; // label ID for add-label/remove-label
+  // snooze options
+  snoozeUntil: string; // time to snooze until (preset or ISO datetime)
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -251,6 +266,7 @@ function parseArgs(args: string[]): CliOptions {
     accountArg: "",
     send: false,
     labelId: "",
+    snoozeUntil: "",
   };
 
   let i = 0;
@@ -318,6 +334,10 @@ function parseArgs(args: string[]): CliOptions {
           options.labelId = value;
           i += 2;
           break;
+        case "until":
+          options.snoozeUntil = value;
+          i += 2;
+          break;
         default:
           error(`Unknown option: ${arg}`);
           process.exit(1);
@@ -357,7 +377,9 @@ function parseArgs(args: string[]): CliOptions {
       options.command === "add-label" ||
       options.command === "remove-label" ||
       options.command === "star" ||
-      options.command === "unstar"
+      options.command === "unstar" ||
+      options.command === "snooze" ||
+      options.command === "unsnooze"
     ) {
       // Collect multiple thread IDs for bulk operations
       options.threadIds.push(arg);
@@ -1141,6 +1163,115 @@ async function cmdStarred(options: CliOptions) {
   await disconnect(conn);
 }
 
+async function cmdSnooze(options: CliOptions) {
+  if (options.threadIds.length === 0) {
+    error("At least one thread ID is required");
+    console.log(`Usage: superhuman snooze <thread-id> [thread-id...] --until <time>`);
+    process.exit(1);
+  }
+
+  if (!options.snoozeUntil) {
+    error("Snooze time is required (--until)");
+    console.log(`Usage: superhuman snooze <thread-id> --until <time>`);
+    console.log(`  Presets: tomorrow, next-week, weekend, evening`);
+    console.log(`  Or use ISO datetime: 2024-02-15T14:00:00Z`);
+    process.exit(1);
+  }
+
+  let snoozeTime: Date;
+  try {
+    snoozeTime = parseSnoozeTime(options.snoozeUntil);
+  } catch (e) {
+    error(`Invalid snooze time: ${options.snoozeUntil}`);
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const threadId of options.threadIds) {
+    const result = await snoozeThread(conn, threadId, snoozeTime);
+    if (result.success) {
+      success(`Snoozed thread: ${threadId} until ${snoozeTime.toLocaleString()}`);
+      successCount++;
+    } else {
+      error(`Failed to snooze thread: ${threadId}${result.error ? ` (${result.error})` : ""}`);
+      failCount++;
+    }
+  }
+
+  if (options.threadIds.length > 1) {
+    log(`\n${successCount} snoozed, ${failCount} failed`);
+  }
+
+  await disconnect(conn);
+}
+
+async function cmdUnsnooze(options: CliOptions) {
+  if (options.threadIds.length === 0) {
+    error("At least one thread ID is required");
+    console.log(`Usage: superhuman unsnooze <thread-id> [thread-id...]`);
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const threadId of options.threadIds) {
+    const result = await unsnoozeThread(conn, threadId);
+    if (result.success) {
+      success(`Unsnoozed thread: ${threadId}`);
+      successCount++;
+    } else {
+      error(`Failed to unsnooze thread: ${threadId}${result.error ? ` (${result.error})` : ""}`);
+      failCount++;
+    }
+  }
+
+  if (options.threadIds.length > 1) {
+    log(`\n${successCount} unsnoozed, ${failCount} failed`);
+  }
+
+  await disconnect(conn);
+}
+
+async function cmdSnoozed(options: CliOptions) {
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  const threads = await listSnoozed(conn, options.limit);
+
+  if (options.json) {
+    console.log(JSON.stringify(threads, null, 2));
+  } else {
+    if (threads.length === 0) {
+      info("No snoozed threads");
+    } else {
+      console.log(`${colors.bold}Snoozed threads:${colors.reset}\n`);
+      for (const thread of threads) {
+        const untilStr = thread.snoozeUntil
+          ? ` (until ${new Date(thread.snoozeUntil).toLocaleString()})`
+          : "";
+        console.log(`  ${thread.id}${untilStr}`);
+      }
+    }
+  }
+
+  await disconnect(conn);
+}
+
 async function cmdAccounts(options: CliOptions) {
   const conn = await checkConnection(options.port);
   if (!conn) {
@@ -1320,6 +1451,18 @@ async function main() {
 
     case "starred":
       await cmdStarred(options);
+      break;
+
+    case "snooze":
+      await cmdSnooze(options);
+      break;
+
+    case "unsnooze":
+      await cmdUnsnooze(options);
+      break;
+
+    case "snoozed":
+      await cmdSnoozed(options);
       break;
 
     case "compose":

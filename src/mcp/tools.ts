@@ -25,6 +25,7 @@ import { replyToThread, replyAllToThread, forwardThread } from "../reply";
 import { archiveThread, deleteThread } from "../archive";
 import { markAsRead, markAsUnread } from "../read-status";
 import { listLabels, getThreadLabels, addLabel, removeLabel, starThread, unstarThread, listStarred } from "../labels";
+import { snoozeThread, unsnoozeThread, listSnoozed, parseSnoozeTime } from "../snooze";
 
 const CDP_PORT = 9333;
 
@@ -179,6 +180,28 @@ export const UnstarSchema = z.object({
  */
 export const StarredSchema = z.object({
   limit: z.number().optional().describe("Maximum number of starred threads to return (default: 50)"),
+});
+
+/**
+ * Zod schema for snoozing threads
+ */
+export const SnoozeSchema = z.object({
+  threadIds: z.array(z.string()).describe("Thread ID(s) to snooze"),
+  until: z.string().describe("When to unsnooze: preset (tomorrow, next-week, weekend, evening) or ISO datetime (e.g., 2024-02-15T14:00:00Z)"),
+});
+
+/**
+ * Zod schema for unsnoozing threads
+ */
+export const UnsnoozeSchema = z.object({
+  threadIds: z.array(z.string()).describe("Thread ID(s) to unsnooze"),
+});
+
+/**
+ * Zod schema for listing snoozed threads
+ */
+export const SnoozedSchema = z.object({
+  limit: z.number().optional().describe("Maximum number of snoozed threads to return (default: 50)"),
 });
 
 type TextContent = { type: "text"; text: string };
@@ -1041,6 +1064,132 @@ export async function starredHandler(args: z.infer<typeof StarredSchema>): Promi
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to list starred threads: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_snooze tool
+ */
+export async function snoozeHandler(args: z.infer<typeof SnoozeSchema>): Promise<ToolResult> {
+  if (args.threadIds.length === 0) {
+    return errorResult("At least one thread ID is required");
+  }
+
+  let snoozeTime: Date;
+  try {
+    snoozeTime = parseSnoozeTime(args.until);
+  } catch (e) {
+    return errorResult(`Invalid snooze time: ${args.until}`);
+  }
+
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const results: { threadId: string; success: boolean; error?: string }[] = [];
+
+    for (const threadId of args.threadIds) {
+      const result = await snoozeThread(conn, threadId, snoozeTime);
+      results.push({ threadId, success: result.success, error: result.error });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    if (failed === 0) {
+      return successResult(`Snoozed ${succeeded} thread(s) until ${snoozeTime.toISOString()}`);
+    } else if (succeeded === 0) {
+      return errorResult(`Failed to snooze all ${failed} thread(s)`);
+    } else {
+      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
+      return successResult(`Snoozed ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to snooze: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_unsnooze tool
+ */
+export async function unsnoozeHandler(args: z.infer<typeof UnsnoozeSchema>): Promise<ToolResult> {
+  if (args.threadIds.length === 0) {
+    return errorResult("At least one thread ID is required");
+  }
+
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const results: { threadId: string; success: boolean; error?: string }[] = [];
+
+    for (const threadId of args.threadIds) {
+      const result = await unsnoozeThread(conn, threadId);
+      results.push({ threadId, success: result.success, error: result.error });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    if (failed === 0) {
+      return successResult(`Unsnoozed ${succeeded} thread(s)`);
+    } else if (succeeded === 0) {
+      return errorResult(`Failed to unsnooze all ${failed} thread(s)`);
+    } else {
+      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
+      return successResult(`Unsnoozed ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to unsnooze: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_snoozed tool
+ */
+export async function snoozedHandler(args: z.infer<typeof SnoozedSchema>): Promise<ToolResult> {
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const limit = args.limit ?? 50;
+    const threads = await listSnoozed(conn, limit);
+
+    if (threads.length === 0) {
+      return successResult("No snoozed threads found");
+    }
+
+    const threadsText = threads
+      .map((t, i) => {
+        const untilStr = t.snoozeUntil ? ` (until ${t.snoozeUntil})` : "";
+        return `${i + 1}. Thread ID: ${t.id}${untilStr}`;
+      })
+      .join("\n");
+
+    return successResult(`Snoozed threads (${threads.length}):\n\n${threadsText}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to list snoozed threads: ${message}`);
   } finally {
     if (conn) await disconnect(conn);
   }
