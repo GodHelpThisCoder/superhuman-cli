@@ -33,6 +33,7 @@ import { archiveThread, deleteThread } from "./archive";
 import { markAsRead, markAsUnread } from "./read-status";
 import { listLabels, getThreadLabels, addLabel, removeLabel, starThread, unstarThread, listStarred } from "./labels";
 import { snoozeThread, unsnoozeThread, listSnoozed, parseSnoozeTime } from "./snooze";
+import { listAttachments, downloadAttachment, type Attachment } from "./attachments";
 
 const VERSION = "0.1.0";
 const CDP_PORT = 9333;
@@ -117,6 +118,8 @@ ${colors.bold}COMMANDS${colors.reset}
   ${colors.cyan}snooze${colors.reset}     Snooze thread(s) until a specific time
   ${colors.cyan}unsnooze${colors.reset}   Unsnooze (cancel snooze) thread(s)
   ${colors.cyan}snoozed${colors.reset}    List all snoozed threads
+  ${colors.cyan}attachments${colors.reset} List attachments for a thread
+  ${colors.cyan}download${colors.reset}   Download attachments from a thread
   ${colors.cyan}compose${colors.reset}    Open compose window and fill in email (keeps window open)
   ${colors.cyan}draft${colors.reset}      Create and save a draft
   ${colors.cyan}send${colors.reset}       Compose and send an email immediately
@@ -133,6 +136,9 @@ ${colors.bold}OPTIONS${colors.reset}
   --send             Send immediately instead of saving as draft (for reply/reply-all/forward)
   --label <id>       Label ID to add or remove (for add-label/remove-label)
   --until <time>     Snooze until time: preset (tomorrow, next-week, weekend, evening) or ISO datetime
+  --output <path>    Output directory or file path (for download)
+  --attachment <id>  Specific attachment ID (for download)
+  --message <id>     Message ID (required with --attachment)
   --limit <number>   Number of results (default: 10, for inbox/search)
   --json             Output as JSON (for inbox/search/read)
   --port <number>    CDP port (default: ${CDP_PORT})
@@ -208,6 +214,13 @@ ${colors.bold}EXAMPLES${colors.reset}
   superhuman snoozed
   superhuman snoozed --json
 
+  ${colors.dim}# List and download attachments${colors.reset}
+  superhuman attachments <thread-id>
+  superhuman attachments <thread-id> --json
+  superhuman download <thread-id>
+  superhuman download <thread-id> --output ./downloads
+  superhuman download --attachment <attachment-id> --message <message-id> --output ./file.pdf
+
   ${colors.dim}# Create a draft${colors.reset}
   superhuman draft --to user@example.com --subject "Hello" --body "Hi there!"
 
@@ -246,6 +259,10 @@ interface CliOptions {
   labelId: string; // label ID for add-label/remove-label
   // snooze options
   snoozeUntil: string; // time to snooze until (preset or ISO datetime)
+  // attachment options
+  outputPath: string; // output directory or file path for downloads
+  attachmentId: string; // specific attachment ID for single download
+  messageId: string; // message ID for single attachment download
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -267,6 +284,9 @@ function parseArgs(args: string[]): CliOptions {
     send: false,
     labelId: "",
     snoozeUntil: "",
+    outputPath: "",
+    attachmentId: "",
+    messageId: "",
   };
 
   let i = 0;
@@ -338,6 +358,18 @@ function parseArgs(args: string[]): CliOptions {
           options.snoozeUntil = value;
           i += 2;
           break;
+        case "output":
+          options.outputPath = value;
+          i += 2;
+          break;
+        case "attachment":
+          options.attachmentId = value;
+          i += 2;
+          break;
+        case "message":
+          options.messageId = value;
+          i += 2;
+          break;
         default:
           error(`Unknown option: ${arg}`);
           process.exit(1);
@@ -386,6 +418,14 @@ function parseArgs(args: string[]): CliOptions {
       i += 1;
     } else if (options.command === "get-labels" && !options.threadId) {
       // Allow thread ID as positional argument for get-labels
+      options.threadId = arg;
+      i += 1;
+    } else if (options.command === "attachments" && !options.threadId) {
+      // Allow thread ID as positional argument for attachments
+      options.threadId = arg;
+      i += 1;
+    } else if (options.command === "download" && !options.threadId && !options.attachmentId) {
+      // Allow thread ID as positional argument for download (when not using --attachment)
       options.threadId = arg;
       i += 1;
     } else {
@@ -1272,6 +1312,125 @@ async function cmdSnoozed(options: CliOptions) {
   await disconnect(conn);
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function cmdAttachments(options: CliOptions) {
+  if (!options.threadId) {
+    error("Thread ID is required");
+    console.log(`Usage: superhuman attachments <thread-id>`);
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  const attachments = await listAttachments(conn, options.threadId);
+
+  if (options.json) {
+    console.log(JSON.stringify(attachments, null, 2));
+  } else {
+    if (attachments.length === 0) {
+      info("No attachments in this thread");
+    } else {
+      console.log(`${colors.bold}Attachments:${colors.reset}\n`);
+      for (const att of attachments) {
+        console.log(`  ${colors.cyan}${att.name}${colors.reset}`);
+        console.log(`    ${colors.dim}Type: ${att.mimeType}${colors.reset}`);
+        console.log(`    ${colors.dim}Attachment ID: ${att.attachmentId}${colors.reset}`);
+        console.log(`    ${colors.dim}Message ID: ${att.messageId}${colors.reset}`);
+      }
+    }
+  }
+
+  await disconnect(conn);
+}
+
+async function cmdDownload(options: CliOptions) {
+  // Mode 1: Download specific attachment with --attachment and --message
+  if (options.attachmentId) {
+    if (!options.messageId) {
+      error("Message ID is required when using --attachment");
+      console.log(`Usage: superhuman download --attachment <attachment-id> --message <message-id> --output <path>`);
+      process.exit(1);
+    }
+
+    const conn = await checkConnection(options.port);
+    if (!conn) {
+      process.exit(1);
+    }
+
+    try {
+      info(`Downloading attachment ${options.attachmentId}...`);
+      const content = await downloadAttachment(conn, options.messageId, options.attachmentId);
+      const outputPath = options.outputPath || `attachment-${options.attachmentId}`;
+      await Bun.write(outputPath, Buffer.from(content.data, "base64"));
+      success(`Downloaded: ${outputPath} (${formatFileSize(content.size)})`);
+    } catch (e) {
+      error(`Failed to download: ${(e as Error).message}`);
+    }
+
+    await disconnect(conn);
+    return;
+  }
+
+  // Mode 2: Download all attachments from a thread
+  if (!options.threadId) {
+    error("Thread ID is required, or use --attachment with --message");
+    console.log(`Usage: superhuman download <thread-id> [--output <dir>]`);
+    console.log(`       superhuman download --attachment <id> --message <id> --output <path>`);
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  const attachments = await listAttachments(conn, options.threadId);
+
+  if (attachments.length === 0) {
+    info("No attachments in this thread");
+    await disconnect(conn);
+    return;
+  }
+
+  const outputDir = options.outputPath || ".";
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const att of attachments) {
+    try {
+      info(`Downloading ${att.name}...`);
+      const content = await downloadAttachment(
+        conn,
+        att.messageId,
+        att.attachmentId,
+        att.threadId,
+        att.mimeType
+      );
+      const outputPath = `${outputDir}/${att.name}`;
+      await Bun.write(outputPath, Buffer.from(content.data, "base64"));
+      success(`Downloaded: ${outputPath} (${formatFileSize(content.size)})`);
+      successCount++;
+    } catch (e) {
+      error(`Failed to download ${att.name}: ${(e as Error).message}`);
+      failCount++;
+    }
+  }
+
+  if (attachments.length > 1) {
+    log(`\n${successCount} downloaded, ${failCount} failed`);
+  }
+
+  await disconnect(conn);
+}
+
 async function cmdAccounts(options: CliOptions) {
   const conn = await checkConnection(options.port);
   if (!conn) {
@@ -1463,6 +1622,14 @@ async function main() {
 
     case "snoozed":
       await cmdSnoozed(options);
+      break;
+
+    case "attachments":
+      await cmdAttachments(options);
+      break;
+
+    case "download":
+      await cmdDownload(options);
       break;
 
     case "compose":

@@ -26,6 +26,7 @@ import { archiveThread, deleteThread } from "../archive";
 import { markAsRead, markAsUnread } from "../read-status";
 import { listLabels, getThreadLabels, addLabel, removeLabel, starThread, unstarThread, listStarred } from "../labels";
 import { snoozeThread, unsnoozeThread, listSnoozed, parseSnoozeTime } from "../snooze";
+import { listAttachments, downloadAttachment, addAttachment } from "../attachments";
 
 const CDP_PORT = 9333;
 
@@ -202,6 +203,32 @@ export const UnsnoozeSchema = z.object({
  */
 export const SnoozedSchema = z.object({
   limit: z.number().optional().describe("Maximum number of snoozed threads to return (default: 50)"),
+});
+
+/**
+ * Zod schema for listing attachments in a thread
+ */
+export const AttachmentsSchema = z.object({
+  threadId: z.string().describe("The thread ID to list attachments for"),
+});
+
+/**
+ * Zod schema for downloading an attachment
+ */
+export const DownloadAttachmentSchema = z.object({
+  messageId: z.string().describe("The message ID containing the attachment"),
+  attachmentId: z.string().describe("The attachment ID to download"),
+  threadId: z.string().optional().describe("The thread ID (optional, helps with some providers)"),
+  mimeType: z.string().optional().describe("The MIME type of the attachment (optional)"),
+});
+
+/**
+ * Zod schema for adding an attachment to current draft
+ */
+export const AddAttachmentSchema = z.object({
+  filename: z.string().describe("The filename for the attachment"),
+  data: z.string().describe("The file content as a base64-encoded string"),
+  mimeType: z.string().describe("The MIME type of the file (e.g., 'application/pdf', 'image/png')"),
 });
 
 type TextContent = { type: "text"; text: string };
@@ -1190,6 +1217,93 @@ export async function snoozedHandler(args: z.infer<typeof SnoozedSchema>): Promi
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to list snoozed threads: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_attachments tool
+ */
+export async function attachmentsHandler(args: z.infer<typeof AttachmentsSchema>): Promise<ToolResult> {
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const attachments = await listAttachments(conn, args.threadId);
+
+    if (attachments.length === 0) {
+      return successResult(`No attachments found in thread ${args.threadId}`);
+    }
+
+    const attachmentsText = attachments
+      .map((att, i) => {
+        return `${i + 1}. ${att.name}\n   MIME Type: ${att.mimeType}\n   Attachment ID: ${att.attachmentId}\n   Message ID: ${att.messageId}`;
+      })
+      .join("\n\n");
+
+    return successResult(`Attachments in thread ${args.threadId} (${attachments.length}):\n\n${attachmentsText}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to list attachments: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_download_attachment tool
+ */
+export async function downloadAttachmentHandler(args: z.infer<typeof DownloadAttachmentSchema>): Promise<ToolResult> {
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const content = await downloadAttachment(conn, args.messageId, args.attachmentId, args.threadId, args.mimeType);
+
+    return successResult(JSON.stringify({
+      data: content.data,
+      size: content.size,
+      mimeType: args.mimeType || "application/octet-stream",
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to download attachment: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_add_attachment tool
+ */
+export async function addAttachmentHandler(args: z.infer<typeof AddAttachmentSchema>): Promise<ToolResult> {
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const result = await addAttachment(conn, args.filename, args.data, args.mimeType);
+
+    if (result.success) {
+      return successResult(`Attachment "${args.filename}" added to draft successfully`);
+    } else {
+      return errorResult(`Failed to add attachment: ${result.error || "Unknown error"}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to add attachment: ${message}`);
   } finally {
     if (conn) await disconnect(conn);
   }

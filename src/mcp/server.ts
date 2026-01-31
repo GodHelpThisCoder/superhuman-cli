@@ -13,12 +13,14 @@ import {
   MarkReadSchema, MarkUnreadSchema, LabelsSchema, GetLabelsSchema, AddLabelSchema, RemoveLabelSchema,
   StarSchema, UnstarSchema, StarredSchema,
   SnoozeSchema, UnsnoozeSchema, SnoozedSchema,
+  AttachmentsSchema, DownloadAttachmentSchema, AddAttachmentSchema,
   draftHandler, sendHandler, searchHandler, inboxHandler, readHandler,
   accountsHandler, switchAccountHandler, replyHandler, replyAllHandler, forwardHandler,
   archiveHandler, deleteHandler,
   markReadHandler, markUnreadHandler, labelsHandler, getLabelsHandler, addLabelHandler, removeLabelHandler,
   starHandler, unstarHandler, starredHandler,
-  snoozeHandler, unsnoozeHandler, snoozedHandler
+  snoozeHandler, unsnoozeHandler, snoozedHandler,
+  attachmentsHandler, downloadAttachmentHandler, addAttachmentHandler
 } from "./tools";
 
 function createMcpServer(): McpServer {
@@ -241,6 +243,33 @@ function createMcpServer(): McpServer {
       inputSchema: SnoozedSchema,
     },
     snoozedHandler
+  );
+
+  server.registerTool(
+    "superhuman_attachments",
+    {
+      description: "List all attachments in an email thread. Returns attachment names, MIME types, and IDs needed for downloading.",
+      inputSchema: AttachmentsSchema,
+    },
+    attachmentsHandler
+  );
+
+  server.registerTool(
+    "superhuman_download_attachment",
+    {
+      description: "Download an attachment from an email. Returns the file content as base64-encoded data along with size and MIME type. Use superhuman_attachments first to get the messageId and attachmentId.",
+      inputSchema: DownloadAttachmentSchema,
+    },
+    downloadAttachmentHandler
+  );
+
+  server.registerTool(
+    "superhuman_add_attachment",
+    {
+      description: "Add an attachment to the current draft. A compose window must be open first (use superhuman_draft or superhuman_reply). Accepts base64-encoded file data.",
+      inputSchema: AddAttachmentSchema,
+    },
+    addAttachmentHandler
   );
 
   return server;
