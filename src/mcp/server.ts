@@ -10,9 +10,11 @@ import {
   DraftSchema, SendSchema, SearchSchema, InboxSchema, ReadSchema,
   AccountsSchema, SwitchAccountSchema, ReplySchema, ReplyAllSchema, ForwardSchema,
   ArchiveSchema, DeleteSchema,
+  MarkReadSchema, MarkUnreadSchema, LabelsSchema, GetLabelsSchema, AddLabelSchema, RemoveLabelSchema,
   draftHandler, sendHandler, searchHandler, inboxHandler, readHandler,
   accountsHandler, switchAccountHandler, replyHandler, replyAllHandler, forwardHandler,
-  archiveHandler, deleteHandler
+  archiveHandler, deleteHandler,
+  markReadHandler, markUnreadHandler, labelsHandler, getLabelsHandler, addLabelHandler, removeLabelHandler
 } from "./tools";
 
 function createMcpServer(): McpServer {
@@ -127,6 +129,60 @@ function createMcpServer(): McpServer {
       inputSchema: DeleteSchema,
     },
     deleteHandler
+  );
+
+  server.registerTool(
+    "superhuman_mark_read",
+    {
+      description: "Mark one or more email threads as read. Removes the unread indicator from threads.",
+      inputSchema: MarkReadSchema,
+    },
+    markReadHandler
+  );
+
+  server.registerTool(
+    "superhuman_mark_unread",
+    {
+      description: "Mark one or more email threads as unread. Adds the unread indicator to threads.",
+      inputSchema: MarkUnreadSchema,
+    },
+    markUnreadHandler
+  );
+
+  server.registerTool(
+    "superhuman_labels",
+    {
+      description: "List all available labels/folders in the Superhuman account. Returns label IDs and names.",
+      inputSchema: LabelsSchema,
+    },
+    labelsHandler
+  );
+
+  server.registerTool(
+    "superhuman_get_labels",
+    {
+      description: "Get all labels on a specific email thread. Returns label IDs and names for the thread.",
+      inputSchema: GetLabelsSchema,
+    },
+    getLabelsHandler
+  );
+
+  server.registerTool(
+    "superhuman_add_label",
+    {
+      description: "Add a label to one or more email threads. Use superhuman_labels first to get available label IDs.",
+      inputSchema: AddLabelSchema,
+    },
+    addLabelHandler
+  );
+
+  server.registerTool(
+    "superhuman_remove_label",
+    {
+      description: "Remove a label from one or more email threads. Use superhuman_get_labels to see current labels on a thread.",
+      inputSchema: RemoveLabelSchema,
+    },
+    removeLabelHandler
   );
 
   return server;

@@ -30,6 +30,8 @@ import { readThread } from "./read";
 import { listAccounts, switchAccount, type Account } from "./accounts";
 import { replyToThread, replyAllToThread, forwardThread } from "./reply";
 import { archiveThread, deleteThread } from "./archive";
+import { markAsRead, markAsUnread } from "./read-status";
+import { listLabels, getThreadLabels, addLabel, removeLabel } from "./labels";
 
 const VERSION = "0.1.0";
 const CDP_PORT = 9333;
@@ -102,6 +104,12 @@ ${colors.bold}COMMANDS${colors.reset}
   ${colors.cyan}forward${colors.reset}    Forward an email thread
   ${colors.cyan}archive${colors.reset}    Archive email thread(s)
   ${colors.cyan}delete${colors.reset}     Delete (trash) email thread(s)
+  ${colors.cyan}mark-read${colors.reset}  Mark thread(s) as read
+  ${colors.cyan}mark-unread${colors.reset} Mark thread(s) as unread
+  ${colors.cyan}labels${colors.reset}     List all available labels
+  ${colors.cyan}get-labels${colors.reset} Get labels on a specific thread
+  ${colors.cyan}add-label${colors.reset}  Add a label to thread(s)
+  ${colors.cyan}remove-label${colors.reset} Remove a label from thread(s)
   ${colors.cyan}compose${colors.reset}    Open compose window and fill in email (keeps window open)
   ${colors.cyan}draft${colors.reset}      Create and save a draft
   ${colors.cyan}send${colors.reset}       Compose and send an email immediately
@@ -116,6 +124,7 @@ ${colors.bold}OPTIONS${colors.reset}
   --body <text>      Email body (plain text, converted to HTML)
   --html <text>      Email body as HTML
   --send             Send immediately instead of saving as draft (for reply/reply-all/forward)
+  --label <id>       Label ID to add or remove (for add-label/remove-label)
   --limit <number>   Number of results (default: 10, for inbox/search)
   --json             Output as JSON (for inbox/search/read)
   --port <number>    CDP port (default: ${CDP_PORT})
@@ -160,6 +169,22 @@ ${colors.bold}EXAMPLES${colors.reset}
   superhuman delete <thread-id>
   superhuman delete <thread-id1> <thread-id2> <thread-id3>
 
+  ${colors.dim}# Mark as read/unread${colors.reset}
+  superhuman mark-read <thread-id>
+  superhuman mark-unread <thread-id1> <thread-id2>
+
+  ${colors.dim}# List all labels${colors.reset}
+  superhuman labels
+  superhuman labels --json
+
+  ${colors.dim}# Get labels on a thread${colors.reset}
+  superhuman get-labels <thread-id>
+  superhuman get-labels <thread-id> --json
+
+  ${colors.dim}# Add/remove labels${colors.reset}
+  superhuman add-label <thread-id> --label Label_123
+  superhuman remove-label <thread-id> --label Label_123
+
   ${colors.dim}# Create a draft${colors.reset}
   superhuman draft --to user@example.com --subject "Hello" --body "Hi there!"
 
@@ -194,6 +219,8 @@ interface CliOptions {
   accountArg: string; // index or email for account command
   // reply/forward options
   send: boolean; // send immediately instead of saving as draft
+  // label options
+  labelId: string; // label ID for add-label/remove-label
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -213,6 +240,7 @@ function parseArgs(args: string[]): CliOptions {
     json: false,
     accountArg: "",
     send: false,
+    labelId: "",
   };
 
   let i = 0;
@@ -276,6 +304,10 @@ function parseArgs(args: string[]): CliOptions {
           options.send = true;
           i += 1;
           break;
+        case "label":
+          options.labelId = value;
+          i += 2;
+          break;
         default:
           error(`Unknown option: ${arg}`);
           process.exit(1);
@@ -307,9 +339,20 @@ function parseArgs(args: string[]): CliOptions {
       // Allow account index or email as positional argument
       options.accountArg = arg;
       i += 1;
-    } else if (options.command === "archive" || options.command === "delete") {
-      // Collect multiple thread IDs for archive/delete
+    } else if (
+      options.command === "archive" ||
+      options.command === "delete" ||
+      options.command === "mark-read" ||
+      options.command === "mark-unread" ||
+      options.command === "add-label" ||
+      options.command === "remove-label"
+    ) {
+      // Collect multiple thread IDs for bulk operations
       options.threadIds.push(arg);
+      i += 1;
+    } else if (options.command === "get-labels" && !options.threadId) {
+      // Allow thread ID as positional argument for get-labels
+      options.threadId = arg;
       i += 1;
     } else {
       error(`Unexpected argument: ${arg}`);
@@ -794,6 +837,208 @@ async function cmdDelete(options: CliOptions) {
   await disconnect(conn);
 }
 
+async function cmdMarkRead(options: CliOptions) {
+  if (options.threadIds.length === 0) {
+    error("At least one thread ID is required");
+    console.log(`Usage: superhuman mark-read <thread-id> [thread-id...]`);
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const threadId of options.threadIds) {
+    const result = await markAsRead(conn, threadId);
+    if (result.success) {
+      success(`Marked as read: ${threadId}`);
+      successCount++;
+    } else {
+      error(`Failed to mark as read: ${threadId}${result.error ? ` (${result.error})` : ""}`);
+      failCount++;
+    }
+  }
+
+  if (options.threadIds.length > 1) {
+    log(`\n${successCount} marked as read, ${failCount} failed`);
+  }
+
+  await disconnect(conn);
+}
+
+async function cmdMarkUnread(options: CliOptions) {
+  if (options.threadIds.length === 0) {
+    error("At least one thread ID is required");
+    console.log(`Usage: superhuman mark-unread <thread-id> [thread-id...]`);
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const threadId of options.threadIds) {
+    const result = await markAsUnread(conn, threadId);
+    if (result.success) {
+      success(`Marked as unread: ${threadId}`);
+      successCount++;
+    } else {
+      error(`Failed to mark as unread: ${threadId}${result.error ? ` (${result.error})` : ""}`);
+      failCount++;
+    }
+  }
+
+  if (options.threadIds.length > 1) {
+    log(`\n${successCount} marked as unread, ${failCount} failed`);
+  }
+
+  await disconnect(conn);
+}
+
+async function cmdLabels(options: CliOptions) {
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  const labels = await listLabels(conn);
+
+  if (options.json) {
+    console.log(JSON.stringify(labels, null, 2));
+  } else {
+    if (labels.length === 0) {
+      info("No labels found");
+    } else {
+      console.log(`${colors.bold}Labels:${colors.reset}\n`);
+      for (const label of labels) {
+        const typeInfo = label.type ? ` ${colors.dim}(${label.type})${colors.reset}` : "";
+        console.log(`  ${label.name}${typeInfo}`);
+        console.log(`    ${colors.dim}ID: ${label.id}${colors.reset}`);
+      }
+    }
+  }
+
+  await disconnect(conn);
+}
+
+async function cmdGetLabels(options: CliOptions) {
+  if (!options.threadId) {
+    error("Thread ID is required");
+    console.log(`Usage: superhuman get-labels <thread-id>`);
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  const labels = await getThreadLabels(conn, options.threadId);
+
+  if (options.json) {
+    console.log(JSON.stringify(labels, null, 2));
+  } else {
+    if (labels.length === 0) {
+      info("No labels on this thread");
+    } else {
+      console.log(`${colors.bold}Labels on thread:${colors.reset}\n`);
+      for (const label of labels) {
+        const typeInfo = label.type ? ` ${colors.dim}(${label.type})${colors.reset}` : "";
+        console.log(`  ${label.name}${typeInfo}`);
+        console.log(`    ${colors.dim}ID: ${label.id}${colors.reset}`);
+      }
+    }
+  }
+
+  await disconnect(conn);
+}
+
+async function cmdAddLabel(options: CliOptions) {
+  if (options.threadIds.length === 0) {
+    error("At least one thread ID is required");
+    console.log(`Usage: superhuman add-label <thread-id> [thread-id...] --label <label-id>`);
+    process.exit(1);
+  }
+
+  if (!options.labelId) {
+    error("Label ID is required (--label)");
+    console.log(`Usage: superhuman add-label <thread-id> [thread-id...] --label <label-id>`);
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const threadId of options.threadIds) {
+    const result = await addLabel(conn, threadId, options.labelId);
+    if (result.success) {
+      success(`Added label to: ${threadId}`);
+      successCount++;
+    } else {
+      error(`Failed to add label to: ${threadId}${result.error ? ` (${result.error})` : ""}`);
+      failCount++;
+    }
+  }
+
+  if (options.threadIds.length > 1) {
+    log(`\n${successCount} labeled, ${failCount} failed`);
+  }
+
+  await disconnect(conn);
+}
+
+async function cmdRemoveLabel(options: CliOptions) {
+  if (options.threadIds.length === 0) {
+    error("At least one thread ID is required");
+    console.log(`Usage: superhuman remove-label <thread-id> [thread-id...] --label <label-id>`);
+    process.exit(1);
+  }
+
+  if (!options.labelId) {
+    error("Label ID is required (--label)");
+    console.log(`Usage: superhuman remove-label <thread-id> [thread-id...] --label <label-id>`);
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const threadId of options.threadIds) {
+    const result = await removeLabel(conn, threadId, options.labelId);
+    if (result.success) {
+      success(`Removed label from: ${threadId}`);
+      successCount++;
+    } else {
+      error(`Failed to remove label from: ${threadId}${result.error ? ` (${result.error})` : ""}`);
+      failCount++;
+    }
+  }
+
+  if (options.threadIds.length > 1) {
+    log(`\n${successCount} updated, ${failCount} failed`);
+  }
+
+  await disconnect(conn);
+}
+
 async function cmdAccounts(options: CliOptions) {
   const conn = await checkConnection(options.port);
   if (!conn) {
@@ -937,6 +1182,30 @@ async function main() {
 
     case "delete":
       await cmdDelete(options);
+      break;
+
+    case "mark-read":
+      await cmdMarkRead(options);
+      break;
+
+    case "mark-unread":
+      await cmdMarkUnread(options);
+      break;
+
+    case "labels":
+      await cmdLabels(options);
+      break;
+
+    case "get-labels":
+      await cmdGetLabels(options);
+      break;
+
+    case "add-label":
+      await cmdAddLabel(options);
+      break;
+
+    case "remove-label":
+      await cmdRemoveLabel(options);
       break;
 
     case "compose":

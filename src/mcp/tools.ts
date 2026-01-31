@@ -23,6 +23,8 @@ import { readThread } from "../read";
 import { listAccounts, switchAccount } from "../accounts";
 import { replyToThread, replyAllToThread, forwardThread } from "../reply";
 import { archiveThread, deleteThread } from "../archive";
+import { markAsRead, markAsUnread } from "../read-status";
+import { listLabels, getThreadLabels, addLabel, removeLabel } from "../labels";
 
 const CDP_PORT = 9333;
 
@@ -114,6 +116,48 @@ export const ArchiveSchema = z.object({
  */
 export const DeleteSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to delete (move to trash)"),
+});
+
+/**
+ * Zod schema for marking threads as read
+ */
+export const MarkReadSchema = z.object({
+  threadIds: z.array(z.string()).describe("Thread ID(s) to mark as read"),
+});
+
+/**
+ * Zod schema for marking threads as unread
+ */
+export const MarkUnreadSchema = z.object({
+  threadIds: z.array(z.string()).describe("Thread ID(s) to mark as unread"),
+});
+
+/**
+ * Zod schema for listing labels (no parameters)
+ */
+export const LabelsSchema = z.object({});
+
+/**
+ * Zod schema for getting labels on a thread
+ */
+export const GetLabelsSchema = z.object({
+  threadId: z.string().describe("The thread ID to get labels for"),
+});
+
+/**
+ * Zod schema for adding a label to threads
+ */
+export const AddLabelSchema = z.object({
+  threadIds: z.array(z.string()).describe("Thread ID(s) to add the label to"),
+  labelId: z.string().describe("The label ID to add"),
+});
+
+/**
+ * Zod schema for removing a label from threads
+ */
+export const RemoveLabelSchema = z.object({
+  threadIds: z.array(z.string()).describe("Thread ID(s) to remove the label from"),
+  labelId: z.string().describe("The label ID to remove"),
 });
 
 type TextContent = { type: "text"; text: string };
@@ -624,6 +668,242 @@ export async function deleteHandler(args: z.infer<typeof DeleteSchema>): Promise
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to delete: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_mark_read tool
+ */
+export async function markReadHandler(args: z.infer<typeof MarkReadSchema>): Promise<ToolResult> {
+  if (args.threadIds.length === 0) {
+    return errorResult("At least one thread ID is required");
+  }
+
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const results: { threadId: string; success: boolean }[] = [];
+
+    for (const threadId of args.threadIds) {
+      const result = await markAsRead(conn, threadId);
+      results.push({ threadId, success: result.success });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    if (failed === 0) {
+      return successResult(`Marked ${succeeded} thread(s) as read`);
+    } else if (succeeded === 0) {
+      return errorResult(`Failed to mark all ${failed} thread(s) as read`);
+    } else {
+      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
+      return successResult(`Marked ${succeeded} thread(s) as read, failed on ${failed}: ${failedIds}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to mark as read: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_mark_unread tool
+ */
+export async function markUnreadHandler(args: z.infer<typeof MarkUnreadSchema>): Promise<ToolResult> {
+  if (args.threadIds.length === 0) {
+    return errorResult("At least one thread ID is required");
+  }
+
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const results: { threadId: string; success: boolean }[] = [];
+
+    for (const threadId of args.threadIds) {
+      const result = await markAsUnread(conn, threadId);
+      results.push({ threadId, success: result.success });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    if (failed === 0) {
+      return successResult(`Marked ${succeeded} thread(s) as unread`);
+    } else if (succeeded === 0) {
+      return errorResult(`Failed to mark all ${failed} thread(s) as unread`);
+    } else {
+      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
+      return successResult(`Marked ${succeeded} thread(s) as unread, failed on ${failed}: ${failedIds}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to mark as unread: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_labels tool
+ */
+export async function labelsHandler(_args: z.infer<typeof LabelsSchema>): Promise<ToolResult> {
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const labels = await listLabels(conn);
+
+    if (labels.length === 0) {
+      return successResult("No labels found");
+    }
+
+    const labelsText = labels
+      .map((l) => {
+        const typeInfo = l.type ? ` (${l.type})` : "";
+        return `- ${l.name}${typeInfo}\n  ID: ${l.id}`;
+      })
+      .join("\n");
+
+    return successResult(`Available labels:\n\n${labelsText}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to list labels: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_get_labels tool
+ */
+export async function getLabelsHandler(args: z.infer<typeof GetLabelsSchema>): Promise<ToolResult> {
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const labels = await getThreadLabels(conn, args.threadId);
+
+    if (labels.length === 0) {
+      return successResult(`No labels on thread ${args.threadId}`);
+    }
+
+    const labelsText = labels
+      .map((l) => {
+        const typeInfo = l.type ? ` (${l.type})` : "";
+        return `- ${l.name}${typeInfo}\n  ID: ${l.id}`;
+      })
+      .join("\n");
+
+    return successResult(`Labels on thread ${args.threadId}:\n\n${labelsText}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to get thread labels: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_add_label tool
+ */
+export async function addLabelHandler(args: z.infer<typeof AddLabelSchema>): Promise<ToolResult> {
+  if (args.threadIds.length === 0) {
+    return errorResult("At least one thread ID is required");
+  }
+
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const results: { threadId: string; success: boolean }[] = [];
+
+    for (const threadId of args.threadIds) {
+      const result = await addLabel(conn, threadId, args.labelId);
+      results.push({ threadId, success: result.success });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    if (failed === 0) {
+      return successResult(`Added label to ${succeeded} thread(s)`);
+    } else if (succeeded === 0) {
+      return errorResult(`Failed to add label to all ${failed} thread(s)`);
+    } else {
+      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
+      return successResult(`Added label to ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to add label: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_remove_label tool
+ */
+export async function removeLabelHandler(args: z.infer<typeof RemoveLabelSchema>): Promise<ToolResult> {
+  if (args.threadIds.length === 0) {
+    return errorResult("At least one thread ID is required");
+  }
+
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const results: { threadId: string; success: boolean }[] = [];
+
+    for (const threadId of args.threadIds) {
+      const result = await removeLabel(conn, threadId, args.labelId);
+      results.push({ threadId, success: result.success });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    if (failed === 0) {
+      return successResult(`Removed label from ${succeeded} thread(s)`);
+    } else if (succeeded === 0) {
+      return errorResult(`Failed to remove label from all ${failed} thread(s)`);
+    } else {
+      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
+      return successResult(`Removed label from ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to remove label: ${message}`);
   } finally {
     if (conn) await disconnect(conn);
   }
