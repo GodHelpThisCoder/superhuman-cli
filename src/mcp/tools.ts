@@ -24,7 +24,7 @@ import { listAccounts, switchAccount } from "../accounts";
 import { replyToThread, replyAllToThread, forwardThread } from "../reply";
 import { archiveThread, deleteThread } from "../archive";
 import { markAsRead, markAsUnread } from "../read-status";
-import { listLabels, getThreadLabels, addLabel, removeLabel } from "../labels";
+import { listLabels, getThreadLabels, addLabel, removeLabel, starThread, unstarThread, listStarred } from "../labels";
 
 const CDP_PORT = 9333;
 
@@ -158,6 +158,27 @@ export const AddLabelSchema = z.object({
 export const RemoveLabelSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to remove the label from"),
   labelId: z.string().describe("The label ID to remove"),
+});
+
+/**
+ * Zod schema for starring threads
+ */
+export const StarSchema = z.object({
+  threadIds: z.array(z.string()).describe("Thread ID(s) to star"),
+});
+
+/**
+ * Zod schema for unstarring threads
+ */
+export const UnstarSchema = z.object({
+  threadIds: z.array(z.string()).describe("Thread ID(s) to unstar"),
+});
+
+/**
+ * Zod schema for listing starred threads
+ */
+export const StarredSchema = z.object({
+  limit: z.number().optional().describe("Maximum number of starred threads to return (default: 50)"),
 });
 
 type TextContent = { type: "text"; text: string };
@@ -904,6 +925,122 @@ export async function removeLabelHandler(args: z.infer<typeof RemoveLabelSchema>
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to remove label: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_star tool
+ */
+export async function starHandler(args: z.infer<typeof StarSchema>): Promise<ToolResult> {
+  if (args.threadIds.length === 0) {
+    return errorResult("At least one thread ID is required");
+  }
+
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const results: { threadId: string; success: boolean; error?: string }[] = [];
+
+    for (const threadId of args.threadIds) {
+      const result = await starThread(conn, threadId);
+      results.push({ threadId, success: result.success, error: result.error });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    if (failed === 0) {
+      return successResult(`Starred ${succeeded} thread(s)`);
+    } else if (succeeded === 0) {
+      return errorResult(`Failed to star all ${failed} thread(s)`);
+    } else {
+      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
+      return successResult(`Starred ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to star: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_unstar tool
+ */
+export async function unstarHandler(args: z.infer<typeof UnstarSchema>): Promise<ToolResult> {
+  if (args.threadIds.length === 0) {
+    return errorResult("At least one thread ID is required");
+  }
+
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const results: { threadId: string; success: boolean; error?: string }[] = [];
+
+    for (const threadId of args.threadIds) {
+      const result = await unstarThread(conn, threadId);
+      results.push({ threadId, success: result.success, error: result.error });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    if (failed === 0) {
+      return successResult(`Unstarred ${succeeded} thread(s)`);
+    } else if (succeeded === 0) {
+      return errorResult(`Failed to unstar all ${failed} thread(s)`);
+    } else {
+      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
+      return successResult(`Unstarred ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to unstar: ${message}`);
+  } finally {
+    if (conn) await disconnect(conn);
+  }
+}
+
+/**
+ * Handler for superhuman_starred tool
+ */
+export async function starredHandler(args: z.infer<typeof StarredSchema>): Promise<ToolResult> {
+  let conn: SuperhumanConnection | null = null;
+
+  try {
+    conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    }
+
+    const limit = args.limit ?? 50;
+    const threads = await listStarred(conn, limit);
+
+    if (threads.length === 0) {
+      return successResult("No starred threads found");
+    }
+
+    const threadsText = threads
+      .map((t, i) => `${i + 1}. Thread ID: ${t.id}`)
+      .join("\n");
+
+    return successResult(`Starred threads (${threads.length}):\n\n${threadsText}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to list starred threads: ${message}`);
   } finally {
     if (conn) await disconnect(conn);
   }

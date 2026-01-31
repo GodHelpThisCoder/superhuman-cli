@@ -31,7 +31,7 @@ import { listAccounts, switchAccount, type Account } from "./accounts";
 import { replyToThread, replyAllToThread, forwardThread } from "./reply";
 import { archiveThread, deleteThread } from "./archive";
 import { markAsRead, markAsUnread } from "./read-status";
-import { listLabels, getThreadLabels, addLabel, removeLabel } from "./labels";
+import { listLabels, getThreadLabels, addLabel, removeLabel, starThread, unstarThread, listStarred } from "./labels";
 
 const VERSION = "0.1.0";
 const CDP_PORT = 9333;
@@ -110,6 +110,9 @@ ${colors.bold}COMMANDS${colors.reset}
   ${colors.cyan}get-labels${colors.reset} Get labels on a specific thread
   ${colors.cyan}add-label${colors.reset}  Add a label to thread(s)
   ${colors.cyan}remove-label${colors.reset} Remove a label from thread(s)
+  ${colors.cyan}star${colors.reset}       Star thread(s)
+  ${colors.cyan}unstar${colors.reset}     Unstar thread(s)
+  ${colors.cyan}starred${colors.reset}    List all starred threads
   ${colors.cyan}compose${colors.reset}    Open compose window and fill in email (keeps window open)
   ${colors.cyan}draft${colors.reset}      Create and save a draft
   ${colors.cyan}send${colors.reset}       Compose and send an email immediately
@@ -184,6 +187,13 @@ ${colors.bold}EXAMPLES${colors.reset}
   ${colors.dim}# Add/remove labels${colors.reset}
   superhuman add-label <thread-id> --label Label_123
   superhuman remove-label <thread-id> --label Label_123
+
+  ${colors.dim}# Star/unstar threads${colors.reset}
+  superhuman star <thread-id>
+  superhuman star <thread-id1> <thread-id2>
+  superhuman unstar <thread-id>
+  superhuman starred
+  superhuman starred --json
 
   ${colors.dim}# Create a draft${colors.reset}
   superhuman draft --to user@example.com --subject "Hello" --body "Hi there!"
@@ -345,7 +355,9 @@ function parseArgs(args: string[]): CliOptions {
       options.command === "mark-read" ||
       options.command === "mark-unread" ||
       options.command === "add-label" ||
-      options.command === "remove-label"
+      options.command === "remove-label" ||
+      options.command === "star" ||
+      options.command === "unstar"
     ) {
       // Collect multiple thread IDs for bulk operations
       options.threadIds.push(arg);
@@ -1039,6 +1051,96 @@ async function cmdRemoveLabel(options: CliOptions) {
   await disconnect(conn);
 }
 
+async function cmdStar(options: CliOptions) {
+  if (options.threadIds.length === 0) {
+    error("At least one thread ID is required");
+    console.log(`Usage: superhuman star <thread-id> [thread-id...]`);
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const threadId of options.threadIds) {
+    const result = await starThread(conn, threadId);
+    if (result.success) {
+      success(`Starred thread: ${threadId}`);
+      successCount++;
+    } else {
+      error(`Failed to star thread: ${threadId}${result.error ? ` (${result.error})` : ""}`);
+      failCount++;
+    }
+  }
+
+  if (options.threadIds.length > 1) {
+    log(`\n${successCount} starred, ${failCount} failed`);
+  }
+
+  await disconnect(conn);
+}
+
+async function cmdUnstar(options: CliOptions) {
+  if (options.threadIds.length === 0) {
+    error("At least one thread ID is required");
+    console.log(`Usage: superhuman unstar <thread-id> [thread-id...]`);
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const threadId of options.threadIds) {
+    const result = await unstarThread(conn, threadId);
+    if (result.success) {
+      success(`Unstarred thread: ${threadId}`);
+      successCount++;
+    } else {
+      error(`Failed to unstar thread: ${threadId}${result.error ? ` (${result.error})` : ""}`);
+      failCount++;
+    }
+  }
+
+  if (options.threadIds.length > 1) {
+    log(`\n${successCount} unstarred, ${failCount} failed`);
+  }
+
+  await disconnect(conn);
+}
+
+async function cmdStarred(options: CliOptions) {
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  const threads = await listStarred(conn, options.limit);
+
+  if (options.json) {
+    console.log(JSON.stringify(threads, null, 2));
+  } else {
+    if (threads.length === 0) {
+      info("No starred threads");
+    } else {
+      console.log(`${colors.bold}Starred threads:${colors.reset}\n`);
+      for (const thread of threads) {
+        console.log(`  ${thread.id}`);
+      }
+    }
+  }
+
+  await disconnect(conn);
+}
+
 async function cmdAccounts(options: CliOptions) {
   const conn = await checkConnection(options.port);
   if (!conn) {
@@ -1206,6 +1308,18 @@ async function main() {
 
     case "remove-label":
       await cmdRemoveLabel(options);
+      break;
+
+    case "star":
+      await cmdStar(options);
+      break;
+
+    case "unstar":
+      await cmdUnstar(options);
+      break;
+
+    case "starred":
+      await cmdStarred(options);
       break;
 
     case "compose":

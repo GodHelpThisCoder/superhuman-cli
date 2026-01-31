@@ -11,10 +11,12 @@ import {
   AccountsSchema, SwitchAccountSchema, ReplySchema, ReplyAllSchema, ForwardSchema,
   ArchiveSchema, DeleteSchema,
   MarkReadSchema, MarkUnreadSchema, LabelsSchema, GetLabelsSchema, AddLabelSchema, RemoveLabelSchema,
+  StarSchema, UnstarSchema, StarredSchema,
   draftHandler, sendHandler, searchHandler, inboxHandler, readHandler,
   accountsHandler, switchAccountHandler, replyHandler, replyAllHandler, forwardHandler,
   archiveHandler, deleteHandler,
-  markReadHandler, markUnreadHandler, labelsHandler, getLabelsHandler, addLabelHandler, removeLabelHandler
+  markReadHandler, markUnreadHandler, labelsHandler, getLabelsHandler, addLabelHandler, removeLabelHandler,
+  starHandler, unstarHandler, starredHandler
 } from "./tools";
 
 function createMcpServer(): McpServer {
@@ -183,6 +185,33 @@ function createMcpServer(): McpServer {
       inputSchema: RemoveLabelSchema,
     },
     removeLabelHandler
+  );
+
+  server.registerTool(
+    "superhuman_star",
+    {
+      description: "Star one or more email threads. Adds the STARRED label to mark threads as important.",
+      inputSchema: StarSchema,
+    },
+    starHandler
+  );
+
+  server.registerTool(
+    "superhuman_unstar",
+    {
+      description: "Unstar one or more email threads. Removes the STARRED label from threads.",
+      inputSchema: UnstarSchema,
+    },
+    unstarHandler
+  );
+
+  server.registerTool(
+    "superhuman_starred",
+    {
+      description: "List all starred email threads. Returns thread IDs of emails marked with the STARRED label.",
+      inputSchema: StarredSchema,
+    },
+    starredHandler
   );
 
   return server;
