@@ -14,4 +14,4 @@
 - [x] Attachments support - List, download, upload attachments
 
 ### Next Up
-- [ ] Search improvements (filters, pagination)
+- [ ] (awaiting user input)
