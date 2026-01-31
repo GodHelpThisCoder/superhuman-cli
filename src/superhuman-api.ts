@@ -5,6 +5,7 @@
  */
 
 import CDP from "chrome-remote-interface";
+import { $ } from "bun";
 
 export interface SuperhumanConnection {
   client: CDP.Client;
@@ -26,11 +27,80 @@ export interface DraftState {
 }
 
 /**
+ * Check if Superhuman is running with CDP enabled
+ */
+export async function isSuperhmanRunning(port = 9333): Promise<boolean> {
+  try {
+    const targets = await CDP.List({ port });
+    return targets.some(t => t.url.includes("mail.superhuman.com"));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Launch Superhuman with remote debugging enabled
+ */
+export async function launchSuperhuman(port = 9333): Promise<boolean> {
+  const appPath = "/Applications/Superhuman.app/Contents/MacOS/Superhuman";
+
+  // Check if already running
+  if (await isSuperhmanRunning(port)) {
+    return true;
+  }
+
+  // Launch in background with CDP enabled
+  console.log("Launching Superhuman with remote debugging...");
+  try {
+    // Use Bun's shell to launch in background
+    Bun.spawn([appPath, `--remote-debugging-port=${port}`], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    // Wait for Superhuman to be ready (up to 30 seconds)
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      if (await isSuperhmanRunning(port)) {
+        console.log("Superhuman is ready");
+        // Give it a bit more time to fully initialize
+        await new Promise(r => setTimeout(r, 2000));
+        return true;
+      }
+    }
+    console.error("Timeout waiting for Superhuman to start");
+    return false;
+  } catch (e) {
+    console.error("Failed to launch Superhuman:", (e as Error).message);
+    return false;
+  }
+}
+
+/**
+ * Ensure Superhuman is running, launching it if necessary
+ */
+export async function ensureSuperhuman(port = 9333): Promise<boolean> {
+  if (await isSuperhmanRunning(port)) {
+    return true;
+  }
+  return launchSuperhuman(port);
+}
+
+/**
  * Find and connect to the Superhuman main page via CDP
  */
 export async function connectToSuperhuman(
-  port = 9333
+  port = 9333,
+  autoLaunch = true
 ): Promise<SuperhumanConnection | null> {
+  // Auto-launch if not running
+  if (autoLaunch && !(await isSuperhmanRunning(port))) {
+    const launched = await launchSuperhuman(port);
+    if (!launched) {
+      return null;
+    }
+  }
+
   const targets = await CDP.List({ port });
 
   const mainPage = targets.find(

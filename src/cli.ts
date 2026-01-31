@@ -439,16 +439,16 @@ function parseArgs(args: string[]): CliOptions {
 
 async function checkConnection(port: number): Promise<SuperhumanConnection | null> {
   try {
-    const conn = await connectToSuperhuman(port);
+    const conn = await connectToSuperhuman(port, true); // auto-launch enabled
     if (!conn) {
       error("Could not connect to Superhuman");
-      info(`Make sure Superhuman is running with: --remote-debugging-port=${port}`);
+      info("Superhuman may not be installed or failed to launch");
       return null;
     }
     return conn;
   } catch (e) {
     error(`Connection failed: ${(e as Error).message}`);
-    info(`Make sure Superhuman is running with: --remote-debugging-port=${port}`);
+    info("Superhuman may not be installed at /Applications/Superhuman.app");
     return null;
   }
 }
