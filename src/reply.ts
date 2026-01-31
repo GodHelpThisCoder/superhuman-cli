@@ -5,7 +5,7 @@
  * Uses native Superhuman commands for proper email threading.
  */
 
-import type { SuperhumanConnection } from "./superhuman-api";
+import type { SuperhumanConnection } from "./superhuman-api.js";
 import {
   openReplyCompose,
   openReplyAllCompose,
@@ -15,11 +15,28 @@ import {
   saveDraft,
   sendDraft,
   textToHtml,
-} from "./superhuman-api";
+} from "./superhuman-api.js";
 
 export interface ReplyResult {
   success: boolean;
   draftId?: string;
+}
+
+/**
+ * Complete a draft by either saving or sending it
+ */
+async function completeDraft(
+  conn: SuperhumanConnection,
+  draftKey: string,
+  send: boolean
+): Promise<ReplyResult> {
+  if (send) {
+    const sent = await sendDraft(conn);
+    return { success: sent };
+  }
+
+  const saved = await saveDraft(conn);
+  return { success: saved, draftId: draftKey };
 }
 
 /**
@@ -29,38 +46,28 @@ export interface ReplyResult {
  * threading (threadId, inReplyTo, references), recipients, and subject.
  *
  * @param conn - The Superhuman connection
- * @param threadId - The thread ID to reply to (must be the currently open thread)
+ * @param _threadId - The thread ID (must be the currently open thread; unused as native command uses current thread)
  * @param body - The reply body text
  * @param send - If true, send immediately; if false, save as draft
  * @returns Result with success status and optional draft ID
  */
 export async function replyToThread(
   conn: SuperhumanConnection,
-  threadId: string,
+  _threadId: string,
   body: string,
   send: boolean = false
 ): Promise<ReplyResult> {
-  // Use native reply command which handles threading correctly
   const draftKey = await openReplyCompose(conn);
   if (!draftKey) {
     return { success: false };
   }
 
-  // Set the reply body (Superhuman already has recipients and subject set)
-  const bodyHtml = textToHtml(body);
-  const bodySet = await setBody(conn, bodyHtml);
+  const bodySet = await setBody(conn, textToHtml(body));
   if (!bodySet) {
     return { success: false };
   }
 
-  // Save or send the draft
-  if (send) {
-    const sent = await sendDraft(conn);
-    return { success: sent };
-  } else {
-    const saved = await saveDraft(conn);
-    return { success: saved, draftId: draftKey };
-  }
+  return completeDraft(conn, draftKey, send);
 }
 
 /**
@@ -71,38 +78,28 @@ export async function replyToThread(
  * and subject automatically.
  *
  * @param conn - The Superhuman connection
- * @param threadId - The thread ID to reply to (must be the currently open thread)
+ * @param _threadId - The thread ID (must be the currently open thread; unused as native command uses current thread)
  * @param body - The reply body text
  * @param send - If true, send immediately; if false, save as draft
  * @returns Result with success status and optional draft ID
  */
 export async function replyAllToThread(
   conn: SuperhumanConnection,
-  threadId: string,
+  _threadId: string,
   body: string,
   send: boolean = false
 ): Promise<ReplyResult> {
-  // Use native reply-all command which handles threading and recipients correctly
   const draftKey = await openReplyAllCompose(conn);
   if (!draftKey) {
     return { success: false };
   }
 
-  // Set the reply body (Superhuman already has recipients and subject set)
-  const bodyHtml = textToHtml(body);
-  const bodySet = await setBody(conn, bodyHtml);
+  const bodySet = await setBody(conn, textToHtml(body));
   if (!bodySet) {
     return { success: false };
   }
 
-  // Save or send the draft
-  if (send) {
-    const sent = await sendDraft(conn);
-    return { success: sent };
-  } else {
-    const saved = await saveDraft(conn);
-    return { success: saved, draftId: draftKey };
-  }
+  return completeDraft(conn, draftKey, send);
 }
 
 /**
@@ -112,7 +109,7 @@ export async function replyAllToThread(
  * the forwarded message content, subject, and formatting.
  *
  * @param conn - The Superhuman connection
- * @param threadId - The thread ID to forward (must be the currently open thread)
+ * @param _threadId - The thread ID (must be the currently open thread; unused as native command uses current thread)
  * @param toEmail - The email address to forward to
  * @param body - The message body to include before the forwarded content
  * @param send - If true, send immediately; if false, save as draft
@@ -120,38 +117,27 @@ export async function replyAllToThread(
  */
 export async function forwardThread(
   conn: SuperhumanConnection,
-  threadId: string,
+  _threadId: string,
   toEmail: string,
   body: string,
   send: boolean = false
 ): Promise<ReplyResult> {
-  // Use native forward command which handles subject and forwarded content
   const draftKey = await openForwardCompose(conn);
   if (!draftKey) {
     return { success: false };
   }
 
-  // Set recipient to the forward target
   const recipientAdded = await addRecipient(conn, toEmail);
   if (!recipientAdded) {
     return { success: false };
   }
 
-  // Set the message body before the forwarded content
   if (body) {
-    const bodyHtml = textToHtml(body);
-    const bodySet = await setBody(conn, bodyHtml);
+    const bodySet = await setBody(conn, textToHtml(body));
     if (!bodySet) {
       return { success: false };
     }
   }
 
-  // Save or send the draft
-  if (send) {
-    const sent = await sendDraft(conn);
-    return { success: sent };
-  } else {
-    const saved = await saveDraft(conn);
-    return { success: saved, draftId: draftKey };
-  }
+  return completeDraft(conn, draftKey, send);
 }
