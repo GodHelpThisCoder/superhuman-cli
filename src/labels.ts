@@ -369,3 +369,220 @@ export async function removeLabel(
   const value = result.result.value as { success: boolean; error?: string } | null;
   return { success: value?.success ?? false, error: value?.error };
 }
+
+/**
+ * Star a thread (adds STARRED label)
+ *
+ * @param conn - The Superhuman connection
+ * @param threadId - The thread ID to star
+ * @returns Result with success status
+ */
+export async function starThread(
+  conn: SuperhumanConnection,
+  threadId: string
+): Promise<LabelResult> {
+  const { Runtime } = conn;
+
+  const result = await Runtime.evaluate({
+    expression: `
+      (async () => {
+        try {
+          const threadId = ${JSON.stringify(threadId)};
+          const ga = window.GoogleAccount;
+          const di = ga?.di;
+
+          if (!di) {
+            return { success: false, error: "DI container not found" };
+          }
+
+          // Get the thread from identity map
+          const thread = ga?.threads?.identityMap?.get?.(threadId);
+          if (!thread) {
+            return { success: false, error: "Thread not found" };
+          }
+
+          const model = thread._threadModel;
+          if (!model) {
+            return { success: false, error: "Thread model not found" };
+          }
+
+          // Check if thread already has STARRED label
+          if (model.labelIds && model.labelIds.includes("STARRED")) {
+            return { success: true }; // Already starred
+          }
+
+          // Check if this is a Microsoft account
+          const isMicrosoft = di.get?.('isMicrosoft');
+          if (isMicrosoft) {
+            return { success: false, error: "Starring not supported for Microsoft accounts" };
+          }
+
+          // Gmail account: Add STARRED label via changeLabelsPerThread
+          const gmail = di.get?.('gmail');
+          if (!gmail) {
+            return { success: false, error: "gmail service not found" };
+          }
+
+          await gmail.changeLabelsPerThread(threadId, ["STARRED"], []);
+
+          // Update local state
+          if (!model.labelIds) {
+            model.labelIds = [];
+          }
+          if (!model.labelIds.includes("STARRED")) {
+            model.labelIds.push("STARRED");
+          }
+
+          try {
+            thread.recalculateListIds?.();
+          } catch (e) {}
+
+          return { success: true };
+        } catch (e) {
+          return { success: false, error: e.message || "Unknown error" };
+        }
+      })()
+    `,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+
+  const value = result.result.value as { success: boolean; error?: string } | null;
+  return { success: value?.success ?? false, error: value?.error };
+}
+
+/**
+ * Unstar a thread (removes STARRED label)
+ *
+ * @param conn - The Superhuman connection
+ * @param threadId - The thread ID to unstar
+ * @returns Result with success status
+ */
+export async function unstarThread(
+  conn: SuperhumanConnection,
+  threadId: string
+): Promise<LabelResult> {
+  const { Runtime } = conn;
+
+  const result = await Runtime.evaluate({
+    expression: `
+      (async () => {
+        try {
+          const threadId = ${JSON.stringify(threadId)};
+          const ga = window.GoogleAccount;
+          const di = ga?.di;
+
+          if (!di) {
+            return { success: false, error: "DI container not found" };
+          }
+
+          // Get the thread from identity map
+          const thread = ga?.threads?.identityMap?.get?.(threadId);
+          if (!thread) {
+            return { success: false, error: "Thread not found" };
+          }
+
+          const model = thread._threadModel;
+          if (!model) {
+            return { success: false, error: "Thread model not found" };
+          }
+
+          // Check if thread has STARRED label
+          if (!model.labelIds || !model.labelIds.includes("STARRED")) {
+            return { success: true }; // Already not starred
+          }
+
+          // Check if this is a Microsoft account
+          const isMicrosoft = di.get?.('isMicrosoft');
+          if (isMicrosoft) {
+            return { success: false, error: "Starring not supported for Microsoft accounts" };
+          }
+
+          // Gmail account: Remove STARRED label via changeLabelsPerThread
+          const gmail = di.get?.('gmail');
+          if (!gmail) {
+            return { success: false, error: "gmail service not found" };
+          }
+
+          await gmail.changeLabelsPerThread(threadId, [], ["STARRED"]);
+
+          // Update local state
+          model.labelIds = model.labelIds.filter(l => l !== "STARRED");
+
+          try {
+            thread.recalculateListIds?.();
+          } catch (e) {}
+
+          return { success: true };
+        } catch (e) {
+          return { success: false, error: e.message || "Unknown error" };
+        }
+      })()
+    `,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+
+  const value = result.result.value as { success: boolean; error?: string } | null;
+  return { success: value?.success ?? false, error: value?.error };
+}
+
+/**
+ * List all starred threads
+ *
+ * @param conn - The Superhuman connection
+ * @param limit - Maximum number of threads to return (default: 50)
+ * @returns Array of starred threads with their IDs
+ */
+export async function listStarred(
+  conn: SuperhumanConnection,
+  limit: number = 50
+): Promise<Array<{ id: string }>> {
+  const { Runtime } = conn;
+
+  const result = await Runtime.evaluate({
+    expression: `
+      (async () => {
+        try {
+          const ga = window.GoogleAccount;
+          const di = ga?.di;
+
+          if (!di) {
+            return { error: "DI container not found", threads: [] };
+          }
+
+          // Check if this is a Microsoft account
+          const isMicrosoft = di.get?.('isMicrosoft');
+          if (isMicrosoft) {
+            return { error: "Starring not supported for Microsoft accounts", threads: [] };
+          }
+
+          // Use portal to list threads with STARRED label
+          const response = await ga.portal.invoke(
+            "threadInternal",
+            "listAsync",
+            ["STARRED", { limit: ${limit}, filters: [], query: "" }]
+          );
+
+          if (!response?.threads) {
+            return { threads: [] };
+          }
+
+          return {
+            threads: response.threads.map(t => {
+              const thread = t.json || t;
+              return { id: thread.id };
+            })
+          };
+        } catch (e) {
+          return { error: e.message || "Unknown error", threads: [] };
+        }
+      })()
+    `,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+
+  const value = result.result.value as { threads: Array<{ id: string }>; error?: string } | null;
+  return value?.threads ?? [];
+}
