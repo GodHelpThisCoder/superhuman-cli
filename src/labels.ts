@@ -413,29 +413,46 @@ export async function starThread(
 
           // Check if this is a Microsoft account
           const isMicrosoft = di.get?.('isMicrosoft');
+
           if (isMicrosoft) {
-            return { success: false, error: "Starring not supported for Microsoft accounts" };
-          }
+            // Microsoft account: Use flag property via msgraph
+            const msgraph = di.get?.('msgraph');
+            if (!msgraph) {
+              return { success: false, error: "msgraph service not found" };
+            }
 
-          // Gmail account: Add STARRED label via changeLabelsPerThread
-          const gmail = di.get?.('gmail');
-          if (!gmail) {
-            return { success: false, error: "gmail service not found" };
-          }
+            const messageIds = model.messageIds;
+            if (!messageIds || messageIds.length === 0) {
+              return { success: false, error: "No messages found in thread" };
+            }
 
-          await gmail.changeLabelsPerThread(threadId, ["STARRED"], []);
+            // Flag all messages in the thread
+            await msgraph.updateMessages(
+              messageIds,
+              { flag: { flagStatus: "flagged" } },
+              { action: "flag" }
+            );
+          } else {
+            // Gmail account: Add STARRED label via changeLabelsPerThread
+            const gmail = di.get?.('gmail');
+            if (!gmail) {
+              return { success: false, error: "gmail service not found" };
+            }
 
-          // Update local state
-          if (!model.labelIds) {
-            model.labelIds = [];
-          }
-          if (!model.labelIds.includes("STARRED")) {
-            model.labelIds.push("STARRED");
-          }
+            await gmail.changeLabelsPerThread(threadId, ["STARRED"], []);
 
-          try {
-            thread.recalculateListIds?.();
-          } catch (e) {}
+            // Update local state for Gmail
+            if (!model.labelIds) {
+              model.labelIds = [];
+            }
+            if (!model.labelIds.includes("STARRED")) {
+              model.labelIds.push("STARRED");
+            }
+
+            try {
+              thread.recalculateListIds?.();
+            } catch (e) {}
+          }
 
           return { success: true };
         } catch (e) {
@@ -487,31 +504,48 @@ export async function unstarThread(
             return { success: false, error: "Thread model not found" };
           }
 
-          // Check if thread has STARRED label
-          if (!model.labelIds || !model.labelIds.includes("STARRED")) {
-            return { success: true }; // Already not starred
-          }
-
           // Check if this is a Microsoft account
           const isMicrosoft = di.get?.('isMicrosoft');
+
           if (isMicrosoft) {
-            return { success: false, error: "Starring not supported for Microsoft accounts" };
+            // Microsoft account: Use flag property via msgraph
+            const msgraph = di.get?.('msgraph');
+            if (!msgraph) {
+              return { success: false, error: "msgraph service not found" };
+            }
+
+            const messageIds = model.messageIds;
+            if (!messageIds || messageIds.length === 0) {
+              return { success: false, error: "No messages found in thread" };
+            }
+
+            // Unflag all messages in the thread
+            await msgraph.updateMessages(
+              messageIds,
+              { flag: { flagStatus: "notFlagged" } },
+              { action: "unflag" }
+            );
+          } else {
+            // Gmail: Check if thread has STARRED label
+            if (!model.labelIds || !model.labelIds.includes("STARRED")) {
+              return { success: true }; // Already not starred
+            }
+
+            // Gmail account: Remove STARRED label via changeLabelsPerThread
+            const gmail = di.get?.('gmail');
+            if (!gmail) {
+              return { success: false, error: "gmail service not found" };
+            }
+
+            await gmail.changeLabelsPerThread(threadId, [], ["STARRED"]);
+
+            // Update local state
+            model.labelIds = model.labelIds.filter(l => l !== "STARRED");
+
+            try {
+              thread.recalculateListIds?.();
+            } catch (e) {}
           }
-
-          // Gmail account: Remove STARRED label via changeLabelsPerThread
-          const gmail = di.get?.('gmail');
-          if (!gmail) {
-            return { success: false, error: "gmail service not found" };
-          }
-
-          await gmail.changeLabelsPerThread(threadId, [], ["STARRED"]);
-
-          // Update local state
-          model.labelIds = model.labelIds.filter(l => l !== "STARRED");
-
-          try {
-            thread.recalculateListIds?.();
-          } catch (e) {}
 
           return { success: true };
         } catch (e) {
@@ -553,11 +587,43 @@ export async function listStarred(
 
           // Check if this is a Microsoft account
           const isMicrosoft = di.get?.('isMicrosoft');
+
           if (isMicrosoft) {
-            return { error: "Starring not supported for Microsoft accounts", threads: [] };
+            // Microsoft account: Query flagged messages via msgraph
+            const msgraph = di.get?.('msgraph');
+            if (!msgraph) {
+              return { error: "msgraph service not found", threads: [] };
+            }
+
+            try {
+              // Search for flagged messages using filter
+              const messages = await msgraph.searchMessages({
+                filter: "flag/flagStatus eq 'flagged'",
+                limit: ${limit}
+              });
+
+              if (!messages || messages.length === 0) {
+                return { threads: [] };
+              }
+
+              // Group by conversationId to get unique threads
+              const threadIds = new Set();
+              messages.forEach(m => {
+                if (m.conversationId) {
+                  threadIds.add(m.conversationId);
+                }
+              });
+
+              return {
+                threads: Array.from(threadIds).map(id => ({ id }))
+              };
+            } catch (e) {
+              // Fallback: return empty if search fails
+              return { error: e.message, threads: [] };
+            }
           }
 
-          // Use portal to list threads with STARRED label
+          // Gmail: Use portal to list threads with STARRED label
           const response = await ga.portal.invoke(
             "threadInternal",
             "listAsync",
