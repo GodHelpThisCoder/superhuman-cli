@@ -46,18 +46,18 @@ async function completeDraft(
  * threading (threadId, inReplyTo, references), recipients, and subject.
  *
  * @param conn - The Superhuman connection
- * @param _threadId - The thread ID (must be the currently open thread; unused as native command uses current thread)
+ * @param threadId - The thread ID to reply to
  * @param body - The reply body text
  * @param send - If true, send immediately; if false, save as draft
  * @returns Result with success status and optional draft ID
  */
 export async function replyToThread(
   conn: SuperhumanConnection,
-  _threadId: string,
+  threadId: string,
   body: string,
   send: boolean = false
 ): Promise<ReplyResult> {
-  const draftKey = await openReplyCompose(conn);
+  const draftKey = await openReplyCompose(conn, threadId);
   if (!draftKey) {
     return { success: false };
   }
@@ -78,18 +78,18 @@ export async function replyToThread(
  * and subject automatically.
  *
  * @param conn - The Superhuman connection
- * @param _threadId - The thread ID (must be the currently open thread; unused as native command uses current thread)
+ * @param threadId - The thread ID to reply to
  * @param body - The reply body text
  * @param send - If true, send immediately; if false, save as draft
  * @returns Result with success status and optional draft ID
  */
 export async function replyAllToThread(
   conn: SuperhumanConnection,
-  _threadId: string,
+  threadId: string,
   body: string,
   send: boolean = false
 ): Promise<ReplyResult> {
-  const draftKey = await openReplyAllCompose(conn);
+  const draftKey = await openReplyAllCompose(conn, threadId);
   if (!draftKey) {
     return { success: false };
   }
@@ -109,7 +109,7 @@ export async function replyAllToThread(
  * the forwarded message content, subject, and formatting.
  *
  * @param conn - The Superhuman connection
- * @param _threadId - The thread ID (must be the currently open thread; unused as native command uses current thread)
+ * @param threadId - The thread ID to forward
  * @param toEmail - The email address to forward to
  * @param body - The message body to include before the forwarded content
  * @param send - If true, send immediately; if false, save as draft
@@ -117,12 +117,12 @@ export async function replyAllToThread(
  */
 export async function forwardThread(
   conn: SuperhumanConnection,
-  _threadId: string,
+  threadId: string,
   toEmail: string,
   body: string,
   send: boolean = false
 ): Promise<ReplyResult> {
-  const draftKey = await openForwardCompose(conn);
+  const draftKey = await openForwardCompose(conn, threadId);
   if (!draftKey) {
     return { success: false };
   }

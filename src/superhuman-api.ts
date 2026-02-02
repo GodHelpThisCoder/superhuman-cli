@@ -455,10 +455,18 @@ async function closeExistingCompose(conn: SuperhumanConnection): Promise<void> {
  */
 async function openComposeWithCommand(
   conn: SuperhumanConnection,
-  commandId: string
+  commandId: string,
+  threadId?: string
 ): Promise<string | null> {
   await closeExistingCompose(conn);
-  await syncThreadId(conn);
+
+  // If a specific threadId is provided, set it before invoking the command
+  if (threadId) {
+    await setThreadForReply(conn, threadId);
+    await new Promise((r) => setTimeout(r, 300)); // Give UI time to update
+  } else {
+    await syncThreadId(conn);
+  }
 
   const invoked = await invokeCommand(conn, commandId);
   if (!invoked) {
@@ -467,6 +475,40 @@ async function openComposeWithCommand(
 
   await new Promise((r) => setTimeout(r, 2000));
   return getDraftKey(conn);
+}
+
+/**
+ * Set a specific thread ID in the ViewState for reply operations
+ *
+ * This sets both threadPane.threadId and threadListView.threadId to ensure
+ * the reply commands work correctly regardless of what's currently visible.
+ */
+export async function setThreadForReply(conn: SuperhumanConnection, threadId: string): Promise<boolean> {
+  const { Runtime } = conn;
+
+  const result = await Runtime.evaluate({
+    expression: `
+      (() => {
+        try {
+          const tree = window.ViewState?.tree;
+          if (!tree?.set) return false;
+
+          const targetThreadId = ${JSON.stringify(threadId)};
+
+          // Set both threadPane and threadListView to the target thread
+          tree.set(['threadPane', 'threadId'], targetThreadId);
+          tree.set(['threadListView', 'threadId'], targetThreadId);
+
+          return true;
+        } catch (e) {
+          return false;
+        }
+      })()
+    `,
+    returnByValue: true,
+  });
+
+  return result.result.value === true;
 }
 
 /**
@@ -507,9 +549,12 @@ export async function syncThreadId(conn: SuperhumanConnection): Promise<boolean>
  *
  * This uses the REPLY_ALL_POP_OUT command which properly sets up threading,
  * recipients, and subject automatically.
+ *
+ * @param conn - The Superhuman connection
+ * @param threadId - Optional thread ID to reply to (if not provided, uses current thread)
  */
-export async function openReplyAllCompose(conn: SuperhumanConnection): Promise<string | null> {
-  return openComposeWithCommand(conn, "REPLY_ALL_POP_OUT");
+export async function openReplyAllCompose(conn: SuperhumanConnection, threadId?: string): Promise<string | null> {
+  return openComposeWithCommand(conn, "REPLY_ALL_POP_OUT", threadId);
 }
 
 /**
@@ -517,9 +562,12 @@ export async function openReplyAllCompose(conn: SuperhumanConnection): Promise<s
  *
  * This uses the REPLY_POP_OUT command which properly sets up threading,
  * recipient (original sender only), and subject automatically.
+ *
+ * @param conn - The Superhuman connection
+ * @param threadId - Optional thread ID to reply to (if not provided, uses current thread)
  */
-export async function openReplyCompose(conn: SuperhumanConnection): Promise<string | null> {
-  return openComposeWithCommand(conn, "REPLY_POP_OUT");
+export async function openReplyCompose(conn: SuperhumanConnection, threadId?: string): Promise<string | null> {
+  return openComposeWithCommand(conn, "REPLY_POP_OUT", threadId);
 }
 
 /**
@@ -527,7 +575,10 @@ export async function openReplyCompose(conn: SuperhumanConnection): Promise<stri
  *
  * This uses the FORWARD_POP_OUT command which properly sets up the
  * forwarded message content and subject automatically.
+ *
+ * @param conn - The Superhuman connection
+ * @param threadId - Optional thread ID to forward (if not provided, uses current thread)
  */
-export async function openForwardCompose(conn: SuperhumanConnection): Promise<string | null> {
-  return openComposeWithCommand(conn, "FORWARD_POP_OUT");
+export async function openForwardCompose(conn: SuperhumanConnection, threadId?: string): Promise<string | null> {
+  return openComposeWithCommand(conn, "FORWARD_POP_OUT", threadId);
 }
