@@ -57,6 +57,7 @@ const colors = {
   green: "\x1b[32m",
   yellow: "\x1b[33m",
   blue: "\x1b[34m",
+  magenta: "\x1b[35m",
   cyan: "\x1b[36m",
 };
 
@@ -305,6 +306,7 @@ interface CliOptions {
   // calendar options
   calendarDate: string; // date for calendar listing (YYYY-MM-DD or "today", "tomorrow")
   calendarRange: number; // number of days to show
+  allAccounts: boolean; // query all accounts for calendar
   eventStart: string; // event start time
   eventEnd: string; // event end time
   eventDuration: number; // event duration in minutes
@@ -336,6 +338,7 @@ function parseArgs(args: string[]): CliOptions {
     messageId: "",
     calendarDate: "",
     calendarRange: 1,
+    allAccounts: false,
     eventStart: "",
     eventEnd: "",
     eventDuration: 30,
@@ -431,6 +434,10 @@ function parseArgs(args: string[]): CliOptions {
         case "range":
           options.calendarRange = parseInt(value, 10);
           i += 2;
+          break;
+        case "all-accounts":
+          options.allAccounts = true;
+          i++;
           break;
         case "start":
           options.eventStart = value;
@@ -1670,7 +1677,7 @@ function parseEventTime(timeStr: string): Date {
 /**
  * Format a calendar event for display
  */
-function formatCalendarEvent(event: CalendarEvent): string {
+function formatCalendarEvent(event: CalendarEvent & { account?: string }, showAccount = false): string {
   const lines: string[] = [];
 
   // Time
@@ -1686,7 +1693,14 @@ function formatCalendarEvent(event: CalendarEvent): string {
     }
   }
 
-  lines.push(`${colors.cyan}${timeStr}${colors.reset} ${colors.bold}${event.summary || "(No title)"}${colors.reset}`);
+  // Account indicator (shortened)
+  let accountTag = "";
+  if (showAccount && event.account) {
+    const shortAccount = event.account.split("@")[0].slice(0, 8);
+    accountTag = ` ${colors.magenta}[${shortAccount}]${colors.reset}`;
+  }
+
+  lines.push(`${colors.cyan}${timeStr}${colors.reset} ${colors.bold}${event.summary || "(No title)"}${colors.reset}${accountTag}`);
 
   if (event.description) {
     lines.push(`  ${colors.dim}${event.description.substring(0, 80)}${event.description.length > 80 ? "..." : ""}${colors.reset}`);
@@ -1724,17 +1738,51 @@ async function cmdCalendar(options: CliOptions) {
   timeMax.setDate(timeMax.getDate() + options.calendarRange);
   timeMax.setHours(23, 59, 59, 999);
 
-  const events = await listEvents(conn, { timeMin, timeMax });
+  let allEvents: CalendarEvent[] = [];
+
+  if (options.allAccounts) {
+    // Get all accounts and query each
+    const accounts = await listAccounts(conn);
+    const originalAccount = accounts.find(a => a.current)?.email;
+
+    for (const account of accounts) {
+      // Switch to this account
+      await switchAccount(conn, account.email);
+      // Small delay for account switch to take effect
+      await new Promise(r => setTimeout(r, 300));
+
+      const events = await listEvents(conn, { timeMin, timeMax });
+      // Tag events with account info
+      for (const event of events) {
+        (event as CalendarEvent & { account?: string }).account = account.email;
+      }
+      allEvents.push(...events);
+    }
+
+    // Switch back to original account
+    if (originalAccount) {
+      await switchAccount(conn, originalAccount);
+    }
+  } else {
+    allEvents = await listEvents(conn, { timeMin, timeMax });
+  }
+
+  // Sort all events by start time
+  allEvents.sort((a, b) => {
+    const aTime = a.start.dateTime || a.start.date || "";
+    const bTime = b.start.dateTime || b.start.date || "";
+    return aTime.localeCompare(bTime);
+  });
 
   if (options.json) {
-    console.log(JSON.stringify(events, null, 2));
+    console.log(JSON.stringify(allEvents, null, 2));
   } else {
-    if (events.length === 0) {
+    if (allEvents.length === 0) {
       info("No events found for the specified date range");
     } else {
       // Group events by date
       const byDate = new Map<string, CalendarEvent[]>();
-      for (const event of events) {
+      for (const event of allEvents) {
         const dateStr = event.start.date || (event.start.dateTime ? new Date(event.start.dateTime).toDateString() : "Unknown");
         if (!byDate.has(dateStr)) {
           byDate.set(dateStr, []);
@@ -1745,7 +1793,7 @@ async function cmdCalendar(options: CliOptions) {
       for (const [date, dayEvents] of byDate) {
         console.log(`\n${colors.bold}${date}${colors.reset}`);
         for (const event of dayEvents) {
-          console.log(formatCalendarEvent(event));
+          console.log(formatCalendarEvent(event, options.allAccounts));
         }
       }
     }
