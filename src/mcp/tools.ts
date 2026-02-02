@@ -636,7 +636,7 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
     const result = await replyToThread(conn, args.threadId, args.body, send);
 
     if (!result.success) {
-      throw new Error("Failed to create reply");
+      throw new Error(result.error || "Failed to create reply");
     }
 
     if (send) {
@@ -668,7 +668,7 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
     const result = await replyAllToThread(conn, args.threadId, args.body, send);
 
     if (!result.success) {
-      throw new Error("Failed to create reply-all");
+      throw new Error(result.error || "Failed to create reply-all");
     }
 
     if (send) {
@@ -700,7 +700,7 @@ export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promi
     const result = await forwardThread(conn, args.threadId, args.toEmail, args.body, send);
 
     if (!result.success) {
-      throw new Error("Failed to create forward");
+      throw new Error(result.error || "Failed to create forward");
     }
 
     if (send) {

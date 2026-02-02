@@ -20,6 +20,7 @@ import {
 export interface ReplyResult {
   success: boolean;
   draftId?: string;
+  error?: string;
 }
 
 /**
@@ -32,11 +33,38 @@ async function completeDraft(
 ): Promise<ReplyResult> {
   if (send) {
     const sent = await sendDraft(conn);
-    return { success: sent };
+    if (!sent) {
+      return { success: false, error: "Failed to send draft" };
+    }
+    return { success: true };
   }
 
   const saved = await saveDraft(conn);
-  return { success: saved, draftId: draftKey };
+  if (!saved) {
+    return { success: false, error: "Failed to save draft" };
+  }
+  return { success: true, draftId: draftKey };
+}
+
+/**
+ * Retry a function with exponential backoff
+ */
+async function withRetry<T>(
+  fn: () => Promise<T | null>,
+  maxRetries: number = 3,
+  baseDelay: number = 500
+): Promise<T | null> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const result = await fn();
+    if (result !== null) {
+      return result;
+    }
+    if (attempt < maxRetries - 1) {
+      const delay = baseDelay * Math.pow(2, attempt);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  return null;
 }
 
 /**
@@ -44,12 +72,13 @@ async function completeDraft(
  *
  * Uses Superhuman's native REPLY_POP_OUT command which properly sets up
  * threading (threadId, inReplyTo, references), recipients, and subject.
+ * Includes retry logic for transient UI state failures.
  *
  * @param conn - The Superhuman connection
  * @param threadId - The thread ID to reply to
  * @param body - The reply body text
  * @param send - If true, send immediately; if false, save as draft
- * @returns Result with success status and optional draft ID
+ * @returns Result with success status, optional draft ID, and error message if failed
  */
 export async function replyToThread(
   conn: SuperhumanConnection,
@@ -57,14 +86,18 @@ export async function replyToThread(
   body: string,
   send: boolean = false
 ): Promise<ReplyResult> {
-  const draftKey = await openReplyCompose(conn, threadId);
+  // Retry opening compose in case of transient UI state issues
+  const draftKey = await withRetry(() => openReplyCompose(conn, threadId), 3, 500);
   if (!draftKey) {
-    return { success: false };
+    return {
+      success: false,
+      error: "Failed to open reply compose (UI may be blocked by existing compose window or overlay)"
+    };
   }
 
   const bodySet = await setBody(conn, textToHtml(body));
   if (!bodySet) {
-    return { success: false };
+    return { success: false, error: "Failed to set reply body" };
   }
 
   return completeDraft(conn, draftKey, send);
@@ -75,13 +108,13 @@ export async function replyToThread(
  *
  * Uses Superhuman's native REPLY_ALL_POP_OUT command which properly sets up
  * threading (threadId, inReplyTo, references), all recipients (To and Cc),
- * and subject automatically.
+ * and subject automatically. Includes retry logic for transient UI state failures.
  *
  * @param conn - The Superhuman connection
  * @param threadId - The thread ID to reply to
  * @param body - The reply body text
  * @param send - If true, send immediately; if false, save as draft
- * @returns Result with success status and optional draft ID
+ * @returns Result with success status, optional draft ID, and error message if failed
  */
 export async function replyAllToThread(
   conn: SuperhumanConnection,
@@ -89,14 +122,18 @@ export async function replyAllToThread(
   body: string,
   send: boolean = false
 ): Promise<ReplyResult> {
-  const draftKey = await openReplyAllCompose(conn, threadId);
+  // Retry opening compose in case of transient UI state issues
+  const draftKey = await withRetry(() => openReplyAllCompose(conn, threadId), 3, 500);
   if (!draftKey) {
-    return { success: false };
+    return {
+      success: false,
+      error: "Failed to open reply-all compose (UI may be blocked by existing compose window or overlay)"
+    };
   }
 
   const bodySet = await setBody(conn, textToHtml(body));
   if (!bodySet) {
-    return { success: false };
+    return { success: false, error: "Failed to set reply body" };
   }
 
   return completeDraft(conn, draftKey, send);
@@ -107,13 +144,14 @@ export async function replyAllToThread(
  *
  * Uses Superhuman's native FORWARD_POP_OUT command which properly sets up
  * the forwarded message content, subject, and formatting.
+ * Includes retry logic for transient UI state failures.
  *
  * @param conn - The Superhuman connection
  * @param threadId - The thread ID to forward
  * @param toEmail - The email address to forward to
  * @param body - The message body to include before the forwarded content
  * @param send - If true, send immediately; if false, save as draft
- * @returns Result with success status and optional draft ID
+ * @returns Result with success status, optional draft ID, and error message if failed
  */
 export async function forwardThread(
   conn: SuperhumanConnection,
@@ -122,20 +160,24 @@ export async function forwardThread(
   body: string,
   send: boolean = false
 ): Promise<ReplyResult> {
-  const draftKey = await openForwardCompose(conn, threadId);
+  // Retry opening compose in case of transient UI state issues
+  const draftKey = await withRetry(() => openForwardCompose(conn, threadId), 3, 500);
   if (!draftKey) {
-    return { success: false };
+    return {
+      success: false,
+      error: "Failed to open forward compose (UI may be blocked by existing compose window or overlay)"
+    };
   }
 
   const recipientAdded = await addRecipient(conn, toEmail);
   if (!recipientAdded) {
-    return { success: false };
+    return { success: false, error: "Failed to add forward recipient" };
   }
 
   if (body) {
     const bodySet = await setBody(conn, textToHtml(body));
     if (!bodySet) {
-      return { success: false };
+      return { success: false, error: "Failed to set forward body" };
     }
   }
 

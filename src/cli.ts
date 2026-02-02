@@ -859,7 +859,7 @@ async function cmdReply(options: CliOptions) {
       success(`Draft saved (${result.draftId})`);
     }
   } else {
-    error("Failed to create reply");
+    error(result.error || "Failed to create reply");
   }
 
   await disconnect(conn);
@@ -890,7 +890,7 @@ async function cmdReplyAll(options: CliOptions) {
       success(`Draft saved (${result.draftId})`);
     }
   } else {
-    error("Failed to create reply-all");
+    error(result.error || "Failed to create reply-all");
   }
 
   await disconnect(conn);
@@ -928,7 +928,7 @@ async function cmdForward(options: CliOptions) {
       success(`Draft saved (${result.draftId})`);
     }
   } else {
-    error("Failed to create forward");
+    error(result.error || "Failed to create forward");
   }
 
   await disconnect(conn);
