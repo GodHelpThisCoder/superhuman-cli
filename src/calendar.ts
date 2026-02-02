@@ -224,11 +224,10 @@ export async function listEvents(
             const accountEmail = ga?.emailAddress || 'primary';
 
             try {
+              // Correct signature: getEventsList({calendarId, calendarAccountEmail}, options)
               const gcalEvents = await gcal.getEventsList(
-                accountEmail,
-                timeMin,
-                timeMax,
-                { singleEvents: true, orderBy: 'startTime' }
+                { calendarId: accountEmail, calendarAccountEmail: accountEmail },
+                { timeMin, timeMax, singleEvents: true, orderBy: 'startTime' }
               );
 
               const events = (gcalEvents?.items || gcalEvents || []).map(e => ({
