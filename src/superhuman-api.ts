@@ -385,11 +385,37 @@ export async function sendDraft(conn: SuperhumanConnection, draftId?: string): P
 }
 
 /**
+ * Unescape literal escape sequences (like \n, \t) in a string
+ */
+export function unescapeString(text: string): string {
+  if (!text) return text;
+  return text.replace(/\\([ntr\\])/g, (match, char) => {
+    switch (char) {
+      case "n":
+        return "\n";
+      case "t":
+        return "\t";
+      case "r":
+        return "\r";
+      case "\\":
+        return "\\";
+      default:
+        return char;
+    }
+  });
+}
+
+/**
  * Convert plain text to HTML paragraphs (returns as-is if already HTML)
  */
 export function textToHtml(text: string): string {
+  if (!text) return "";
   if (text.includes("<")) return text;
-  return `<p>${text.replace(/\n/g, "</p><p>")}</p>`;
+
+  // First unescape any literal \n sequences
+  const unescaped = unescapeString(text);
+
+  return `<p>${unescaped.replace(/\n/g, "</p><p>")}</p>`;
 }
 
 /**

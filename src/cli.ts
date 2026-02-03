@@ -23,6 +23,7 @@ import {
   closeCompose,
   disconnect,
   textToHtml,
+  unescapeString,
   type SuperhumanConnection,
 } from "./superhuman-api";
 import { listInbox, searchInbox } from "./inbox";
@@ -46,7 +47,7 @@ import {
 } from "./calendar";
 import { sendEmail, createDraft, updateDraft, sendDraftById, deleteDraft } from "./send-api";
 
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 const CDP_PORT = 9333;
 
 // ANSI colors
@@ -382,27 +383,27 @@ function parseArgs(args: string[]): CliOptions {
 
       switch (key) {
         case "to":
-          options.to.push(value);
+          options.to.push(unescapeString(value));
           i += 2;
           break;
         case "cc":
-          options.cc.push(value);
+          options.cc.push(unescapeString(value));
           i += 2;
           break;
         case "bcc":
-          options.bcc.push(value);
+          options.bcc.push(unescapeString(value));
           i += 2;
           break;
         case "subject":
-          options.subject = value;
+          options.subject = unescapeString(value);
           i += 2;
           break;
         case "body":
-          options.body = value;
+          options.body = unescapeString(value);
           i += 2;
           break;
         case "html":
-          options.html = value;
+          options.html = unescapeString(value);
           i += 2;
           break;
         case "port":
@@ -418,11 +419,11 @@ function parseArgs(args: string[]): CliOptions {
           i += 2;
           break;
         case "query":
-          options.query = value;
+          options.query = unescapeString(value);
           i += 2;
           break;
         case "thread":
-          options.threadId = value;
+          options.threadId = unescapeString(value);
           i += 2;
           break;
         case "json":
@@ -434,39 +435,39 @@ function parseArgs(args: string[]): CliOptions {
           i += 1;
           break;
         case "update":
-          options.updateDraftId = value;
+          options.updateDraftId = unescapeString(value);
           i += 2;
           break;
         case "draft":
-          options.sendDraftId = value;
+          options.sendDraftId = unescapeString(value);
           i += 2;
           break;
         case "label":
-          options.labelId = value;
+          options.labelId = unescapeString(value);
           i += 2;
           break;
         case "until":
-          options.snoozeUntil = value;
+          options.snoozeUntil = unescapeString(value);
           i += 2;
           break;
         case "output":
-          options.outputPath = value;
+          options.outputPath = unescapeString(value);
           i += 2;
           break;
         case "attachment":
-          options.attachmentId = value;
+          options.attachmentId = unescapeString(value);
           i += 2;
           break;
         case "message":
-          options.messageId = value;
+          options.messageId = unescapeString(value);
           i += 2;
           break;
         case "calendar":
-          options.calendarArg = value;
+          options.calendarArg = unescapeString(value);
           i += 2;
           break;
         case "date":
-          options.calendarDate = value;
+          options.calendarDate = unescapeString(value);
           i += 2;
           break;
         case "range":
@@ -478,11 +479,11 @@ function parseArgs(args: string[]): CliOptions {
           i++;
           break;
         case "start":
-          options.eventStart = value;
+          options.eventStart = unescapeString(value);
           i += 2;
           break;
         case "end":
-          options.eventEnd = value;
+          options.eventEnd = unescapeString(value);
           i += 2;
           break;
         case "duration":
@@ -490,11 +491,11 @@ function parseArgs(args: string[]): CliOptions {
           i += 2;
           break;
         case "title":
-          options.eventTitle = value;
+          options.eventTitle = unescapeString(value);
           i += 2;
           break;
         case "event":
-          options.eventId = value;
+          options.eventId = unescapeString(value);
           i += 2;
           break;
         default:
@@ -506,27 +507,27 @@ function parseArgs(args: string[]): CliOptions {
       i += 1;
     } else if (options.command === "search" && !options.query) {
       // Allow search query as positional argument
-      options.query = arg;
+      options.query = unescapeString(arg);
       i += 1;
     } else if (options.command === "read" && !options.threadId) {
       // Allow thread ID as positional argument
-      options.threadId = arg;
+      options.threadId = unescapeString(arg);
       i += 1;
     } else if (options.command === "reply" && !options.threadId) {
       // Allow thread ID as positional argument for reply
-      options.threadId = arg;
+      options.threadId = unescapeString(arg);
       i += 1;
     } else if (options.command === "reply-all" && !options.threadId) {
       // Allow thread ID as positional argument for reply-all
-      options.threadId = arg;
+      options.threadId = unescapeString(arg);
       i += 1;
     } else if (options.command === "forward" && !options.threadId) {
       // Allow thread ID as positional argument for forward
-      options.threadId = arg;
+      options.threadId = unescapeString(arg);
       i += 1;
     } else if (options.command === "account" && !options.accountArg) {
       // Allow account index or email as positional argument
-      options.accountArg = arg;
+      options.accountArg = unescapeString(arg);
       i += 1;
     } else if (
       options.command === "archive" ||
@@ -541,23 +542,23 @@ function parseArgs(args: string[]): CliOptions {
       options.command === "unsnooze"
     ) {
       // Collect multiple thread IDs for bulk operations
-      options.threadIds.push(arg);
+      options.threadIds.push(unescapeString(arg));
       i += 1;
     } else if (options.command === "delete-draft") {
       // Collect multiple draft IDs for delete-draft
-      options.draftIds.push(arg);
+      options.draftIds.push(unescapeString(arg));
       i += 1;
     } else if (options.command === "get-labels" && !options.threadId) {
       // Allow thread ID as positional argument for get-labels
-      options.threadId = arg;
+      options.threadId = unescapeString(arg);
       i += 1;
     } else if (options.command === "attachments" && !options.threadId) {
       // Allow thread ID as positional argument for attachments
-      options.threadId = arg;
+      options.threadId = unescapeString(arg);
       i += 1;
     } else if (options.command === "download" && !options.threadId && !options.attachmentId) {
       // Allow thread ID as positional argument for download (when not using --attachment)
-      options.threadId = arg;
+      options.threadId = unescapeString(arg);
       i += 1;
     } else {
       error(`Unexpected argument: ${arg}`);

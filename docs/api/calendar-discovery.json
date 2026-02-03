@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-02-02T05:46:51.975Z",
+  "accountType": "google",
+  "diServices": [
+    {
+      "name": "gcal",
+      "methods": []
+    }
+  ],
+  "gmailCalendarMethods": [],
+  "msgraphCalendarMethods": [],
+  "backendCalendarMethods": [],
+  "portalServices": [
+    "threadInternal",
+    "messageInternal",
+    "labelInternal",
+    "calendarInternal",
+    "eventInternal",
+    "meetingInternal",
+    "calendar",
+    "events",
+    "meetings"
+  ],
+  "calendarViewState": {},
+  "errors": []
+}
