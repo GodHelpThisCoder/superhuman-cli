@@ -46,7 +46,7 @@ import {
 } from "./calendar";
 import { sendEmail, createDraft, updateDraft, sendDraftById, deleteDraft } from "./send-api";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 const CDP_PORT = 9333;
 
 // ANSI colors
