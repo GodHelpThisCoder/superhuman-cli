@@ -83,6 +83,10 @@ export async function listAccounts(
  * This function navigates to the account-specific URL which triggers the
  * account switch. It then waits for the page to load and verifies the switch.
  *
+ * Note: Account switching fails when Superhuman is showing the calendar view.
+ * To work around this, we first navigate to the inbox view of the current
+ * account before attempting to switch accounts.
+ *
  * @param conn - The Superhuman connection
  * @param targetEmail - The email address of the account to switch to
  * @returns SwitchResult with success status and current email after switch
@@ -92,6 +96,17 @@ export async function switchAccount(
   targetEmail: string
 ): Promise<SwitchResult> {
   const { Runtime, Page } = conn;
+
+  // First, navigate to inbox view to ensure we're not in calendar view
+  // Account switching fails when in calendar view
+  const currentEmail = await getCurrentAccount(conn);
+  if (currentEmail) {
+    const inboxUrl = `https://mail.superhuman.com/${currentEmail}`;
+    await Page.navigate({ url: inboxUrl });
+
+    // Wait for inbox to load before switching accounts
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
 
   // Navigate to the account-specific URL
   const targetUrl = `https://mail.superhuman.com/${targetEmail}`;
