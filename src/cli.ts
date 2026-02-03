@@ -44,7 +44,7 @@ import {
   type CreateEventInput,
   type UpdateEventInput,
 } from "./calendar";
-import { sendEmail, createDraft, updateDraft, sendDraftById } from "./send-api";
+import { sendEmail, createDraft, updateDraft, sendDraftById, deleteDraft } from "./send-api";
 
 const VERSION = "0.1.0";
 const CDP_PORT = 9333;
@@ -139,6 +139,7 @@ ${colors.bold}COMMANDS${colors.reset}
   ${colors.cyan}calendar-free${colors.reset} Check free/busy availability
   ${colors.cyan}compose${colors.reset}    Open compose window and fill in email (keeps window open)
   ${colors.cyan}draft${colors.reset}      Create or update a draft
+  ${colors.cyan}delete-draft${colors.reset} Delete draft(s) by ID
   ${colors.cyan}send${colors.reset}       Compose and send an email, or send an existing draft
   ${colors.cyan}status${colors.reset}     Check Superhuman connection status
   ${colors.cyan}help${colors.reset}       Show this help message
@@ -272,6 +273,10 @@ ${colors.bold}EXAMPLES${colors.reset}
   superhuman draft --update <draft-id> --body "Updated content"
   superhuman draft --update <draft-id> --subject "New Subject" --to new@example.com
 
+  ${colors.dim}# Delete drafts${colors.reset}
+  superhuman delete-draft <draft-id>
+  superhuman delete-draft <draft-id1> <draft-id2>
+
   ${colors.dim}# Open compose window with pre-filled content${colors.reset}
   superhuman compose --to user@example.com --subject "Meeting"
 
@@ -301,6 +306,7 @@ interface CliOptions {
   query: string;
   threadId: string;
   threadIds: string[]; // for bulk operations (archive/delete)
+  draftIds: string[]; // for delete-draft
   json: boolean;
   // account switching
   accountArg: string; // index or email for account command
@@ -344,6 +350,7 @@ function parseArgs(args: string[]): CliOptions {
     query: "",
     threadId: "",
     threadIds: [],
+    draftIds: [],
     json: false,
     accountArg: "",
     send: false,
@@ -536,6 +543,10 @@ function parseArgs(args: string[]): CliOptions {
       // Collect multiple thread IDs for bulk operations
       options.threadIds.push(arg);
       i += 1;
+    } else if (options.command === "delete-draft") {
+      // Collect multiple draft IDs for delete-draft
+      options.draftIds.push(arg);
+      i += 1;
     } else if (options.command === "get-labels" && !options.threadId) {
       // Allow thread ID as positional argument for get-labels
       options.threadId = arg;
@@ -727,6 +738,34 @@ async function cmdDraft(options: CliOptions) {
     }
   } else {
     error(`Failed to create draft: ${result.error}`);
+  }
+
+  await disconnect(conn);
+}
+
+async function cmdDeleteDraft(options: CliOptions) {
+  const draftIds = options.draftIds;
+
+  if (draftIds.length === 0) {
+    error("At least one draft ID is required");
+    error("Usage: superhuman delete-draft <draft-id> [draft-id...]");
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  for (const draftId of draftIds) {
+    info(`Deleting draft ${draftId.slice(-15)}...`);
+    const result = await deleteDraft(conn, draftId);
+
+    if (result.success) {
+      success(`Deleted draft ${draftId.slice(-15)}`);
+    } else {
+      error(`Failed to delete draft: ${result.error}`);
+    }
   }
 
   await disconnect(conn);
@@ -2291,6 +2330,10 @@ async function main() {
 
     case "draft":
       await cmdDraft(options);
+      break;
+
+    case "delete-draft":
+      await cmdDeleteDraft(options);
       break;
 
     case "send":

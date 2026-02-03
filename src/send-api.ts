@@ -1740,3 +1740,125 @@ export async function sendReply(
 
   return sendEmailGmail(conn, sendOptions);
 }
+
+/**
+ * Delete a draft via Gmail API
+ *
+ * @param conn - The Superhuman connection
+ * @param draftId - The draft ID to delete
+ * @returns Result with success status
+ */
+export async function deleteDraftGmail(
+  conn: SuperhumanConnection,
+  draftId: string
+): Promise<{ success: boolean; error?: string }> {
+  const { Runtime } = conn;
+
+  const result = await Runtime.evaluate({
+    expression: `
+      (async () => {
+        try {
+          const gmail = window.GoogleAccount?.di?.get?.('gmail');
+          if (!gmail) {
+            return { success: false, error: 'Gmail service not found' };
+          }
+
+          const draftId = ${JSON.stringify(draftId)};
+
+          // DELETE /gmail/v1/users/me/drafts/{draftId}
+          await gmail._deleteAsync('/gmail/v1/users/me/drafts/' + draftId);
+
+          return { success: true };
+        } catch (e) {
+          return { success: false, error: e.message };
+        }
+      })()
+    `,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+
+  return result.result.value as { success: boolean; error?: string };
+}
+
+/**
+ * Delete a draft via Microsoft Graph API
+ *
+ * @param conn - The Superhuman connection
+ * @param draftId - The draft/message ID to delete
+ * @returns Result with success status
+ */
+export async function deleteDraftMsgraph(
+  conn: SuperhumanConnection,
+  draftId: string
+): Promise<{ success: boolean; error?: string }> {
+  const { Runtime } = conn;
+
+  const result = await Runtime.evaluate({
+    expression: `
+      (async () => {
+        try {
+          const msgraph = window.GoogleAccount?.di?.get?.('msgraph');
+          if (!msgraph) {
+            return { success: false, error: 'Microsoft Graph service not found' };
+          }
+
+          const draftId = ${JSON.stringify(draftId)};
+
+          // DELETE /me/messages/{id}
+          let url;
+          if (typeof msgraph._fullURL === 'function') {
+            url = msgraph._fullURL('/v1.0/me/messages/' + draftId, {});
+          } else {
+            url = 'https://graph.microsoft.com/v1.0/me/messages/' + draftId;
+          }
+
+          const response = await msgraph._fetchWithRetry(url, {
+            method: 'DELETE',
+            endpoint: 'mail.delete'
+          });
+
+          if (response.ok || response.status === 204) {
+            return { success: true };
+          } else {
+            const errorText = await response.text().catch(() => 'Unknown error');
+            return { success: false, error: 'HTTP ' + response.status + ': ' + errorText };
+          }
+        } catch (e) {
+          return { success: false, error: e.message };
+        }
+      })()
+    `,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+
+  return result.result.value as { success: boolean; error?: string };
+}
+
+/**
+ * Delete a draft using the appropriate provider
+ *
+ * Automatically detects the account type and routes to the correct implementation.
+ *
+ * @param conn - The Superhuman connection
+ * @param draftId - The draft ID to delete
+ * @returns Result with success status
+ */
+export async function deleteDraft(
+  conn: SuperhumanConnection,
+  draftId: string
+): Promise<{ success: boolean; error?: string }> {
+  // Detect account type
+  const accountInfo = await getAccountInfo(conn);
+
+  if (!accountInfo) {
+    return { success: false, error: "Could not detect account type" };
+  }
+
+  if (accountInfo.isMicrosoft) {
+    return deleteDraftMsgraph(conn, draftId);
+  } else {
+    return deleteDraftGmail(conn, draftId);
+  }
+}
