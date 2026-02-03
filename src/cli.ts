@@ -44,7 +44,7 @@ import {
   type CreateEventInput,
   type UpdateEventInput,
 } from "./calendar";
-import { sendEmail } from "./send-api";
+import { sendEmail, createDraft } from "./send-api";
 
 const VERSION = "0.1.0";
 const CDP_PORT = 9333;
@@ -640,21 +640,37 @@ async function cmdCompose(options: CliOptions, keepOpen = true) {
 }
 
 async function cmdDraft(options: CliOptions) {
-  const state = await cmdCompose(options, true);
-
-  if (!state) {
+  if (options.to.length === 0) {
+    error("At least one recipient is required (--to)");
     process.exit(1);
   }
 
-  // Reconnect to save
   const conn = await checkConnection(options.port);
   if (!conn) {
     process.exit(1);
   }
 
-  info("Saving draft...");
-  await saveDraft(conn, state.id);
-  success("Draft saved");
+  // Use HTML body if provided, otherwise convert plain text to HTML
+  const bodyContent = options.html || textToHtml(options.body);
+
+  info("Creating draft...");
+  const result = await createDraft(conn, {
+    to: options.to,
+    cc: options.cc.length > 0 ? options.cc : undefined,
+    bcc: options.bcc.length > 0 ? options.bcc : undefined,
+    subject: options.subject || "",
+    body: bodyContent,
+    isHtml: true,
+  });
+
+  if (result.success) {
+    success("Draft created!");
+    if (result.draftId) {
+      log(`  ${colors.dim}Draft ID: ${result.draftId}${colors.reset}`);
+    }
+  } else {
+    error(`Failed to create draft: ${result.error}`);
+  }
 
   await disconnect(conn);
 }
