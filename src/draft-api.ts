@@ -1,0 +1,274 @@
+/**
+ * Direct Superhuman Draft API
+ *
+ * Creates drafts via /v3/userdata.writeMessage without CDP UI manipulation.
+ */
+
+import { SuperhumanConnection } from "./superhuman-api";
+
+const SUPERHUMAN_BACKEND = "https://mail.superhuman.com/~backend";
+
+/**
+ * Generate a draft ID in Superhuman's format: "draft00" + 14 hex chars
+ */
+function generateDraftId(): string {
+  const hex = Array.from({ length: 14 }, () =>
+    Math.floor(Math.random() * 16).toString(16)
+  ).join("");
+  return `draft00${hex}`;
+}
+
+/**
+ * Generate an RFC822 Message-ID
+ */
+function generateRfc822Id(): string {
+  const random = Math.random().toString(36).substring(2, 10);
+  const uuid = crypto.randomUUID();
+  return `<${random}.${uuid}@we.are.superhuman.com>`;
+}
+
+export interface DraftOptions {
+  to?: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject?: string;
+  body?: string; // HTML body
+  action?: "compose" | "reply" | "forward";
+  inReplyToThreadId?: string;
+  inReplyToRfc822Id?: string;
+}
+
+export interface DraftResult {
+  success: boolean;
+  draftId?: string;
+  threadId?: string;
+  error?: string;
+}
+
+interface UserInfo {
+  userId: string;
+  email: string;
+  token: string;
+  timeZone: string;
+}
+
+/**
+ * Extract user info and token needed for direct API calls
+ */
+async function getUserInfo(conn: SuperhumanConnection): Promise<UserInfo> {
+  const { Runtime } = conn;
+
+  const result = await Runtime.evaluate({
+    expression: `
+      (() => {
+        try {
+          const ga = window.GoogleAccount;
+          const credential = ga?.credential;
+          const authData = credential?._authData;
+          const user = credential?.user;
+
+          if (!authData?.idToken) {
+            return { error: "Could not extract token" };
+          }
+
+          return {
+            userId: user?._id,
+            email: ga?.emailAddress,
+            token: authData.idToken,
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+          };
+        } catch (e) {
+          return { error: e.message };
+        }
+      })()
+    `,
+    returnByValue: true,
+  });
+
+  const value = result.result.value as UserInfo | { error: string };
+
+  if ("error" in value) {
+    throw new Error(`Failed to get user info: ${value.error}`);
+  }
+
+  return value;
+}
+
+/**
+ * Create a draft directly via Superhuman API (no CDP UI manipulation)
+ */
+export async function createDraftDirect(
+  conn: SuperhumanConnection,
+  options: DraftOptions
+): Promise<DraftResult> {
+  try {
+    const userInfo = await getUserInfo(conn);
+
+    const draftId = generateDraftId();
+    const threadId = options.inReplyToThreadId || generateDraftId();
+    const now = new Date().toISOString();
+
+    // Format recipients
+    const formatRecipients = (emails?: string[]): string[] => {
+      if (!emails || emails.length === 0) return [];
+      return emails;
+    };
+
+    const draftValue = {
+      id: draftId,
+      threadId: threadId,
+      action: options.action || "compose",
+      name: null,
+      from: `${userInfo.email.split("@")[0]} <${userInfo.email}>`,
+      to: formatRecipients(options.to),
+      cc: formatRecipients(options.cc),
+      bcc: formatRecipients(options.bcc),
+      subject: options.subject || "",
+      body: options.body || "",
+      snippet: (options.body || "").replace(/<[^>]*>/g, "").substring(0, 100),
+      inReplyToRfc822Id: options.inReplyToRfc822Id || null,
+      labelIds: ["DRAFT"],
+      clientCreatedAt: now,
+      date: now,
+      fingerprint: {
+        to: (options.to || []).join(","),
+        cc: (options.cc || []).join(","),
+        attachments: "",
+      },
+      lastSessionId: crypto.randomUUID(),
+      quotedContent: "",
+      quotedContentInlined: false,
+      references: [],
+      reminder: null,
+      rfc822Id: generateRfc822Id(),
+      scheduledFor: null,
+      scheduledReplyInterruptedAt: null,
+      schemaVersion: 3,
+      totalComposeSeconds: 0,
+      timeZone: userInfo.timeZone,
+    };
+
+    const requestBody = {
+      writes: [
+        {
+          path: `users/${userInfo.userId}/threads/${threadId}/messages/${draftId}/draft`,
+          value: draftValue,
+        },
+      ],
+    };
+
+    const response = await fetch(`${SUPERHUMAN_BACKEND}/v3/userdata.writeMessage`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/plain;charset=UTF-8",
+        Authorization: `Bearer ${userInfo.token}`,
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return {
+        success: false,
+        error: `API error ${response.status}: ${text}`,
+      };
+    }
+
+    return {
+      success: true,
+      draftId,
+      threadId,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Update an existing draft
+ */
+export async function updateDraftDirect(
+  conn: SuperhumanConnection,
+  draftId: string,
+  threadId: string,
+  options: DraftOptions
+): Promise<DraftResult> {
+  try {
+    const userInfo = await getUserInfo(conn);
+    const now = new Date().toISOString();
+
+    const draftValue = {
+      id: draftId,
+      threadId: threadId,
+      action: options.action || "compose",
+      name: null,
+      from: `${userInfo.email.split("@")[0]} <${userInfo.email}>`,
+      to: options.to || [],
+      cc: options.cc || [],
+      bcc: options.bcc || [],
+      subject: options.subject || "",
+      body: options.body || "",
+      snippet: (options.body || "").replace(/<[^>]*>/g, "").substring(0, 100),
+      inReplyToRfc822Id: options.inReplyToRfc822Id || null,
+      labelIds: ["DRAFT"],
+      clientCreatedAt: now,
+      date: now,
+      fingerprint: {
+        to: (options.to || []).join(","),
+        cc: (options.cc || []).join(","),
+        attachments: "",
+      },
+      lastSessionId: crypto.randomUUID(),
+      quotedContent: "",
+      quotedContentInlined: false,
+      references: [],
+      reminder: null,
+      rfc822Id: generateRfc822Id(),
+      scheduledFor: null,
+      scheduledReplyInterruptedAt: null,
+      schemaVersion: 3,
+      totalComposeSeconds: 0,
+      timeZone: userInfo.timeZone,
+    };
+
+    const requestBody = {
+      writes: [
+        {
+          path: `users/${userInfo.userId}/threads/${threadId}/messages/${draftId}/draft`,
+          value: draftValue,
+        },
+      ],
+    };
+
+    const response = await fetch(`${SUPERHUMAN_BACKEND}/v3/userdata.writeMessage`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/plain;charset=UTF-8",
+        Authorization: `Bearer ${userInfo.token}`,
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return {
+        success: false,
+        error: `API error ${response.status}: ${text}`,
+      };
+    }
+
+    return {
+      success: true,
+      draftId,
+      threadId,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}

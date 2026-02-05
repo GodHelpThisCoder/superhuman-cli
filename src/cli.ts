@@ -47,6 +47,7 @@ import {
   type UpdateEventInput,
 } from "./calendar";
 import { sendEmail, createDraft, updateDraft, sendDraftById, deleteDraft } from "./send-api";
+import { createDraftDirect } from "./draft-api";
 import { searchContacts, resolveRecipient, type Contact } from "./contacts";
 import {
   getToken,
@@ -861,64 +862,24 @@ async function cmdDraft(options: CliOptions) {
   const bodyContent = options.html || textToHtml(options.body);
 
   if (options.provider === "superhuman") {
-    // CDP approach - creates draft through Superhuman's native UI
-    // This ensures draft appears in Superhuman UI and syncs across devices
-    info("Creating draft via Superhuman...");
+    // Direct API approach - fast, no UI needed, supports BCC
+    info("Creating draft via Superhuman API...");
 
-    const draftKey = await openCompose(conn);
-    if (!draftKey) {
-      warn("Failed to open compose window, falling back to Gmail API...");
-      // Fallback to direct API
-      const result = await createDraft(conn, {
-        to: resolvedTo,
-        cc: resolvedCc,
-        bcc: resolvedBcc,
-        subject: options.subject || "",
-        body: bodyContent,
-        isHtml: true,
-      });
-      if (result.success) {
-        success("Draft created (via Gmail API)!");
-        if (result.draftId) {
-          log(`  ${colors.dim}Draft ID: ${result.draftId}${colors.reset}`);
-        }
-      } else {
-        error(`Failed to create draft: ${result.error}`);
-      }
-      await disconnect(conn);
-      return;
-    }
+    const result = await createDraftDirect(conn, {
+      to: resolvedTo,
+      cc: resolvedCc,
+      bcc: resolvedBcc,
+      subject: options.subject || "",
+      body: bodyContent,
+    });
 
-    // Add recipients
-    for (const email of resolvedTo) {
-      await addRecipient(conn, email, undefined, draftKey);
-    }
-    if (resolvedCc) {
-      for (const email of resolvedCc) {
-        await addCcRecipient(conn, email, undefined, draftKey);
-      }
-    }
-    // Note: BCC not supported via CDP (Superhuman doesn't expose this in compose)
-
-    // Set subject
-    if (options.subject) {
-      await setSubject(conn, options.subject, draftKey);
-    }
-
-    // Set body
-    await setBody(conn, bodyContent, draftKey);
-
-    // Save the draft
-    const saved = await saveDraft(conn, draftKey);
-    if (saved) {
+    if (result.success) {
       success("Draft created in Superhuman!");
-      log(`  ${colors.dim}Draft will appear in Superhuman UI and sync to all devices${colors.reset}`);
+      log(`  ${colors.dim}Draft ID: ${result.draftId}${colors.reset}`);
+      log(`  ${colors.dim}Syncs to all devices automatically${colors.reset}`);
     } else {
-      error("Failed to save draft");
+      error(`Failed to create draft: ${result.error}`);
     }
-
-    // Close compose window
-    await closeCompose(conn);
   } else {
     // Direct API approach (Gmail/MS Graph)
     info("Creating draft via Gmail/MS Graph API...");
