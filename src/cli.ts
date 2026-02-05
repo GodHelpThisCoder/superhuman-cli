@@ -884,8 +884,8 @@ async function cmdDraft(options: CliOptions) {
   // This avoids CDP connection entirely for Superhuman drafts
   if (options.account && options.provider === "superhuman") {
     await loadTokensFromDisk();
-    if (hasCachedSuperhumanCredentials(options.account)) {
-      const token = getCachedToken(options.account);
+    if (await hasCachedSuperhumanCredentials(options.account)) {
+      const token = await getCachedToken(options.account);
       if (token?.idToken && token?.userId) {
         info("Creating draft via cached credentials (no CDP)...");
 
@@ -1046,7 +1046,7 @@ async function cmdSendDraft(options: CliOptions) {
 
   // Load cached credentials
   await loadTokensFromDisk();
-  const token = getCachedToken(options.account);
+  const token = await getCachedToken(options.account);
   if (!token?.idToken || !token?.userId) {
     error(`No cached credentials for ${options.account}. Run 'superhuman auth' first.`);
     process.exit(1);
@@ -1302,8 +1302,8 @@ async function cmdReply(options: CliOptions) {
   // Fast path: use cached credentials if --account is specified
   if (options.account) {
     await loadTokensFromDisk();
-    if (hasCachedSuperhumanCredentials(options.account)) {
-      const token = getCachedToken(options.account);
+    if (await hasCachedSuperhumanCredentials(options.account)) {
+      const token = await getCachedToken(options.account);
       if (token?.idToken && token?.userId) {
         const body = options.body || "";
 
@@ -1418,8 +1418,8 @@ async function cmdReplyAll(options: CliOptions) {
   // Fast path: use cached credentials if --account is specified
   if (options.account) {
     await loadTokensFromDisk();
-    if (hasCachedSuperhumanCredentials(options.account)) {
-      const token = getCachedToken(options.account);
+    if (await hasCachedSuperhumanCredentials(options.account)) {
+      const token = await getCachedToken(options.account);
       if (token?.idToken && token?.userId) {
         const body = options.body || "";
 
@@ -1560,8 +1560,8 @@ async function cmdForward(options: CliOptions) {
   // Fast path: use cached credentials if --account is specified
   if (options.account) {
     await loadTokensFromDisk();
-    if (hasCachedSuperhumanCredentials(options.account)) {
-      const token = getCachedToken(options.account);
+    if (await hasCachedSuperhumanCredentials(options.account)) {
+      const token = await getCachedToken(options.account);
       if (token?.idToken && token?.userId) {
         const body = options.body || "";
 

@@ -15,6 +15,8 @@ export interface TokenInfo {
   email: string;
   expires: number;
   isMicrosoft: boolean;
+  // OAuth refresh token for background refresh
+  refreshToken?: string;
   // Superhuman backend API fields
   userId?: string;
   idToken?: string;
@@ -70,6 +72,8 @@ export async function extractToken(
             email: ga?.emailAddress || '',
             expires: authData.expires || (Date.now() + 3600000),
             isMicrosoft: !!di?.get?.('isMicrosoft'),
+            // OAuth refresh token for background refresh
+            refreshToken: authData.refreshToken,
             // Superhuman backend API fields
             userId: user?._id,
             idToken: authData.idToken,
@@ -148,6 +152,57 @@ export function setTokenCacheForTest(email: string, token: TokenInfo): void {
   tokenCache.set(email, token);
 }
 
+/**
+ * Refresh OAuth access token using refresh token.
+ *
+ * Calls the appropriate OAuth endpoint (Google or Microsoft) to exchange
+ * the refresh token for a new access token.
+ *
+ * @param token - Token info with refresh token
+ * @returns Updated TokenInfo with new access token, or null on failure
+ */
+export async function refreshAccessToken(
+  token: TokenInfo
+): Promise<TokenInfo | null> {
+  if (!token.refreshToken) {
+    return null;
+  }
+
+  const endpoint = token.isMicrosoft
+    ? "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    : "https://oauth2.googleapis.com/token";
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: token.refreshToken,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(`Token refresh failed: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+
+    return {
+      ...token,
+      accessToken: data.access_token,
+      expires: Date.now() + data.expires_in * 1000,
+      refreshToken: data.refresh_token || token.refreshToken,
+    };
+  } catch (error) {
+    console.error("Token refresh error:", error);
+    return null;
+  }
+}
+
 // ============================================================================
 // Token Persistence
 // ============================================================================
@@ -163,6 +218,7 @@ export interface PersistedTokens {
       accessToken: string;
       expires: number; // Unix timestamp
       userId?: string; // Superhuman user ID for API paths
+      refreshToken?: string; // OAuth refresh token for background refresh
       superhumanToken?: {
         token: string; // idToken for Superhuman backend
         expires?: number;
@@ -210,6 +266,7 @@ export async function saveTokensToDisk(): Promise<void> {
       accessToken: token.accessToken,
       expires: token.expires,
       userId: token.userId,
+      refreshToken: token.refreshToken,
       superhumanToken: token.idToken ? {
         token: token.idToken,
         expires: token.idTokenExpires,
@@ -251,6 +308,7 @@ export async function loadTokensFromDisk(): Promise<boolean> {
         expires: account.expires,
         isMicrosoft: account.type === "microsoft",
         userId: account.userId,
+        refreshToken: account.refreshToken,
         idToken: account.superhumanToken?.token,
         idTokenExpires: account.superhumanToken?.expires,
       });
@@ -285,15 +343,33 @@ export function hasValidCachedTokens(): boolean {
 
 /**
  * Get cached token for a specific account.
- * Returns undefined if not found or expired.
+ *
+ * If the token is expired or expiring within 5 minutes:
+ * - Attempts to refresh using the refresh token
+ * - Persists the refreshed token to disk
+ * - Returns undefined if refresh fails
+ *
+ * @param email - Account email
+ * @returns Token info if valid/refreshed, undefined otherwise
  */
-export function getCachedToken(email: string): TokenInfo | undefined {
+export async function getCachedToken(email: string): Promise<TokenInfo | undefined> {
   const token = tokenCache.get(email);
   if (!token) return undefined;
 
   const bufferMs = 5 * 60 * 1000; // 5 minutes
   if (token.expires < Date.now() + bufferMs) {
-    return undefined; // Expired or expiring soon
+    // Token expired or expiring soon - try to refresh
+    if (token.refreshToken) {
+      const refreshed = await refreshAccessToken(token);
+      if (refreshed) {
+        tokenCache.set(email, refreshed);
+        await saveTokensToDisk();
+        return refreshed;
+      }
+    }
+    // Refresh failed or no refresh token
+    console.warn(`Token for ${email} expired. Run 'superhuman auth' to re-authenticate.`);
+    return undefined;
   }
 
   return token;
@@ -310,8 +386,8 @@ export function getCachedAccounts(): string[] {
  * Check if we have valid cached credentials for Superhuman API.
  * Requires both idToken and userId.
  */
-export function hasCachedSuperhumanCredentials(email: string): boolean {
-  const token = getCachedToken(email);
+export async function hasCachedSuperhumanCredentials(email: string): Promise<boolean> {
+  const token = await getCachedToken(email);
   return !!(token?.idToken && token?.userId);
 }
 

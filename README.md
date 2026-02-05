@@ -88,7 +88,19 @@ bun src/cli.ts contacts search "john" --account user@gmail.com
 bun src/cli.ts contacts search "john" --account user@company.com
 ```
 
-**How it works:** The CLI extracts OAuth tokens directly from Superhuman and makes API calls to Gmail or Microsoft Graph. Tokens are cached in memory with automatic refresh when expired.
+**How it works:** The CLI extracts OAuth tokens directly from Superhuman and makes API calls to Gmail or Microsoft Graph. Tokens are cached to disk with automatic background refresh when expiring.
+
+### Token Management
+
+```bash
+# Extract and cache tokens from Superhuman (required once)
+bun src/cli.ts auth
+
+# Tokens are automatically refreshed when expiring
+# If refresh fails, you'll see: "Token for user@email.com expired. Run 'superhuman auth' to re-authenticate."
+```
+
+Tokens are stored in `~/.config/superhuman-cli/tokens.json` and automatically refreshed using OAuth refresh tokens when they expire (within 5 minutes of expiry). No CDP connection is needed for token refresh.
 
 ### Composing Email
 
@@ -294,7 +306,7 @@ Most operations use **direct Gmail API and Microsoft Graph API** calls:
 | Calendar events | Google Calendar API | MS Graph Calendar API |
 | Free/busy | `POST /freeBusy` | `POST /me/calendar/getSchedule` |
 
-OAuth tokens are extracted from Superhuman and cached with automatic refresh.
+OAuth tokens (including refresh tokens) are extracted from Superhuman and cached to disk. When tokens expire, they are automatically refreshed via OAuth endpoints without requiring CDP connection.
 
 ### CDP (Secondary)
 
