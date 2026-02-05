@@ -174,7 +174,7 @@ ${colors.bold}OPTIONS${colors.reset}
   --html <text>      Email body as HTML
   --send             Send immediately instead of saving as draft (for reply/reply-all/forward)
   --update <id>      Draft ID to update (for draft command)
-  --provider <type>  Draft API: "superhuman" (native, default) or "gmail" (direct API)
+  --provider <type>  Draft API: "superhuman" (default), "gmail", or "outlook"
   --draft <id>       Draft ID to send (for send command)
   --label <id>       Label ID to add or remove (for add-label/remove-label)
   --until <time>     Snooze until time: preset (tomorrow, next-week, weekend, evening) or ISO datetime
@@ -388,7 +388,7 @@ interface CliOptions {
   // ai options
   aiQuery: string; // question to ask the AI
   // draft provider option
-  provider: "superhuman" | "gmail"; // which API to use for drafts (default: superhuman)
+  provider: "superhuman" | "gmail" | "outlook"; // which API to use for drafts (default: superhuman)
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -580,10 +580,10 @@ function parseArgs(args: string[]): CliOptions {
           i += 1;
           break;
         case "provider":
-          if (value === "superhuman" || value === "gmail") {
+          if (value === "superhuman" || value === "gmail" || value === "outlook") {
             options.provider = value;
           } else {
-            error(`Invalid provider: ${value}. Use 'superhuman' or 'gmail'`);
+            error(`Invalid provider: ${value}. Use 'superhuman', 'gmail', or 'outlook'`);
             process.exit(1);
           }
           i += inc;
