@@ -8,9 +8,9 @@
 import type { SuperhumanConnection } from "./superhuman-api";
 import {
   type TokenInfo,
-  type CalendarEventDirect,
-  type CreateCalendarEventInput,
-  type UpdateCalendarEventInput,
+  type CalendarEventDirect as CalendarEvent,
+  type CreateCalendarEventInput as CreateEventInput,
+  type UpdateCalendarEventInput as UpdateEventInput,
   type FreeBusySlot,
   getToken,
   listCalendarEventsDirect,
@@ -21,41 +21,8 @@ import {
 } from "./token-api";
 import { listAccounts } from "./accounts";
 
-/**
- * Represents a calendar event with fields common to both Google and Microsoft
- */
-export interface CalendarEvent {
-  id: string;
-  calendarId: string;
-  summary: string;
-  description?: string;
-  start: {
-    dateTime?: string;
-    date?: string; // for all-day events
-    timeZone?: string;
-  };
-  end: {
-    dateTime?: string;
-    date?: string;
-    timeZone?: string;
-  };
-  attendees?: Array<{
-    email: string;
-    displayName?: string;
-    responseStatus?: "needsAction" | "accepted" | "declined" | "tentative";
-    organizer?: boolean;
-    self?: boolean;
-  }>;
-  recurrence?: string[]; // RRULE format
-  recurringEventId?: string;
-  htmlLink?: string;
-  conferenceData?: Record<string, unknown>;
-  status?: "confirmed" | "tentative" | "cancelled";
-  visibility?: "default" | "public" | "private";
-  allDay?: boolean;
-  isOrganizer?: boolean;
-  provider?: "google" | "microsoft";
-}
+// Re-export the calendar event type for external use
+export type { CalendarEvent };
 
 /**
  * Result of a calendar operation (create, update, delete)
@@ -66,10 +33,8 @@ export interface CalendarResult {
   error?: string;
 }
 
-/**
- * Represents a busy time slot
- */
-export { FreeBusySlot };
+// Re-export types for external use
+export type { FreeBusySlot, CreateEventInput, UpdateEventInput };
 
 /**
  * Result of a free/busy query
@@ -83,53 +48,10 @@ export interface FreeBusyResult {
  * Options for listing events
  */
 export interface ListEventsOptions {
-  calendarId?: string; // Optional: specific calendar to list from
+  calendarId?: string;
   timeMin?: Date | string;
   timeMax?: Date | string;
   limit?: number;
-}
-
-/**
- * Input for creating a calendar event
- */
-export interface CreateEventInput {
-  calendarId?: string; // Optional: specific calendar to create in
-  summary: string;
-  description?: string;
-  start: {
-    dateTime?: string;
-    date?: string;
-    timeZone?: string;
-  };
-  end: {
-    dateTime?: string;
-    date?: string;
-    timeZone?: string;
-  };
-  attendees?: Array<{ email: string; displayName?: string }>;
-  recurrence?: string[];
-  location?: string;
-}
-
-/**
- * Input for updating a calendar event (partial update)
- */
-export interface UpdateEventInput {
-  summary?: string;
-  description?: string;
-  start?: {
-    dateTime?: string;
-    date?: string;
-    timeZone?: string;
-  };
-  end?: {
-    dateTime?: string;
-    date?: string;
-    timeZone?: string;
-  };
-  attendees?: Array<{ email: string; displayName?: string }>;
-  recurrence?: string[];
-  location?: string;
 }
 
 /**
@@ -147,13 +69,6 @@ async function getCurrentToken(conn: SuperhumanConnection): Promise<TokenInfo> {
 }
 
 /**
- * Convert CalendarEventDirect to CalendarEvent (they're structurally identical)
- */
-function toCalendarEvent(event: CalendarEventDirect): CalendarEvent {
-  return event as CalendarEvent;
-}
-
-/**
  * List calendar events within a time range
  *
  * @param conn - The Superhuman connection
@@ -167,21 +82,15 @@ export async function listEvents(
   try {
     const token = await getCurrentToken(conn);
 
-    const timeMin = options?.timeMin
-      ? (typeof options.timeMin === "string" ? options.timeMin : options.timeMin.toISOString())
-      : undefined;
-    const timeMax = options?.timeMax
-      ? (typeof options.timeMax === "string" ? options.timeMax : options.timeMax.toISOString())
-      : undefined;
+    const toISOString = (v: Date | string): string =>
+      typeof v === "string" ? v : v.toISOString();
 
-    const events = await listCalendarEventsDirect(token, {
+    return await listCalendarEventsDirect(token, {
       calendarId: options?.calendarId,
-      timeMin,
-      timeMax,
+      timeMin: options?.timeMin ? toISOString(options.timeMin) : undefined,
+      timeMax: options?.timeMax ? toISOString(options.timeMax) : undefined,
       limit: options?.limit,
     });
-
-    return events.map(toCalendarEvent);
   } catch (e: any) {
     console.error("listEvents error:", e.message);
     return [];
@@ -201,19 +110,7 @@ export async function createEvent(
 ): Promise<CalendarResult> {
   try {
     const token = await getCurrentToken(conn);
-
-    const input: CreateCalendarEventInput = {
-      calendarId: event.calendarId,
-      summary: event.summary,
-      description: event.description,
-      start: event.start,
-      end: event.end,
-      attendees: event.attendees,
-      recurrence: event.recurrence,
-      location: event.location,
-    };
-
-    const result = await createCalendarEventDirect(token, input);
+    const result = await createCalendarEventDirect(token, event);
 
     if (!result) {
       return { success: false, error: "Failed to create event" };
@@ -270,18 +167,7 @@ export async function updateEvent(
 ): Promise<CalendarResult> {
   try {
     const token = await getCurrentToken(conn);
-
-    const input: UpdateCalendarEventInput = {
-      summary: updates.summary,
-      description: updates.description,
-      start: updates.start,
-      end: updates.end,
-      attendees: updates.attendees,
-      recurrence: updates.recurrence,
-      location: updates.location,
-    };
-
-    const success = await updateCalendarEventDirect(token, eventId, input, calendarId);
+    const success = await updateCalendarEventDirect(token, eventId, updates, calendarId);
 
     if (!success) {
       return { success: false, error: "Failed to update event" };
@@ -316,14 +202,15 @@ export async function getFreeBusy(
   try {
     const token = await getCurrentToken(conn);
 
-    const timeMin = typeof options.timeMin === "string"
-      ? options.timeMin
-      : options.timeMin.toISOString();
-    const timeMax = typeof options.timeMax === "string"
-      ? options.timeMax
-      : options.timeMax.toISOString();
+    const toISOString = (v: Date | string): string =>
+      typeof v === "string" ? v : v.toISOString();
 
-    const busy = await getFreeBusyDirect(token, timeMin, timeMax, options.calendarIds);
+    const busy = await getFreeBusyDirect(
+      token,
+      toISOString(options.timeMin),
+      toISOString(options.timeMax),
+      options.calendarIds
+    );
 
     return { busy, free: [] };
   } catch (e: any) {

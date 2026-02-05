@@ -1437,6 +1437,34 @@ function mapMsResponseStatus(status?: string): "needsAction" | "accepted" | "dec
 }
 
 /**
+ * Convert our date/time format to MS Graph format.
+ * MS Graph requires dateTime even for all-day events.
+ */
+function toMsGraphDateTime(
+  input: { dateTime?: string; date?: string; timeZone?: string },
+  isEndTime: boolean = false
+): { dateTime: string | undefined; timeZone: string } {
+  const dateTime = input.dateTime ||
+    (input.date ? `${input.date}T${isEndTime ? "23:59:59" : "00:00:00"}` : undefined);
+  return {
+    dateTime,
+    timeZone: input.timeZone || "UTC",
+  };
+}
+
+/**
+ * Convert attendees to MS Graph format.
+ */
+function toMsGraphAttendees(
+  attendees?: Array<{ email: string; displayName?: string }>
+): Array<{ emailAddress: { address: string; name: string }; type: string }> {
+  return (attendees || []).map((a) => ({
+    emailAddress: { address: a.email, name: a.displayName || "" },
+    type: "required",
+  }));
+}
+
+/**
  * Create a calendar event directly via Google Calendar or MS Graph API.
  *
  * @param token - Token info
@@ -1464,18 +1492,9 @@ export async function createCalendarEventDirect(
     const msEvent = {
       subject: event.summary,
       body: event.description ? { contentType: "text", content: event.description } : undefined,
-      start: {
-        dateTime: event.start.dateTime || (event.start.date ? `${event.start.date}T00:00:00` : undefined),
-        timeZone: event.start.timeZone || "UTC",
-      },
-      end: {
-        dateTime: event.end.dateTime || (event.end.date ? `${event.end.date}T23:59:59` : undefined),
-        timeZone: event.end.timeZone || "UTC",
-      },
-      attendees: (event.attendees || []).map((a) => ({
-        emailAddress: { address: a.email, name: a.displayName || "" },
-        type: "required",
-      })),
+      start: toMsGraphDateTime(event.start, false),
+      end: toMsGraphDateTime(event.end, true),
+      attendees: toMsGraphAttendees(event.attendees),
       location: event.location ? { displayName: event.location } : undefined,
       isAllDay: !!event.start.date && !event.start.dateTime,
     };
@@ -1541,31 +1560,15 @@ export async function updateCalendarEventDirect(
 ): Promise<boolean> {
   if (token.isMicrosoft) {
     // MS Graph: Update event
-    const msUpdates: any = {};
+    const msUpdates: Record<string, unknown> = {};
 
     if (updates.summary) msUpdates.subject = updates.summary;
     if (updates.description) msUpdates.body = { contentType: "text", content: updates.description };
-    if (updates.start) {
-      msUpdates.start = {
-        dateTime: updates.start.dateTime || (updates.start.date ? `${updates.start.date}T00:00:00` : undefined),
-        timeZone: updates.start.timeZone || "UTC",
-      };
-    }
-    if (updates.end) {
-      msUpdates.end = {
-        dateTime: updates.end.dateTime || (updates.end.date ? `${updates.end.date}T23:59:59` : undefined),
-        timeZone: updates.end.timeZone || "UTC",
-      };
-    }
-    if (updates.attendees) {
-      msUpdates.attendees = updates.attendees.map((a) => ({
-        emailAddress: { address: a.email, name: a.displayName || "" },
-        type: "required",
-      }));
-    }
+    if (updates.start) msUpdates.start = toMsGraphDateTime(updates.start, false);
+    if (updates.end) msUpdates.end = toMsGraphDateTime(updates.end, true);
+    if (updates.attendees) msUpdates.attendees = toMsGraphAttendees(updates.attendees);
     if (updates.location) msUpdates.location = { displayName: updates.location };
 
-    // MS Graph allows updating events directly by ID
     const path = `/me/events/${eventId}`;
     const result = await msgraphFetch(token.accessToken, path, {
       method: "PATCH",
@@ -1575,28 +1578,13 @@ export async function updateCalendarEventDirect(
 
     return result !== null;
   } else {
-    // Google Calendar: Patch event
-    const gcalUpdates: any = {};
-
-    if (updates.summary) gcalUpdates.summary = updates.summary;
-    if (updates.description) gcalUpdates.description = updates.description;
-    if (updates.start) gcalUpdates.start = updates.start;
-    if (updates.end) gcalUpdates.end = updates.end;
-    if (updates.attendees) {
-      gcalUpdates.attendees = updates.attendees.map((a) => ({
-        email: a.email,
-        displayName: a.displayName,
-      }));
-    }
-    if (updates.recurrence) gcalUpdates.recurrence = updates.recurrence;
-    if (updates.location) gcalUpdates.location = updates.location;
-
+    // Google Calendar: Patch event - field names match directly
     const calId = calendarId || "primary";
     const path = `/calendars/${encodeURIComponent(calId)}/events/${eventId}`;
     const result = await gcalFetch(token.accessToken, path, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(gcalUpdates),
+      body: JSON.stringify(updates),
     });
 
     return result !== null;
