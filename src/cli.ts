@@ -57,7 +57,6 @@ import {
   hasValidCachedTokens,
   getTokensFilePath,
   extractSuperhumanToken,
-  extractUserPrefix,
   askAI,
   getCachedToken,
   getCachedAccounts,
@@ -66,7 +65,7 @@ import {
   sendEmailDirect,
 } from "./token-api";
 
-const VERSION = "0.10.0";
+const VERSION = "0.10.1";
 const CDP_PORT = 9333;
 
 // ANSI colors
@@ -3038,14 +3037,6 @@ async function cmdAi(options: CliOptions) {
     info(`Connecting to Superhuman AI...`);
     const shToken = await extractSuperhumanToken(conn, currentAccount.email);
 
-    // Extract user prefix for valid event ID generation
-    const userPrefix = await extractUserPrefix(conn);
-    if (!userPrefix) {
-      error("Could not extract user prefix for AI API");
-      await disconnect(conn);
-      process.exit(1);
-    }
-
     // Query the AI
     info(`Asking AI: "${options.aiQuery}"`);
     const result = await askAI(
@@ -3053,7 +3044,6 @@ async function cmdAi(options: CliOptions) {
       oauthToken,
       options.threadId,
       options.aiQuery,
-      { userPrefix }
     );
 
     // Display the response
