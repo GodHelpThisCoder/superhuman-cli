@@ -297,7 +297,75 @@ main().catch(console.error);
 
 **DONE** (v0.7.0): Direct API integration implemented. See "Direct API Implementation" section above.
 
+## Reply/Forward via Cached Credentials (v0.8.0)
+
+As of v0.8.0, the CLI supports **CDP-free reply/forward** using cached credentials:
+
+```bash
+# Reply to a thread (creates Superhuman draft)
+superhuman reply <thread-id> --account=email --body "Reply text"
+
+# Reply and send immediately (via Gmail/MS Graph)
+superhuman reply <thread-id> --account=email --body "Reply text" --send
+
+# Forward (creates Superhuman draft)
+superhuman forward <thread-id> --account=email --to=recipient@example.com --body "FYI"
+
+# Forward and send immediately
+superhuman forward <thread-id> --account=email --to=recipient@example.com --body "FYI" --send
+
+# Reply-all also supported
+superhuman reply-all <thread-id> --account=email --body "Thanks everyone!"
+```
+
+### Superhuman Native Send
+
+New `send-draft` command sends Superhuman drafts via `/messages/send` endpoint:
+
+```bash
+# Send a draft
+superhuman send-draft <draft-id> --account=email --to=x --subject=y --body=z
+
+# Scheduled send (delay in seconds)
+superhuman send-draft <draft-id> --account=email ... --delay=3600  # Send in 1 hour
+
+# For reply/forward drafts, specify original thread
+superhuman send-draft <draft-id> --thread=<original-thread-id> --account=email ...
+```
+
+### Send API Endpoint
+
+**URL:** `https://mail.superhuman.com/~backend/messages/send`
+**Method:** POST
+
+**Request:**
+```json
+{
+  "version": 3,
+  "outgoing_message": {
+    "superhuman_id": "uuid",
+    "rfc822_id": "<id@we.are.superhuman.com>",
+    "thread_id": "draft00xxxxx",
+    "message_id": "draft00xxxxx",
+    "from": {"email": "...", "name": "..."},
+    "to": [{"email": "...", "name": "..."}],
+    "cc": [], "bcc": [],
+    "subject": "...",
+    "html_body": "...",
+    "attachments": []
+  },
+  "delay": 20,
+  "is_multi_recipient": false
+}
+```
+
+**Response:** `{"send_at": 1770276316728}` (Unix timestamp when email will be sent)
+
+**Key insight:** `delay` parameter controls scheduled send:
+- `delay: 0` - Send immediately (no undo window)
+- `delay: 20` - Default 20-second undo window
+- `delay: 3600` - Send in 1 hour
+
 Remaining potential enhancements:
 1. Token refresh - automatically re-authenticate when idToken expires
-2. Reply/forward via cached credentials - API supports `inReplyToThreadId`/`inReplyToRfc822Id`, but CLI's `reply.ts` still uses CDP. Wire up `--account` flag for replies.
-3. Attachment support - investigate attachment upload API
+2. Attachment support - investigate attachment upload API
