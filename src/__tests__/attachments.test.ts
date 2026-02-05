@@ -8,6 +8,8 @@ import { listInbox } from "../inbox";
 import { listAttachments, downloadAttachment, addAttachment } from "../attachments";
 
 const CDP_PORT = 9333;
+// Direct API calls can take longer than CDP
+const TEST_TIMEOUT = 30000; // 30 seconds
 
 describe("attachments", () => {
   let conn: SuperhumanConnection | null = null;
@@ -48,7 +50,7 @@ describe("attachments", () => {
       expect(att.mimeType).toBeDefined();
       expect(att.attachmentId).toBeDefined();
     }
-  });
+  }, TEST_TIMEOUT);
 
   test("downloadAttachment returns base64 content", async () => {
     if (!conn) throw new Error("No connection");
@@ -97,7 +99,7 @@ describe("attachments", () => {
     expect(content.data.length).toBeGreaterThan(0);
     expect(content.size).toBeGreaterThan(0);
     console.log(`Downloaded ${content.size} bytes (${att.name})`);
-  });
+  }, TEST_TIMEOUT);
 
   test("addAttachment adds file to draft", async () => {
     if (!conn) throw new Error("No connection");

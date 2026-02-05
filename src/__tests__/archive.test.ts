@@ -8,6 +8,8 @@ import { listInbox } from "../inbox";
 import { archiveThread, deleteThread } from "../archive";
 
 const CDP_PORT = 9333;
+// Direct API calls can take longer than CDP
+const TEST_TIMEOUT = 30000; // 30 seconds
 
 describe("archive", () => {
   let conn: SuperhumanConnection | null = null;
@@ -58,7 +60,7 @@ describe("archive", () => {
 
     // Thread should NOT be in inbox after archiving
     expect(threadInInboxAfter).toBe(false);
-  });
+  }, TEST_TIMEOUT);
 
   test("deleteThread moves thread to trash", async () => {
     if (!conn) throw new Error("No connection");
@@ -83,7 +85,7 @@ describe("archive", () => {
 
     // Thread should NOT be in inbox after deleting (moved to trash)
     expect(threadInInboxAfter).toBe(false);
-  });
+  }, TEST_TIMEOUT);
 
   test("archiveThread handles multiple threads (bulk operation)", async () => {
     if (!conn) throw new Error("No connection");
@@ -124,7 +126,7 @@ describe("archive", () => {
       const isInInbox = inboxAfter.some((t) => t.id === threadId);
       expect(isInInbox).toBe(false);
     }
-  });
+  }, TEST_TIMEOUT);
 
   test("deleteThread handles multiple threads (bulk operation)", async () => {
     if (!conn) throw new Error("No connection");
@@ -165,5 +167,5 @@ describe("archive", () => {
       const isInInbox = inboxAfter.some((t) => t.id === threadId);
       expect(isInInbox).toBe(false);
     }
-  });
+  }, TEST_TIMEOUT);
 });
