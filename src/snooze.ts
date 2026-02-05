@@ -3,9 +3,18 @@
  *
  * Functions for snoozing and unsnoozing email threads via Superhuman's internal APIs.
  * Supports both Microsoft/Outlook and Gmail accounts.
+ *
+ * Two modes of operation:
+ * 1. CDP-based (via Superhuman's internal backend object): Default approach
+ * 2. Direct API (via superhumanFetch): Available when API endpoints are known
+ *
+ * Note: Superhuman's backend API is proprietary and undocumented. The direct API
+ * functions are placeholders for when the endpoints are discovered.
  */
 
 import type { SuperhumanConnection } from "./superhuman-api";
+import type { SuperhumanTokenInfo } from "./token-api";
+import { superhumanFetch } from "./token-api";
 
 export interface SnoozeResult {
   success: boolean;
@@ -329,4 +338,145 @@ export async function listSnoozed(
 
   const value = result.result.value as { threads: SnoozedThread[]; error?: string } | null;
   return value?.threads ?? [];
+}
+
+// ============================================================================
+// Direct API Functions (using Superhuman Backend Token)
+// These bypass CDP and call Superhuman's backend APIs directly.
+// Note: API endpoints are proprietary and may need adjustment.
+// ============================================================================
+
+/**
+ * Generate a UUID for reminder IDs.
+ */
+function generateUUID(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/**
+ * Snooze a thread using direct Superhuman backend API.
+ *
+ * Note: This requires knowing the thread's message IDs, which currently
+ * can only be obtained via CDP. For a fully direct implementation,
+ * you would need to first fetch thread info via Gmail/MS Graph API.
+ *
+ * @param token - Superhuman backend token
+ * @param threadId - Thread ID to snooze
+ * @param messageIds - Array of message IDs in the thread
+ * @param snoozeUntil - When to unsnooze (ISO string)
+ * @returns Result with success status and reminder ID
+ */
+export async function snoozeThreadDirect(
+  token: SuperhumanTokenInfo,
+  threadId: string,
+  messageIds: string[],
+  snoozeUntil: string
+): Promise<SnoozeResult> {
+  const reminderId = generateUUID();
+  const now = new Date().toISOString();
+
+  const reminderData = {
+    reminderId,
+    threadId,
+    messageIds,
+    triggerAt: snoozeUntil,
+    clientCreatedAt: now,
+  };
+
+  try {
+    // Discovered via CDP network monitoring: /~backend/reminders/create
+    const result = await superhumanFetch(token.token, "/reminders/create", {
+      method: "POST",
+      body: JSON.stringify({
+        reminder: reminderData,
+        markDone: false,
+        moveToInbox: false,
+        poll: true,
+      }),
+    });
+
+    if (result === null) {
+      return { success: false, error: "Authentication failed" };
+    }
+
+    return { success: true, reminderId };
+  } catch (e) {
+    return { success: false, error: (e as Error).message };
+  }
+}
+
+/**
+ * Unsnooze a thread using direct Superhuman backend API.
+ *
+ * @param token - Superhuman backend token
+ * @param threadId - Thread ID to unsnooze
+ * @param reminderId - Reminder ID to cancel
+ * @returns Result with success status
+ */
+export async function unsnoozeThreadDirect(
+  token: SuperhumanTokenInfo,
+  threadId: string,
+  reminderId: string
+): Promise<SnoozeResult> {
+  try {
+    // Discovered via CDP network monitoring: /~backend/reminders/cancel
+    const result = await superhumanFetch(token.token, "/reminders/cancel", {
+      method: "POST",
+      body: JSON.stringify({
+        reminderId,
+        threadId,
+        moveToInbox: true,
+        poll: true,
+      }),
+    });
+
+    if (result === null) {
+      return { success: false, error: "Authentication failed" };
+    }
+
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: (e as Error).message };
+  }
+}
+
+/**
+ * List snoozed threads using direct Superhuman backend API.
+ *
+ * @param token - Superhuman backend token
+ * @param limit - Maximum number of threads to return
+ * @returns Array of snoozed threads
+ */
+export async function listSnoozedDirect(
+  token: SuperhumanTokenInfo,
+  limit: number = 50
+): Promise<SnoozedThread[]> {
+  try {
+    // Discovered via CDP network monitoring: /~backend/v3/userdata.getThreads
+    // with filter type: "reminder"
+    const result = await superhumanFetch(token.token, "/v3/userdata.getThreads", {
+      method: "POST",
+      body: JSON.stringify({
+        filter: { type: "reminder" },
+        offset: 0,
+        limit,
+      }),
+    });
+
+    if (result === null || !result.threadList) {
+      return [];
+    }
+
+    return result.threadList.map((item: any) => ({
+      id: item.thread?.reminder?.threadId || "",
+      snoozeUntil: item.thread?.reminder?.triggerAt,
+      reminderId: item.thread?.reminder?.reminderId,
+    }));
+  } catch (_e) {
+    return [];
+  }
 }

@@ -4,11 +4,25 @@
  * Direct email sending via Gmail API and Microsoft Graph API.
  * Bypasses the unreliable UI-based approach for faster, more reliable sending.
  *
- * Gmail: Uses gmail._postAsync() to call POST /gmail/v1/users/me/messages/send
- * Microsoft Graph: Uses msgraph._fetchJSONWithRetry() to call POST /me/sendMail
+ * Two modes of operation:
+ * 1. CDP-based (via Superhuman's DI container): Used when no token is provided
+ * 2. Direct API (via token-api.ts): Used when a token is provided (e.g., --account flag)
+ *
+ * Gmail: Uses POST /gmail/v1/users/me/messages/send
+ * Microsoft Graph: Uses POST /me/sendMail
  */
 
 import type { SuperhumanConnection } from "./superhuman-api";
+import type { TokenInfo } from "./token-api";
+import {
+  sendEmailDirect,
+  createDraftDirect,
+  sendReplyDirect,
+  createReplyDraftDirect,
+  deleteDraftDirect,
+  sendDraftDirect,
+  getThreadInfoDirect,
+} from "./token-api";
 
 /**
  * Options for sending an email
@@ -1861,4 +1875,217 @@ export async function deleteDraft(
   } else {
     return deleteDraftGmail(conn, draftId);
   }
+}
+
+// ============================================================================
+// Direct API Functions (using token-api.ts)
+// These bypass CDP and call Gmail/MS Graph APIs directly with OAuth tokens.
+// Use these when you have a TokenInfo object (e.g., from --account flag).
+// ============================================================================
+
+/**
+ * Send email using direct API (no CDP).
+ *
+ * @param token - Token info from token-api.ts
+ * @param options - Email options
+ * @returns Result with success status and message ID
+ */
+export async function sendEmailWithToken(
+  token: TokenInfo,
+  options: SendEmailOptions
+): Promise<SendResult> {
+  const result = await sendEmailDirect(token, {
+    to: options.to,
+    cc: options.cc,
+    bcc: options.bcc,
+    subject: options.subject,
+    body: options.body,
+    isHtml: options.isHtml ?? true,
+    threadId: options.threadId,
+    inReplyTo: options.inReplyTo,
+    references: options.references,
+  });
+
+  if (!result) {
+    return { success: false, error: "Failed to send email via direct API" };
+  }
+
+  return {
+    success: true,
+    messageId: result.messageId,
+    threadId: result.threadId,
+  };
+}
+
+/**
+ * Create a draft using direct API (no CDP).
+ *
+ * @param token - Token info from token-api.ts
+ * @param options - Email options
+ * @returns Result with success status and draft ID
+ */
+export async function createDraftWithToken(
+  token: TokenInfo,
+  options: SendEmailOptions
+): Promise<DraftResult> {
+  const result = await createDraftDirect(token, {
+    to: options.to,
+    cc: options.cc,
+    bcc: options.bcc,
+    subject: options.subject,
+    body: options.body,
+    isHtml: options.isHtml ?? true,
+    threadId: options.threadId,
+    inReplyTo: options.inReplyTo,
+    references: options.references,
+  });
+
+  if (!result) {
+    return { success: false, error: "Failed to create draft via direct API" };
+  }
+
+  return {
+    success: true,
+    draftId: result.draftId,
+    messageId: result.messageId,
+  };
+}
+
+/**
+ * Send a reply using direct API (no CDP).
+ *
+ * @param token - Token info from token-api.ts
+ * @param threadId - Thread ID to reply to
+ * @param body - Reply body
+ * @param options - Additional options
+ * @returns Result with success status and message ID
+ */
+export async function sendReplyWithToken(
+  token: TokenInfo,
+  threadId: string,
+  body: string,
+  options?: {
+    replyAll?: boolean;
+    cc?: string[];
+    bcc?: string[];
+    isHtml?: boolean;
+  }
+): Promise<SendResult> {
+  const result = await sendReplyDirect(token, threadId, body, options);
+
+  if (!result) {
+    return { success: false, error: "Failed to send reply via direct API" };
+  }
+
+  return {
+    success: true,
+    messageId: result.messageId,
+    threadId: result.threadId,
+  };
+}
+
+/**
+ * Create a reply draft using direct API (no CDP).
+ *
+ * @param token - Token info from token-api.ts
+ * @param threadId - Thread ID to reply to
+ * @param body - Reply body
+ * @param options - Additional options
+ * @returns Result with success status and draft ID
+ */
+export async function createReplyDraftWithToken(
+  token: TokenInfo,
+  threadId: string,
+  body: string,
+  options?: {
+    replyAll?: boolean;
+    cc?: string[];
+    bcc?: string[];
+    isHtml?: boolean;
+  }
+): Promise<DraftResult> {
+  const result = await createReplyDraftDirect(token, threadId, body, options);
+
+  if (!result) {
+    return { success: false, error: "Failed to create reply draft via direct API" };
+  }
+
+  return {
+    success: true,
+    draftId: result.draftId,
+    messageId: result.messageId,
+  };
+}
+
+/**
+ * Delete a draft using direct API (no CDP).
+ *
+ * @param token - Token info from token-api.ts
+ * @param draftId - Draft ID to delete
+ * @returns Result with success status
+ */
+export async function deleteDraftWithToken(
+  token: TokenInfo,
+  draftId: string
+): Promise<{ success: boolean; error?: string }> {
+  const success = await deleteDraftDirect(token, draftId);
+
+  if (!success) {
+    return { success: false, error: "Failed to delete draft via direct API" };
+  }
+
+  return { success: true };
+}
+
+/**
+ * Send a draft by ID using direct API (no CDP).
+ *
+ * @param token - Token info from token-api.ts
+ * @param draftId - Draft ID to send
+ * @returns Result with success status and message ID
+ */
+export async function sendDraftByIdWithToken(
+  token: TokenInfo,
+  draftId: string
+): Promise<SendResult> {
+  const result = await sendDraftDirect(token, draftId);
+
+  if (!result) {
+    return { success: false, error: "Failed to send draft via direct API" };
+  }
+
+  return {
+    success: true,
+    messageId: result.messageId,
+    threadId: result.threadId,
+  };
+}
+
+/**
+ * Get thread info for reply using direct API (no CDP).
+ *
+ * @param token - Token info from token-api.ts
+ * @param threadId - Thread ID to get info for
+ * @returns Thread info or null
+ */
+export async function getThreadInfoForReplyWithToken(
+  token: TokenInfo,
+  threadId: string
+): Promise<ThreadInfoForReply | null> {
+  const info = await getThreadInfoDirect(token, threadId);
+
+  if (!info) {
+    return null;
+  }
+
+  return {
+    threadId,
+    subject: info.subject,
+    lastMessageId: info.messageId,
+    references: info.references,
+    replyTo: info.from,
+    allTo: info.to,
+    allCc: info.cc,
+    myEmail: token.email,
+  };
 }

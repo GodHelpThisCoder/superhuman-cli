@@ -491,7 +491,8 @@ export async function searchGmailDirect(
   }
 
   // Step 2: Get unique thread IDs (multiple messages may belong to same thread)
-  const threadIds = [...new Set(searchResult.messages.map(m => m.threadId))];
+  const threadIdSet = new Set(searchResult.messages.map(m => m.threadId));
+  const threadIds = Array.from(threadIdSet);
 
   // Step 3: Fetch thread details for each unique thread
   const threads: InboxThread[] = [];
@@ -571,7 +572,8 @@ async function searchMSGraphDirect(
 
   const threads: InboxThread[] = [];
 
-  for (const [conversationId, messages] of conversationMap) {
+  const conversationEntries = Array.from(conversationMap.entries());
+  for (const [conversationId, messages] of conversationEntries) {
     // Sort by date descending and get the latest
     messages.sort((a, b) =>
       new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime()
@@ -842,7 +844,8 @@ export async function listInboxDirect(
     }
 
     const threads: InboxThread[] = [];
-    for (const [convId, messages] of conversationMap) {
+    const convEntries = Array.from(conversationMap.entries());
+    for (const [convId, messages] of convEntries) {
       messages.sort((a, b) =>
         new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime()
       );
@@ -1854,4 +1857,890 @@ export async function getFreeBusyDirect(
 
     return busy;
   }
+}
+
+// ============================================================================
+// Direct Send/Draft API Functions
+// ============================================================================
+
+/**
+ * Options for building a MIME message
+ */
+export interface MimeMessageOptions {
+  from: string;
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  body: string;
+  isHtml?: boolean;
+  inReplyTo?: string;
+  references?: string[];
+}
+
+/**
+ * Build an RFC 2822 MIME message and return it base64url encoded.
+ * This is the format required by Gmail API for sending/creating drafts.
+ */
+export function buildMimeMessage(options: MimeMessageOptions): string {
+  const headers: string[] = [
+    "MIME-Version: 1.0",
+    `From: ${options.from}`,
+    `To: ${options.to.join(", ")}`,
+  ];
+
+  if (options.cc && options.cc.length > 0) {
+    headers.push(`Cc: ${options.cc.join(", ")}`);
+  }
+
+  if (options.bcc && options.bcc.length > 0) {
+    headers.push(`Bcc: ${options.bcc.join(", ")}`);
+  }
+
+  headers.push(`Subject: ${options.subject}`);
+
+  // Content type based on whether body is HTML
+  if (options.isHtml !== false) {
+    headers.push("Content-Type: text/html; charset=utf-8");
+  } else {
+    headers.push("Content-Type: text/plain; charset=utf-8");
+  }
+
+  // Add threading headers for replies
+  if (options.inReplyTo) {
+    // Ensure Message-ID format with angle brackets
+    const formattedReplyTo = options.inReplyTo.startsWith("<")
+      ? options.inReplyTo
+      : `<${options.inReplyTo}>`;
+    headers.push(`In-Reply-To: ${formattedReplyTo}`);
+  }
+
+  if (options.references && options.references.length > 0) {
+    // Format references with angle brackets if needed
+    const formattedRefs = options.references
+      .map((r) => (r.startsWith("<") ? r : `<${r}>`))
+      .join(" ");
+    headers.push(`References: ${formattedRefs}`);
+  }
+
+  // Add empty line separator and body
+  headers.push("");
+  headers.push(options.body);
+
+  const rawEmail = headers.join("\r\n");
+
+  // Base64url encode the email
+  const base64Email = Buffer.from(rawEmail)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+  return base64Email;
+}
+
+/**
+ * Options for sending/creating draft
+ */
+export interface SendEmailDirectOptions {
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  body: string;
+  isHtml?: boolean;
+  threadId?: string;
+  inReplyTo?: string;
+  references?: string[];
+}
+
+/**
+ * Thread info for composing replies.
+ */
+export interface ThreadInfoDirect {
+  messageId: string | null;  // Last message's Message-ID for In-Reply-To
+  references: string[];      // Reference chain
+  subject: string;
+  from: string;
+  to: string[];
+  cc: string[];
+}
+
+/**
+ * Get thread information for composing a reply via direct API.
+ * Fetches the thread and extracts headers needed for proper threading.
+ *
+ * @param token - Token info
+ * @param threadId - The thread ID to get info for
+ * @returns Thread info or null if not found
+ */
+export async function getThreadInfoDirect(
+  token: TokenInfo,
+  threadId: string
+): Promise<ThreadInfoDirect | null> {
+  if (token.isMicrosoft) {
+    // MS Graph: Get messages in conversation
+    const path = `/me/messages?$filter=conversationId eq '${threadId}'&$select=id,subject,from,toRecipients,ccRecipients,internetMessageHeaders,receivedDateTime&$orderby=receivedDateTime desc&$top=1`;
+    const result = await msgraphFetch(token.accessToken, path);
+
+    if (!result || !result.value || result.value.length === 0) {
+      return null;
+    }
+
+    const lastMessage = result.value[0];
+
+    // Extract Message-ID from internet message headers
+    let messageId: string | null = null;
+    const references: string[] = [];
+
+    if (lastMessage.internetMessageHeaders) {
+      for (const header of lastMessage.internetMessageHeaders) {
+        if (header.name.toLowerCase() === "message-id") {
+          messageId = header.value;
+        } else if (header.name.toLowerCase() === "references") {
+          references.push(...header.value.split(/\s+/).filter(Boolean));
+        }
+      }
+    }
+
+    // Add the last message ID to references if available
+    if (messageId && !references.includes(messageId)) {
+      references.push(messageId);
+    }
+
+    return {
+      messageId,
+      references,
+      subject: lastMessage.subject || "",
+      from: lastMessage.from?.emailAddress?.address || "",
+      to: (lastMessage.toRecipients || []).map((r: any) => r.emailAddress?.address || "").filter(Boolean),
+      cc: (lastMessage.ccRecipients || []).map((r: any) => r.emailAddress?.address || "").filter(Boolean),
+    };
+  } else {
+    // Gmail: Get thread with full format to access headers
+    const path = `/threads/${threadId}?format=full`;
+    const result = await gmailFetch(token.accessToken, path);
+
+    if (!result || !result.messages || result.messages.length === 0) {
+      return null;
+    }
+
+    // Get the last message
+    const lastMessage = result.messages[result.messages.length - 1];
+    const headers = lastMessage.payload?.headers || [];
+
+    // Helper to get header value
+    const getHeader = (name: string): string => {
+      const header = headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
+      return header?.value || "";
+    };
+
+    // Extract Message-ID and References
+    const messageId = getHeader("Message-ID") || getHeader("Message-Id") || null;
+    const referencesStr = getHeader("References");
+    const references = referencesStr ? referencesStr.split(/\s+/).filter(Boolean) : [];
+
+    // Add the last message ID to references if available
+    if (messageId && !references.includes(messageId)) {
+      references.push(messageId);
+    }
+
+    // Parse From header (format: "Name <email>" or just "email")
+    const fromHeader = getHeader("From");
+    const fromMatch = fromHeader.match(/<([^>]+)>/) || [null, fromHeader];
+    const from = fromMatch[1] || fromHeader;
+
+    // Parse To and Cc headers
+    const parseRecipients = (header: string): string[] => {
+      if (!header) return [];
+      return header
+        .split(",")
+        .map((r) => {
+          const match = r.match(/<([^>]+)>/) || [null, r.trim()];
+          return match[1] || r.trim();
+        })
+        .filter(Boolean);
+    };
+
+    return {
+      messageId,
+      references,
+      subject: getHeader("Subject"),
+      from,
+      to: parseRecipients(getHeader("To")),
+      cc: parseRecipients(getHeader("Cc")),
+    };
+  }
+}
+
+/**
+ * Create a draft via direct Gmail/MS Graph API.
+ *
+ * @param token - Token info
+ * @param options - Email options
+ * @returns Draft ID or null on failure
+ */
+export async function createDraftDirect(
+  token: TokenInfo,
+  options: SendEmailDirectOptions
+): Promise<{ draftId: string; messageId?: string } | null> {
+  if (token.isMicrosoft) {
+    // MS Graph: POST /me/messages (creates draft in Drafts folder)
+    const message: Record<string, unknown> = {
+      subject: options.subject,
+      body: {
+        contentType: options.isHtml !== false ? "HTML" : "Text",
+        content: options.body,
+      },
+      toRecipients: options.to.map((email) => ({
+        emailAddress: { address: email },
+      })),
+    };
+
+    if (options.cc && options.cc.length > 0) {
+      message.ccRecipients = options.cc.map((email) => ({
+        emailAddress: { address: email },
+      }));
+    }
+
+    if (options.bcc && options.bcc.length > 0) {
+      message.bccRecipients = options.bcc.map((email) => ({
+        emailAddress: { address: email },
+      }));
+    }
+
+    // Note: MS Graph doesn't support custom In-Reply-To/References headers
+    // Threading is handled by conversationId automatically
+
+    const result = await msgraphFetch(token.accessToken, "/me/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(message),
+    });
+
+    if (!result || !result.id) {
+      return null;
+    }
+
+    return { draftId: result.id, messageId: result.id };
+  } else {
+    // Gmail: POST /drafts with raw MIME message
+    const mimeMessage = buildMimeMessage({
+      from: token.email,
+      to: options.to,
+      cc: options.cc,
+      bcc: options.bcc,
+      subject: options.subject,
+      body: options.body,
+      isHtml: options.isHtml,
+      inReplyTo: options.inReplyTo,
+      references: options.references,
+    });
+
+    const payload: Record<string, unknown> = {
+      message: { raw: mimeMessage },
+    };
+
+    if (options.threadId) {
+      (payload.message as Record<string, unknown>).threadId = options.threadId;
+    }
+
+    const result = await gmailFetch(token.accessToken, "/drafts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!result || !result.id) {
+      return null;
+    }
+
+    return { draftId: result.id, messageId: result.message?.id };
+  }
+}
+
+/**
+ * Send an email via direct Gmail/MS Graph API.
+ *
+ * @param token - Token info
+ * @param options - Email options
+ * @returns Message ID or null on failure
+ */
+export async function sendEmailDirect(
+  token: TokenInfo,
+  options: SendEmailDirectOptions
+): Promise<{ messageId: string; threadId?: string } | null> {
+  if (token.isMicrosoft) {
+    // MS Graph: POST /me/sendMail
+    const message: Record<string, unknown> = {
+      subject: options.subject,
+      body: {
+        contentType: options.isHtml !== false ? "HTML" : "Text",
+        content: options.body,
+      },
+      toRecipients: options.to.map((email) => ({
+        emailAddress: { address: email },
+      })),
+    };
+
+    if (options.cc && options.cc.length > 0) {
+      message.ccRecipients = options.cc.map((email) => ({
+        emailAddress: { address: email },
+      }));
+    }
+
+    if (options.bcc && options.bcc.length > 0) {
+      message.bccRecipients = options.bcc.map((email) => ({
+        emailAddress: { address: email },
+      }));
+    }
+
+    const response = await fetch(`${MSGRAPH_API_BASE}/me/sendMail`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ message }),
+    });
+
+    // sendMail returns 202 Accepted with no body on success
+    if (response.status === 202 || response.ok) {
+      return { messageId: "sent", threadId: options.threadId };
+    }
+
+    return null;
+  } else {
+    // Gmail: POST /messages/send with raw MIME message
+    const mimeMessage = buildMimeMessage({
+      from: token.email,
+      to: options.to,
+      cc: options.cc,
+      bcc: options.bcc,
+      subject: options.subject,
+      body: options.body,
+      isHtml: options.isHtml,
+      inReplyTo: options.inReplyTo,
+      references: options.references,
+    });
+
+    const payload: Record<string, unknown> = { raw: mimeMessage };
+
+    if (options.threadId) {
+      payload.threadId = options.threadId;
+    }
+
+    const result = await gmailFetch(token.accessToken, "/messages/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!result || !result.id) {
+      return null;
+    }
+
+    return { messageId: result.id, threadId: result.threadId };
+  }
+}
+
+/**
+ * Create a reply draft via direct API.
+ * Fetches thread info and creates a properly threaded draft.
+ *
+ * @param token - Token info
+ * @param threadId - Thread to reply to
+ * @param body - Reply body
+ * @param options - Additional options
+ * @returns Draft ID or null on failure
+ */
+export async function createReplyDraftDirect(
+  token: TokenInfo,
+  threadId: string,
+  body: string,
+  options?: {
+    replyAll?: boolean;
+    cc?: string[];
+    bcc?: string[];
+    isHtml?: boolean;
+  }
+): Promise<{ draftId: string; messageId?: string } | null> {
+  if (token.isMicrosoft) {
+    // MS Graph: Use createReply/createReplyAll endpoint
+    // First, get the last message ID in the conversation
+    const messagesPath = `/me/messages?$filter=conversationId eq '${threadId}'&$select=id&$orderby=receivedDateTime desc&$top=1`;
+    const messagesResult = await msgraphFetch(token.accessToken, messagesPath);
+
+    if (!messagesResult || !messagesResult.value || messagesResult.value.length === 0) {
+      return null;
+    }
+
+    const lastMessageId = messagesResult.value[0].id;
+    const endpoint = options?.replyAll ? "createReplyAll" : "createReply";
+
+    // Create reply draft
+    const createPath = `/me/messages/${lastMessageId}/${endpoint}`;
+    const draftResult = await msgraphFetch(token.accessToken, createPath, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    if (!draftResult || !draftResult.id) {
+      return null;
+    }
+
+    // Update the draft with our body
+    const patchBody: Record<string, unknown> = {
+      body: {
+        contentType: options?.isHtml !== false ? "HTML" : "Text",
+        content: body,
+      },
+    };
+
+    if (options?.cc && options.cc.length > 0) {
+      patchBody.ccRecipients = options.cc.map((email) => ({
+        emailAddress: { address: email },
+      }));
+    }
+
+    if (options?.bcc && options.bcc.length > 0) {
+      patchBody.bccRecipients = options.bcc.map((email) => ({
+        emailAddress: { address: email },
+      }));
+    }
+
+    await msgraphFetch(token.accessToken, `/me/messages/${draftResult.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patchBody),
+    });
+
+    return { draftId: draftResult.id, messageId: draftResult.id };
+  } else {
+    // Gmail: Get thread info and create draft with threading headers
+    const threadInfo = await getThreadInfoDirect(token, threadId);
+    if (!threadInfo) {
+      return null;
+    }
+
+    // Build recipient list
+    const to: string[] = [];
+    const cc: string[] = options?.cc || [];
+
+    if (options?.replyAll) {
+      // Include original sender plus all To/Cc (excluding self)
+      if (threadInfo.from && threadInfo.from !== token.email) {
+        to.push(threadInfo.from);
+      }
+      for (const email of threadInfo.to) {
+        if (email !== token.email && !to.includes(email)) {
+          to.push(email);
+        }
+      }
+      for (const email of threadInfo.cc) {
+        if (email !== token.email && !cc.includes(email)) {
+          cc.push(email);
+        }
+      }
+    } else {
+      // Simple reply to sender
+      if (threadInfo.from) {
+        to.push(threadInfo.from);
+      }
+    }
+
+    if (to.length === 0) {
+      return null;
+    }
+
+    // Build subject with Re: prefix
+    const subject = threadInfo.subject.startsWith("Re:")
+      ? threadInfo.subject
+      : `Re: ${threadInfo.subject}`;
+
+    return createDraftDirect(token, {
+      to,
+      cc,
+      bcc: options?.bcc,
+      subject,
+      body,
+      isHtml: options?.isHtml,
+      threadId,
+      inReplyTo: threadInfo.messageId || undefined,
+      references: threadInfo.references,
+    });
+  }
+}
+
+/**
+ * Send a reply via direct API.
+ * Fetches thread info and sends a properly threaded reply.
+ *
+ * @param token - Token info
+ * @param threadId - Thread to reply to
+ * @param body - Reply body
+ * @param options - Additional options
+ * @returns Message ID or null on failure
+ */
+export async function sendReplyDirect(
+  token: TokenInfo,
+  threadId: string,
+  body: string,
+  options?: {
+    replyAll?: boolean;
+    cc?: string[];
+    bcc?: string[];
+    isHtml?: boolean;
+  }
+): Promise<{ messageId: string; threadId?: string } | null> {
+  if (token.isMicrosoft) {
+    // MS Graph: Create reply draft then send it
+    const draftResult = await createReplyDraftDirect(token, threadId, body, options);
+    if (!draftResult) {
+      return null;
+    }
+
+    // Send the draft
+    const sendPath = `/me/messages/${draftResult.draftId}/send`;
+    const response = await fetch(`${MSGRAPH_API_BASE}${sendPath}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.accessToken}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (response.status === 202 || response.ok) {
+      return { messageId: draftResult.draftId, threadId };
+    }
+
+    return null;
+  } else {
+    // Gmail: Get thread info and send with threading headers
+    const threadInfo = await getThreadInfoDirect(token, threadId);
+    if (!threadInfo) {
+      return null;
+    }
+
+    // Build recipient list (same logic as createReplyDraftDirect)
+    const to: string[] = [];
+    const cc: string[] = options?.cc || [];
+
+    if (options?.replyAll) {
+      if (threadInfo.from && threadInfo.from !== token.email) {
+        to.push(threadInfo.from);
+      }
+      for (const email of threadInfo.to) {
+        if (email !== token.email && !to.includes(email)) {
+          to.push(email);
+        }
+      }
+      for (const email of threadInfo.cc) {
+        if (email !== token.email && !cc.includes(email)) {
+          cc.push(email);
+        }
+      }
+    } else {
+      if (threadInfo.from) {
+        to.push(threadInfo.from);
+      }
+    }
+
+    if (to.length === 0) {
+      return null;
+    }
+
+    const subject = threadInfo.subject.startsWith("Re:")
+      ? threadInfo.subject
+      : `Re: ${threadInfo.subject}`;
+
+    return sendEmailDirect(token, {
+      to,
+      cc,
+      bcc: options?.bcc,
+      subject,
+      body,
+      isHtml: options?.isHtml,
+      threadId,
+      inReplyTo: threadInfo.messageId || undefined,
+      references: threadInfo.references,
+    });
+  }
+}
+
+/**
+ * Delete a draft via direct API.
+ *
+ * @param token - Token info
+ * @param draftId - Draft ID to delete
+ * @returns true on success
+ */
+export async function deleteDraftDirect(
+  token: TokenInfo,
+  draftId: string
+): Promise<boolean> {
+  if (token.isMicrosoft) {
+    // MS Graph: DELETE /me/messages/{id}
+    const response = await fetch(`${MSGRAPH_API_BASE}/me/messages/${draftId}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token.accessToken}`,
+      },
+    });
+
+    return response.status === 204 || response.ok;
+  } else {
+    // Gmail: DELETE /drafts/{id}
+    const response = await fetch(`${GMAIL_API_BASE}/drafts/${draftId}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token.accessToken}`,
+      },
+    });
+
+    return response.status === 204 || response.ok;
+  }
+}
+
+/**
+ * Send an existing draft by ID via direct API.
+ *
+ * @param token - Token info
+ * @param draftId - Draft ID to send
+ * @returns Message ID or null on failure
+ */
+export async function sendDraftDirect(
+  token: TokenInfo,
+  draftId: string
+): Promise<{ messageId: string; threadId?: string } | null> {
+  if (token.isMicrosoft) {
+    // MS Graph: POST /me/messages/{id}/send
+    const response = await fetch(`${MSGRAPH_API_BASE}/me/messages/${draftId}/send`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.accessToken}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (response.status === 202 || response.ok) {
+      return { messageId: draftId };
+    }
+
+    return null;
+  } else {
+    // Gmail: POST /drafts/send with draft ID
+    // Note: Gmail uses a different endpoint pattern
+    const result = await gmailFetch(token.accessToken, `/drafts/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: draftId }),
+    });
+
+    if (!result || !result.id) {
+      return null;
+    }
+
+    return { messageId: result.id, threadId: result.threadId };
+  }
+}
+
+// ============================================================================
+// Superhuman Backend API Functions
+// ============================================================================
+
+const SUPERHUMAN_BACKEND_BASE = "https://mail.superhuman.com/~backend";
+
+/**
+ * Superhuman backend token info.
+ */
+export interface SuperhumanTokenInfo {
+  token: string;           // Backend auth token
+  email: string;
+  accountId?: string;
+  expires?: number;
+}
+
+// In-memory cache for Superhuman tokens
+const superhumanTokenCache = new Map<string, SuperhumanTokenInfo>();
+
+/**
+ * Extract Superhuman backend token via CDP.
+ * The token is stored in window.GoogleAccount.backend._credential
+ *
+ * @param conn - Superhuman connection
+ * @param email - Account email
+ * @returns Superhuman token info
+ */
+export async function extractSuperhumanToken(
+  conn: SuperhumanConnection,
+  email: string
+): Promise<SuperhumanTokenInfo> {
+  const { Runtime } = conn;
+
+  // Verify account exists and switch to it
+  const accounts = await listAccounts(conn);
+  const accountExists = accounts.some((a) => a.email === email);
+
+  if (!accountExists) {
+    const available = accounts.map((a) => a.email).join(", ");
+    throw new Error(`Account not found: ${email}. Available: ${available}`);
+  }
+
+  // Switch to the target account
+  const switchResult = await switchAccount(conn, email);
+  if (!switchResult.success) {
+    throw new Error(`Failed to switch to account: ${email}`);
+  }
+
+  // Wait for account to fully load
+  await new Promise((r) => setTimeout(r, 1000));
+
+  // Extract backend token
+  const result = await Runtime.evaluate({
+    expression: `
+      (() => {
+        try {
+          const ga = window.GoogleAccount;
+          const backend = ga?.backend;
+
+          if (!backend) {
+            return { error: "Backend not found" };
+          }
+
+          // The backend credential contains the auth token
+          const credential = backend._credential;
+          if (!credential) {
+            return { error: "Backend credential not found" };
+          }
+
+          // Extract token - it may be stored in different places depending on version
+          // Try common locations
+          const token = credential.token ||
+                       credential.accessToken ||
+                       credential._token ||
+                       credential;
+
+          if (!token || typeof token !== 'string') {
+            // Try to get from authData
+            const authData = credential._authData || credential.authData;
+            if (authData?.accessToken) {
+              return {
+                token: authData.accessToken,
+                email: ga?.emailAddress || '',
+                accountId: ga?.accountId,
+                expires: authData.expires
+              };
+            }
+            return { error: "Could not extract backend token" };
+          }
+
+          return {
+            token: token,
+            email: ga?.emailAddress || '',
+            accountId: ga?.accountId,
+          };
+        } catch (e) {
+          return { error: e.message };
+        }
+      })()
+    `,
+    returnByValue: true,
+  });
+
+  const value = result.result.value as SuperhumanTokenInfo | { error: string };
+
+  if ("error" in value) {
+    throw new Error(`Superhuman token extraction failed: ${value.error}`);
+  }
+
+  return value;
+}
+
+/**
+ * Get Superhuman backend token for an account, using cache if available.
+ *
+ * @param conn - Superhuman connection
+ * @param email - Account email
+ * @returns Superhuman token info
+ */
+export async function getSuperhumanToken(
+  conn: SuperhumanConnection,
+  email: string
+): Promise<SuperhumanTokenInfo> {
+  // Check cache first
+  const cached = superhumanTokenCache.get(email);
+
+  if (cached) {
+    // Check if token is expired (if we have expiry info)
+    if (cached.expires) {
+      const bufferMs = 5 * 60 * 1000; // 5 minutes
+      if (cached.expires < Date.now() + bufferMs) {
+        // Expired, fall through to extract fresh
+      } else {
+        return cached;
+      }
+    } else {
+      // No expiry info, assume valid
+      return cached;
+    }
+  }
+
+  // Extract fresh token
+  const token = await extractSuperhumanToken(conn, email);
+
+  // Cache it
+  superhumanTokenCache.set(email, token);
+
+  return token;
+}
+
+/**
+ * Clear the Superhuman token cache.
+ */
+export function clearSuperhumanTokenCache(): void {
+  superhumanTokenCache.clear();
+}
+
+/**
+ * Make a fetch call to Superhuman backend API.
+ *
+ * @param token - Superhuman backend token
+ * @param path - API path (e.g., "/v3/reminders/create")
+ * @param options - Additional fetch options
+ * @returns Response JSON or null on auth failure
+ */
+export async function superhumanFetch(
+  token: string,
+  path: string,
+  options?: RequestInit
+): Promise<any | null> {
+  const url = `${SUPERHUMAN_BACKEND_BASE}${path}`;
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...options?.headers,
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    return null;
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "Unknown error");
+    throw new Error(`Superhuman API error: ${response.status} ${response.statusText} - ${errorText}`);
+  }
+
+  // Some endpoints return empty response
+  const text = await response.text();
+  if (!text) {
+    return { success: true };
+  }
+
+  return JSON.parse(text);
 }
