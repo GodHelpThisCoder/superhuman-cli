@@ -272,16 +272,17 @@ Most operations use **direct Gmail API and Microsoft Graph API** calls:
 | Star | Add STARRED label | `PATCH /messages/{id}` with `flag` |
 | Attachments | `GET /messages/{id}/attachments/{id}` | `GET /messages/{id}/attachments/{id}` |
 | Contacts | Google People API | MS Graph People API |
+| Calendar events | Google Calendar API | MS Graph Calendar API |
+| Free/busy | `POST /freeBusy` | `POST /me/calendar/getSchedule` |
 
 OAuth tokens are extracted from Superhuman and cached with automatic refresh.
 
 ### CDP (Secondary)
 
-Chrome DevTools Protocol is used for operations that require Superhuman's UI state:
+Chrome DevTools Protocol is used only for operations that require Superhuman's UI state:
 
-- `window.ViewState._composeFormController` - Compose form and draft management
+- `window.ViewState._composeFormController` - Compose form and draft management (when using UI compose)
 - `window.GoogleAccount` - Token extraction and account switching
-- Calendar operations (uses Superhuman's gcal/msgraph internal APIs)
 
 ### Benefits
 

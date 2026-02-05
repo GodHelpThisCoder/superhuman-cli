@@ -1159,3 +1159,577 @@ export async function addAttachmentToDraft(
     return addAttachmentToGmailDraft(token, draftId, filename, contentType, base64Data);
   }
 }
+
+// ============================================================================
+// Direct Calendar API Functions
+// ============================================================================
+
+const GOOGLE_CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3";
+
+/**
+ * Calendar event for direct API operations.
+ */
+export interface CalendarEventDirect {
+  id: string;
+  calendarId: string;
+  summary: string;
+  description?: string;
+  start: {
+    dateTime?: string;
+    date?: string;
+    timeZone?: string;
+  };
+  end: {
+    dateTime?: string;
+    date?: string;
+    timeZone?: string;
+  };
+  attendees?: Array<{
+    email: string;
+    displayName?: string;
+    responseStatus?: "needsAction" | "accepted" | "declined" | "tentative";
+    organizer?: boolean;
+    self?: boolean;
+  }>;
+  recurrence?: string[];
+  recurringEventId?: string;
+  htmlLink?: string;
+  conferenceData?: Record<string, unknown>;
+  status?: "confirmed" | "tentative" | "cancelled";
+  visibility?: "default" | "public" | "private";
+  allDay?: boolean;
+  isOrganizer?: boolean;
+  provider?: "google" | "microsoft";
+  location?: string;
+}
+
+/**
+ * Input for creating a calendar event.
+ */
+export interface CreateCalendarEventInput {
+  calendarId?: string;
+  summary: string;
+  description?: string;
+  start: {
+    dateTime?: string;
+    date?: string;
+    timeZone?: string;
+  };
+  end: {
+    dateTime?: string;
+    date?: string;
+    timeZone?: string;
+  };
+  attendees?: Array<{ email: string; displayName?: string }>;
+  recurrence?: string[];
+  location?: string;
+}
+
+/**
+ * Input for updating a calendar event.
+ */
+export interface UpdateCalendarEventInput {
+  summary?: string;
+  description?: string;
+  start?: {
+    dateTime?: string;
+    date?: string;
+    timeZone?: string;
+  };
+  end?: {
+    dateTime?: string;
+    date?: string;
+    timeZone?: string;
+  };
+  attendees?: Array<{ email: string; displayName?: string }>;
+  recurrence?: string[];
+  location?: string;
+}
+
+/**
+ * Options for listing calendar events.
+ */
+export interface ListCalendarEventsOptions {
+  calendarId?: string;
+  timeMin?: string;
+  timeMax?: string;
+  limit?: number;
+}
+
+/**
+ * Free/busy time slot.
+ */
+export interface FreeBusySlot {
+  start: string;
+  end: string;
+}
+
+/**
+ * Make a fetch call to Google Calendar API.
+ */
+async function gcalFetch(
+  token: string,
+  path: string,
+  options?: RequestInit
+): Promise<any | null> {
+  const url = `${GOOGLE_CALENDAR_API_BASE}${path}`;
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...options?.headers,
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (response.status === 401) {
+    return null;
+  }
+
+  if (response.status === 204) {
+    // No content (success for DELETE)
+    return { success: true };
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Google Calendar API error: ${response.status} ${response.statusText} - ${errorText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * List calendar events directly via Google Calendar or MS Graph API.
+ *
+ * @param token - Token info
+ * @param options - Filtering options (time range, limit)
+ * @returns Array of calendar events
+ */
+export async function listCalendarEventsDirect(
+  token: TokenInfo,
+  options?: ListCalendarEventsOptions
+): Promise<CalendarEventDirect[]> {
+  const now = new Date();
+  const timeMin = options?.timeMin || now.toISOString();
+  const timeMax = options?.timeMax || new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const limit = options?.limit || 50;
+
+  if (token.isMicrosoft) {
+    // MS Graph: Get calendar view
+    let calendarId = options?.calendarId;
+
+    // If no calendar ID, get the default calendar
+    if (!calendarId) {
+      const calendarsResult = await msgraphFetch(token.accessToken, "/me/calendars?$filter=isDefaultCalendar eq true");
+      if (calendarsResult?.value?.[0]?.id) {
+        calendarId = calendarsResult.value[0].id;
+      } else {
+        // Fallback to primary calendar
+        const primaryResult = await msgraphFetch(token.accessToken, "/me/calendar");
+        calendarId = primaryResult?.id;
+      }
+    }
+
+    if (!calendarId) {
+      return [];
+    }
+
+    const path = `/me/calendars/${calendarId}/calendarView?startDateTime=${encodeURIComponent(timeMin)}&endDateTime=${encodeURIComponent(timeMax)}&$top=${limit}&$orderby=start/dateTime`;
+    const result = await msgraphFetch(token.accessToken, path);
+
+    if (!result || !result.value) {
+      return [];
+    }
+
+    return result.value.map((e: any) => ({
+      id: e.id,
+      calendarId: calendarId,
+      summary: e.subject || "",
+      description: e.bodyPreview || e.body?.content || "",
+      start: {
+        dateTime: e.start?.dateTime,
+        timeZone: e.start?.timeZone,
+        date: e.isAllDay ? e.start?.dateTime?.split("T")[0] : undefined,
+      },
+      end: {
+        dateTime: e.end?.dateTime,
+        timeZone: e.end?.timeZone,
+        date: e.isAllDay ? e.end?.dateTime?.split("T")[0] : undefined,
+      },
+      attendees: (e.attendees || []).map((a: any) => ({
+        email: a.emailAddress?.address || "",
+        displayName: a.emailAddress?.name || "",
+        responseStatus: mapMsResponseStatus(a.status?.response),
+        organizer: e.organizer?.emailAddress?.address === a.emailAddress?.address,
+      })),
+      recurrence: e.recurrence ? [JSON.stringify(e.recurrence)] : undefined,
+      recurringEventId: e.seriesMasterId,
+      htmlLink: e.webLink,
+      conferenceData: e.onlineMeeting,
+      status: e.isCancelled ? "cancelled" : "confirmed",
+      allDay: e.isAllDay,
+      isOrganizer: e.isOrganizer,
+      provider: "microsoft",
+      location: e.location?.displayName,
+    }));
+  } else {
+    // Google Calendar: Get events list
+    const calendarId = options?.calendarId || "primary";
+    const path = `/calendars/${encodeURIComponent(calendarId)}/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&maxResults=${limit}&singleEvents=true&orderBy=startTime`;
+
+    const result = await gcalFetch(token.accessToken, path);
+
+    if (!result || !result.items) {
+      return [];
+    }
+
+    return result.items.map((e: any) => ({
+      id: e.id,
+      calendarId: calendarId,
+      summary: e.summary || "",
+      description: e.description || "",
+      start: {
+        dateTime: e.start?.dateTime,
+        date: e.start?.date,
+        timeZone: e.start?.timeZone,
+      },
+      end: {
+        dateTime: e.end?.dateTime,
+        date: e.end?.date,
+        timeZone: e.end?.timeZone,
+      },
+      attendees: (e.attendees || []).map((a: any) => ({
+        email: a.email || "",
+        displayName: a.displayName || "",
+        responseStatus: a.responseStatus || "needsAction",
+        organizer: a.organizer,
+        self: a.self,
+      })),
+      recurrence: e.recurrence,
+      recurringEventId: e.recurringEventId,
+      htmlLink: e.htmlLink,
+      conferenceData: e.conferenceData,
+      status: e.status || "confirmed",
+      visibility: e.visibility,
+      allDay: !!e.start?.date,
+      isOrganizer: e.organizer?.self,
+      provider: "google",
+      location: e.location,
+    }));
+  }
+}
+
+/**
+ * Map MS Graph response status to our format.
+ */
+function mapMsResponseStatus(status?: string): "needsAction" | "accepted" | "declined" | "tentative" {
+  switch (status) {
+    case "accepted":
+      return "accepted";
+    case "declined":
+      return "declined";
+    case "tentativelyAccepted":
+      return "tentative";
+    default:
+      return "needsAction";
+  }
+}
+
+/**
+ * Create a calendar event directly via Google Calendar or MS Graph API.
+ *
+ * @param token - Token info
+ * @param event - Event data to create
+ * @returns Created event ID or null on failure
+ */
+export async function createCalendarEventDirect(
+  token: TokenInfo,
+  event: CreateCalendarEventInput
+): Promise<{ eventId: string } | null> {
+  if (token.isMicrosoft) {
+    // MS Graph: Create event
+    let calendarId = event.calendarId;
+
+    // If no calendar ID, get the default calendar
+    if (!calendarId) {
+      const primaryResult = await msgraphFetch(token.accessToken, "/me/calendar");
+      calendarId = primaryResult?.id;
+    }
+
+    if (!calendarId) {
+      throw new Error("Could not determine calendar ID");
+    }
+
+    const msEvent = {
+      subject: event.summary,
+      body: event.description ? { contentType: "text", content: event.description } : undefined,
+      start: {
+        dateTime: event.start.dateTime || (event.start.date ? `${event.start.date}T00:00:00` : undefined),
+        timeZone: event.start.timeZone || "UTC",
+      },
+      end: {
+        dateTime: event.end.dateTime || (event.end.date ? `${event.end.date}T23:59:59` : undefined),
+        timeZone: event.end.timeZone || "UTC",
+      },
+      attendees: (event.attendees || []).map((a) => ({
+        emailAddress: { address: a.email, name: a.displayName || "" },
+        type: "required",
+      })),
+      location: event.location ? { displayName: event.location } : undefined,
+      isAllDay: !!event.start.date && !event.start.dateTime,
+    };
+
+    const path = `/me/calendars/${calendarId}/events`;
+    const result = await msgraphFetch(token.accessToken, path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(msEvent),
+    });
+
+    if (!result || !result.id) {
+      return null;
+    }
+
+    return { eventId: result.id };
+  } else {
+    // Google Calendar: Create event
+    const calendarId = event.calendarId || "primary";
+
+    const gcalEvent = {
+      summary: event.summary,
+      description: event.description,
+      start: event.start,
+      end: event.end,
+      attendees: (event.attendees || []).map((a) => ({
+        email: a.email,
+        displayName: a.displayName,
+      })),
+      recurrence: event.recurrence,
+      location: event.location,
+    };
+
+    const path = `/calendars/${encodeURIComponent(calendarId)}/events`;
+    const result = await gcalFetch(token.accessToken, path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(gcalEvent),
+    });
+
+    if (!result || !result.id) {
+      return null;
+    }
+
+    return { eventId: result.id };
+  }
+}
+
+/**
+ * Update a calendar event directly via Google Calendar or MS Graph API.
+ *
+ * @param token - Token info
+ * @param eventId - The event ID to update
+ * @param updates - Fields to update
+ * @param calendarId - Optional calendar ID (required for Google Calendar)
+ * @returns true on success
+ */
+export async function updateCalendarEventDirect(
+  token: TokenInfo,
+  eventId: string,
+  updates: UpdateCalendarEventInput,
+  calendarId?: string
+): Promise<boolean> {
+  if (token.isMicrosoft) {
+    // MS Graph: Update event
+    const msUpdates: any = {};
+
+    if (updates.summary) msUpdates.subject = updates.summary;
+    if (updates.description) msUpdates.body = { contentType: "text", content: updates.description };
+    if (updates.start) {
+      msUpdates.start = {
+        dateTime: updates.start.dateTime || (updates.start.date ? `${updates.start.date}T00:00:00` : undefined),
+        timeZone: updates.start.timeZone || "UTC",
+      };
+    }
+    if (updates.end) {
+      msUpdates.end = {
+        dateTime: updates.end.dateTime || (updates.end.date ? `${updates.end.date}T23:59:59` : undefined),
+        timeZone: updates.end.timeZone || "UTC",
+      };
+    }
+    if (updates.attendees) {
+      msUpdates.attendees = updates.attendees.map((a) => ({
+        emailAddress: { address: a.email, name: a.displayName || "" },
+        type: "required",
+      }));
+    }
+    if (updates.location) msUpdates.location = { displayName: updates.location };
+
+    // MS Graph allows updating events directly by ID
+    const path = `/me/events/${eventId}`;
+    const result = await msgraphFetch(token.accessToken, path, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(msUpdates),
+    });
+
+    return result !== null;
+  } else {
+    // Google Calendar: Patch event
+    const gcalUpdates: any = {};
+
+    if (updates.summary) gcalUpdates.summary = updates.summary;
+    if (updates.description) gcalUpdates.description = updates.description;
+    if (updates.start) gcalUpdates.start = updates.start;
+    if (updates.end) gcalUpdates.end = updates.end;
+    if (updates.attendees) {
+      gcalUpdates.attendees = updates.attendees.map((a) => ({
+        email: a.email,
+        displayName: a.displayName,
+      }));
+    }
+    if (updates.recurrence) gcalUpdates.recurrence = updates.recurrence;
+    if (updates.location) gcalUpdates.location = updates.location;
+
+    const calId = calendarId || "primary";
+    const path = `/calendars/${encodeURIComponent(calId)}/events/${eventId}`;
+    const result = await gcalFetch(token.accessToken, path, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(gcalUpdates),
+    });
+
+    return result !== null;
+  }
+}
+
+/**
+ * Delete a calendar event directly via Google Calendar or MS Graph API.
+ *
+ * @param token - Token info
+ * @param eventId - The event ID to delete
+ * @param calendarId - Optional calendar ID (required for Google Calendar)
+ * @returns true on success
+ */
+export async function deleteCalendarEventDirect(
+  token: TokenInfo,
+  eventId: string,
+  calendarId?: string
+): Promise<boolean> {
+  if (token.isMicrosoft) {
+    // MS Graph: Delete event
+    const path = `/me/events/${eventId}`;
+    const response = await fetch(`${MSGRAPH_API_BASE}${path}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token.accessToken}`,
+      },
+    });
+
+    // 204 No Content = success
+    return response.status === 204 || response.ok;
+  } else {
+    // Google Calendar: Delete event
+    const calId = calendarId || "primary";
+    const path = `/calendars/${encodeURIComponent(calId)}/events/${eventId}`;
+    const result = await gcalFetch(token.accessToken, path, {
+      method: "DELETE",
+    });
+
+    return result !== null;
+  }
+}
+
+/**
+ * Get free/busy information directly via Google Calendar or MS Graph API.
+ *
+ * @param token - Token info
+ * @param timeMin - Start of time range (ISO string)
+ * @param timeMax - End of time range (ISO string)
+ * @param calendarIds - Optional calendar IDs to check
+ * @returns Array of busy time slots
+ */
+export async function getFreeBusyDirect(
+  token: TokenInfo,
+  timeMin: string,
+  timeMax: string,
+  calendarIds?: string[]
+): Promise<FreeBusySlot[]> {
+  if (token.isMicrosoft) {
+    // MS Graph: Get schedule (free/busy)
+    // If specific calendars requested, use getSchedule
+    // Otherwise, just query the calendar view and derive busy times
+    if (calendarIds && calendarIds.length > 0) {
+      const body = {
+        schedules: calendarIds,
+        startTime: { dateTime: timeMin, timeZone: "UTC" },
+        endTime: { dateTime: timeMax, timeZone: "UTC" },
+      };
+
+      const result = await msgraphFetch(token.accessToken, "/me/calendar/getSchedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!result || !result.value) {
+        return [];
+      }
+
+      const busy: FreeBusySlot[] = [];
+      for (const schedule of result.value) {
+        for (const item of schedule.scheduleItems || []) {
+          if (item.status !== "free") {
+            busy.push({
+              start: item.start?.dateTime || "",
+              end: item.end?.dateTime || "",
+            });
+          }
+        }
+      }
+      return busy;
+    } else {
+      // Fall back to calendar view
+      const events = await listCalendarEventsDirect(token, { timeMin, timeMax });
+      return events
+        .filter((e) => e.status !== "cancelled")
+        .map((e) => ({
+          start: e.start.dateTime || e.start.date || "",
+          end: e.end.dateTime || e.end.date || "",
+        }));
+    }
+  } else {
+    // Google Calendar: FreeBusy query
+    const items = calendarIds
+      ? calendarIds.map((id) => ({ id }))
+      : [{ id: "primary" }];
+
+    const body = {
+      timeMin,
+      timeMax,
+      items,
+    };
+
+    const result = await gcalFetch(token.accessToken, "/freeBusy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!result || !result.calendars) {
+      return [];
+    }
+
+    const busy: FreeBusySlot[] = [];
+    for (const calId of Object.keys(result.calendars)) {
+      for (const slot of result.calendars[calId].busy || []) {
+        busy.push({
+          start: slot.start,
+          end: slot.end,
+        });
+      }
+    }
+
+    return busy;
+  }
+}
