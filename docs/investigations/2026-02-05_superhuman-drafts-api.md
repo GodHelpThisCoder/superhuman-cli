@@ -211,11 +211,46 @@ superhuman draft --provider=gmail --to "user@example.com" --subject "Test" --bod
 | AI features | Yes | Limited |
 | Requires Superhuman | Yes | No |
 
+## Direct API Implementation (v0.7.0)
+
+As of v0.7.0, the CLI supports **CDP-free draft creation** using cached credentials:
+
+```bash
+# First time: authenticate via CDP to cache credentials
+superhuman auth
+
+# Subsequently: create drafts without any browser connection
+superhuman draft --account=user@example.com --to "recipient@example.com" --subject "Test" --body "Hello"
+```
+
+### How It Works
+
+1. `superhuman auth` extracts and caches:
+   - `userId` - Required for API path (`users/{userId}/threads/...`)
+   - `idToken` - Bearer token for authentication
+   - Stored in `~/.config/superhuman-cli/tokens.json`
+
+2. `--account` flag triggers fast path:
+   - Loads cached credentials (no CDP)
+   - Calls `/v3/userdata.writeMessage` directly
+   - Draft syncs to all devices automatically
+
+### Key Functions
+
+| Function | Location | Purpose |
+|----------|----------|---------|
+| `getUserInfoFromCache()` | `src/draft-api.ts` | Create UserInfo from cached credentials |
+| `createDraftWithUserInfo()` | `src/draft-api.ts` | Create draft with pre-extracted credentials |
+| `hasCachedSuperhumanCredentials()` | `src/token-api.ts` | Check if valid cached credentials exist |
+| `getCachedToken()` | `src/token-api.ts` | Retrieve cached token for account |
+
 ## Related Files
 
-- `src/superhuman-api.ts`: CDP-based draft operations
+- `src/draft-api.ts`: Direct Superhuman API draft operations (NEW)
+- `src/token-api.ts`: Token caching with userId/idToken support
+- `src/superhuman-api.ts`: CDP-based draft operations (fallback)
 - `src/send-api.ts`: Direct Gmail/MS Graph draft operations
-- `src/cli.ts`: `--provider` flag implementation
+- `src/cli.ts`: `--provider` and `--account` flag implementation
 - `scratch/capture-userdata-sync.ts`: Background page network capture
 - `scratch/monitor-background.ts`: Background page monitoring
 
@@ -255,9 +290,14 @@ main().catch(console.error);
 
 ## Future Enhancements
 
-Potential direct API integration (bypassing CDP):
-1. Extract auth tokens from Superhuman session
-2. Call `/v3/userdata.sync` directly to push draft updates
-3. Would be faster and not require compose window
+~~Potential direct API integration (bypassing CDP):~~
+~~1. Extract auth tokens from Superhuman session~~
+~~2. Call `/v3/userdata.sync` directly to push draft updates~~
+~~3. Would be faster and not require compose window~~
 
-This would require reverse-engineering the full sync protocol including history ID management.
+**DONE** (v0.7.0): Direct API integration implemented. See "Direct API Implementation" section above.
+
+Remaining potential enhancements:
+1. Token refresh - automatically re-authenticate when idToken expires
+2. Reply/forward support - use `inReplyToThreadId` and `inReplyToRfc822Id` for threading
+3. Attachment support - investigate attachment upload API
