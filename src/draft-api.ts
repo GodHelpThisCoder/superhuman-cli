@@ -45,7 +45,7 @@ export interface DraftResult {
   error?: string;
 }
 
-interface UserInfo {
+export interface UserInfo {
   userId: string;
   email: string;
   token: string;
@@ -293,6 +293,137 @@ export async function updateDraftDirect(
       success: true,
       draftId,
       threadId,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+// =============================================================================
+// Send Draft via Superhuman Backend
+// =============================================================================
+
+/**
+ * Recipient with email and optional name
+ */
+export interface Recipient {
+  email: string;
+  name?: string;
+}
+
+/**
+ * Options for sending a draft via Superhuman's native send endpoint
+ */
+export interface SendDraftOptions {
+  /** Draft ID (e.g., "draft00xxxxxx") */
+  draftId: string;
+  /** Thread ID (usually same as draftId for new messages) */
+  threadId: string;
+  /** Primary recipients */
+  to: Recipient[];
+  /** CC recipients (optional) */
+  cc?: Recipient[];
+  /** BCC recipients (optional) */
+  bcc?: Recipient[];
+  /** Email subject */
+  subject: string;
+  /** HTML body content */
+  htmlBody: string;
+  /** Delay in seconds: 0=immediate, 20=default undo window, 3600=1hr scheduled */
+  delay?: number;
+}
+
+/**
+ * Result of sending a draft
+ */
+export interface SendDraftResult {
+  success: boolean;
+  /** Unix timestamp (ms) when email will be sent */
+  sendAt?: number;
+  error?: string;
+}
+
+/**
+ * Format recipients for the outgoing_message structure
+ */
+function formatRecipientForSend(recipients: Recipient[]): Array<{ email: string; name: string }> {
+  return recipients.map((r) => ({
+    email: r.email,
+    name: r.name || "",
+  }));
+}
+
+/**
+ * Send a draft via Superhuman's native /messages/send endpoint.
+ *
+ * This sends emails through Superhuman's backend rather than Gmail/MS Graph directly.
+ * Supports scheduled sending via the delay parameter.
+ *
+ * @param userInfo - User credentials from getUserInfoFromCache()
+ * @param options - Draft content and send options
+ * @returns Result with sendAt timestamp on success
+ */
+export async function sendDraftSuperhuman(
+  userInfo: UserInfo,
+  options: SendDraftOptions
+): Promise<SendDraftResult> {
+  try {
+    const rfc822Id = generateRfc822Id();
+    const superhumanId = crypto.randomUUID();
+
+    // Build the outgoing_message structure per Superhuman's API format
+    const outgoingMessage = {
+      headers: [],
+      superhuman_id: superhumanId,
+      rfc822_id: rfc822Id,
+      thread_id: options.threadId,
+      message_id: options.draftId,
+      from: {
+        email: userInfo.email,
+        name: userInfo.displayName || userInfo.email.split("@")[0],
+      },
+      to: formatRecipientForSend(options.to),
+      cc: formatRecipientForSend(options.cc || []),
+      bcc: formatRecipientForSend(options.bcc || []),
+      subject: options.subject,
+      html_body: options.htmlBody,
+      attachments: [],
+      abort_on_reply: false,
+      current_message_ids: [options.draftId],
+      mail_merge_recipients: [],
+    };
+
+    const requestBody = {
+      version: 3,
+      outgoing_message: outgoingMessage,
+      delay: options.delay ?? 20, // Default to 20 seconds (undo window)
+      is_multi_recipient: options.to.length > 1,
+    };
+
+    const response = await fetch(`${SUPERHUMAN_BACKEND}/messages/send`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${userInfo.token}`,
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return {
+        success: false,
+        error: `API error ${response.status}: ${text}`,
+      };
+    }
+
+    const data = await response.json();
+    return {
+      success: true,
+      sendAt: data.send_at,
     };
   } catch (error) {
     return {
