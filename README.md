@@ -47,6 +47,24 @@ bun src/cli.ts read <thread-id>
 bun src/cli.ts read <thread-id> --json
 ```
 
+### Ask AI
+
+Query Superhuman's AI about email threads:
+
+```bash
+# Summarize a thread
+bun src/cli.ts ai <thread-id> "summarize this thread"
+
+# Get action items
+bun src/cli.ts ai <thread-id> "what are the action items?"
+
+# Draft a reply
+bun src/cli.ts ai <thread-id> "draft a professional reply"
+
+# Ask specific questions
+bun src/cli.ts ai <thread-id> "what dates were mentioned?"
+```
+
 ### Contacts
 
 ```bash
@@ -214,6 +232,7 @@ bun src/index.ts --mcp
 | `superhuman_inbox` | List recent emails from inbox |
 | `superhuman_search` | Search emails |
 | `superhuman_read` | Read a thread |
+| `superhuman_ai` | Ask AI about a thread |
 | `superhuman_draft` | Create an email draft |
 | `superhuman_send` | Send an email |
 | `superhuman_reply` | Reply to a thread |

@@ -2597,50 +2597,35 @@ export async function extractSuperhumanToken(
   // Wait for account to fully load
   await new Promise((r) => setTimeout(r, 1000));
 
-  // Extract backend token
+  // Extract backend token (idToken is used for Superhuman backend API)
   const result = await Runtime.evaluate({
     expression: `
       (() => {
         try {
           const ga = window.GoogleAccount;
-          const backend = ga?.backend;
+          const credential = ga?.credential;
 
-          if (!backend) {
-            return { error: "Backend not found" };
-          }
-
-          // The backend credential contains the auth token
-          const credential = backend._credential;
           if (!credential) {
-            return { error: "Backend credential not found" };
+            return { error: "Credential not found" };
           }
 
-          // Extract token - it may be stored in different places depending on version
-          // Try common locations
-          const token = credential.token ||
-                       credential.accessToken ||
-                       credential._token ||
-                       credential;
-
-          if (!token || typeof token !== 'string') {
-            // Try to get from authData
-            const authData = credential._authData || credential.authData;
-            if (authData?.accessToken) {
-              return {
-                token: authData.accessToken,
-                email: ga?.emailAddress || '',
-                accountId: ga?.accountId,
-                expires: authData.expires
-              };
-            }
-            return { error: "Could not extract backend token" };
+          // The Superhuman backend uses idToken (JWT), not accessToken (OAuth)
+          const authData = credential._authData;
+          if (!authData) {
+            return { error: "AuthData not found" };
           }
 
-          return {
-            token: token,
-            email: ga?.emailAddress || '',
-            accountId: ga?.accountId,
-          };
+          // idToken is the Firebase/Google Identity token used for Superhuman backend
+          if (authData.idToken) {
+            return {
+              token: authData.idToken,
+              email: ga?.emailAddress || authData.emailAddress || '',
+              accountId: ga?.accountId,
+              expires: authData.expires
+            };
+          }
+
+          return { error: "Could not extract idToken" };
         } catch (e) {
           return { error: e.message };
         }
@@ -2743,4 +2728,311 @@ export async function superhumanFetch(
   }
 
   return JSON.parse(text);
+}
+
+// ============================================================================
+// Superhuman AI API Functions
+// ============================================================================
+
+/**
+ * Chat message for AI conversation history.
+ */
+export interface AIChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/**
+ * Thread message for AI context.
+ * Note: The AI API only accepts these three fields - additional fields cause 400 errors.
+ */
+export interface AIThreadMessage {
+  message_id: string;
+  subject: string;
+  body: string;
+}
+
+/**
+ * Options for AI query.
+ */
+export interface AIQueryOptions {
+  sessionId?: string;
+  chatHistory?: AIChatMessage[];
+  userName?: string;
+  userEmail?: string;
+  userCompany?: string;
+  userPosition?: string;
+  /**
+   * The user's ShortId prefix (4 chars like "4sKP").
+   * Required for generating valid event IDs.
+   * Extract using extractUserPrefix() from a Superhuman connection.
+   */
+  userPrefix?: string;
+}
+
+/**
+ * AI query result.
+ */
+export interface AIQueryResult {
+  response: string;
+  sessionId: string;
+}
+
+/**
+ * Base62 charset used for Superhuman IDs.
+ */
+const BASE62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+/**
+ * Generate random characters from Base62 charset.
+ */
+function randomBase62(length: number): string {
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += BASE62.charAt(Math.floor(Math.random() * BASE62.length));
+  }
+  return result;
+}
+
+/**
+ * Generate a unique event ID in Superhuman's format.
+ *
+ * Superhuman event IDs follow this structure (18 chars after prefix):
+ * - Position 0-2: "11V" format prefix
+ * - Position 3-6: 4 random chars (timestamp-like)
+ * - Position 7-10: User prefix (e.g., "4sKP") - identifies the user
+ * - Position 11-17: 7 random chars
+ *
+ * @param userPrefix - The 4-character user prefix extracted from Superhuman
+ * @returns A properly formatted event ID like "event_11VXxxx4sKPxxxxxxx"
+ */
+function generateEventId(userPrefix: string = ""): string {
+  // If no user prefix provided, fall back to old random generation
+  if (!userPrefix || userPrefix.length !== 4) {
+    let id = "event_";
+    for (let i = 0; i < 18; i++) {
+      id += BASE62.charAt(Math.floor(Math.random() * BASE62.length));
+    }
+    return id;
+  }
+
+  // Format: 11V + 4 random + userPrefix + 7 random = 18 chars total
+  const formatPrefix = "11V";
+  const midSection = randomBase62(4);
+  const randomSuffix = randomBase62(7);
+
+  return `event_${formatPrefix}${midSection}${userPrefix}${randomSuffix}`;
+}
+
+/**
+ * Extract the user's ShortId prefix from Superhuman.
+ *
+ * The prefix is embedded in the userId stored in labels settings.
+ * Format: user_XXXXXXX[4-char-prefix]XXXXXXX
+ * The 4-char prefix is at positions 7-10 of the userId suffix.
+ *
+ * @param conn - Superhuman connection
+ * @returns The 4-character user prefix (e.g., "4sKP"), or null if not found
+ */
+export async function extractUserPrefix(
+  conn: { Runtime: { evaluate: (opts: { expression: string; returnByValue: boolean }) => Promise<{ result: { value: any } }> } }
+): Promise<string | null> {
+  const { Runtime } = conn;
+
+  const result = await Runtime.evaluate({
+    expression: `
+      (() => {
+        const ga = window.GoogleAccount;
+        const userId = ga?.labels?._settings?._cache?.userId;
+        if (!userId) return null;
+        const suffix = userId.replace('user_', '');
+        // The user prefix is at positions 7-10 of the suffix
+        if (suffix.length < 11) return null;
+        return suffix.substring(7, 11);
+      })()
+    `,
+    returnByValue: true,
+  });
+
+  return result.result.value || null;
+}
+
+/**
+ * Get thread messages for AI context.
+ * Fetches the full thread content including body text.
+ *
+ * @param token - OAuth token info
+ * @param threadId - Thread ID to get messages from
+ * @returns Array of thread messages with body text
+ */
+export async function getThreadMessagesForAI(
+  token: TokenInfo,
+  threadId: string
+): Promise<AIThreadMessage[]> {
+  if (token.isMicrosoft) {
+    // MS Graph: Get messages in conversation
+    const path = `/me/messages?$filter=conversationId eq '${threadId}'&$select=id,subject,body,from,toRecipients,receivedDateTime&$orderby=receivedDateTime asc`;
+    const result = await msgraphFetch(token.accessToken, path);
+
+    if (!result || !result.value) {
+      return [];
+    }
+
+    // Note: The AI API only accepts message_id, subject, and body fields
+    // Additional fields like from, to, date cause a 400 error
+    return result.value.map((msg: any) => ({
+      message_id: msg.id,
+      subject: msg.subject || "",
+      body: msg.body?.content || "",
+    }));
+  } else {
+    // Gmail: Get thread with full format to get body
+    const path = `/threads/${threadId}?format=full`;
+    const result = await gmailFetch(token.accessToken, path);
+
+    if (!result || !result.messages) {
+      return [];
+    }
+
+    return result.messages.map((msg: any) => {
+      const headers = msg.payload?.headers || [];
+      const getHeader = (name: string): string => {
+        const h = headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
+        return h?.value || "";
+      };
+
+      // Extract body from parts
+      let body = "";
+      function extractBody(part: any): void {
+        if (part.mimeType === "text/plain" && part.body?.data) {
+          body = Buffer.from(part.body.data, "base64url").toString("utf-8");
+        } else if (part.mimeType === "text/html" && part.body?.data && !body) {
+          // Strip HTML tags for AI context (prefer plain text)
+          const htmlBody = Buffer.from(part.body.data, "base64url").toString("utf-8");
+          body = htmlBody.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+        }
+        if (part.parts) {
+          for (const p of part.parts) {
+            extractBody(p);
+          }
+        }
+      }
+      extractBody(msg.payload);
+
+      // Note: The AI API only accepts message_id, subject, and body fields
+      // Additional fields like from, to, date cause a 400 error
+      return {
+        message_id: msg.id,
+        subject: getHeader("Subject"),
+        body: body || msg.snippet || "",
+      };
+    });
+  }
+}
+
+/**
+ * Query Superhuman's AI assistant about an email thread.
+ *
+ * Uses the /v3/ai.askAIProxy endpoint to ask questions about emails.
+ * The AI can summarize threads, extract action items, draft replies, etc.
+ *
+ * @param superhumanToken - Superhuman backend token
+ * @param oauthToken - OAuth token for fetching thread content
+ * @param threadId - Thread ID to ask about
+ * @param query - Question to ask the AI
+ * @param options - Additional options
+ * @returns AI response
+ */
+export async function askAI(
+  superhumanToken: string,
+  oauthToken: TokenInfo,
+  threadId: string,
+  query: string,
+  options?: AIQueryOptions
+): Promise<AIQueryResult> {
+  // Generate or use existing session ID
+  const sessionId = options?.sessionId || crypto.randomUUID();
+
+  // Generate event ID with user prefix if available
+  // The user prefix is required for valid event IDs in Superhuman's format
+  const questionEventId = generateEventId(options?.userPrefix);
+
+  // Fetch thread messages for context
+  const threadMessages = await getThreadMessagesForAI(oauthToken, threadId);
+
+  if (threadMessages.length === 0) {
+    throw new Error(`Thread not found or has no messages: ${threadId}`);
+  }
+
+  // Build request payload
+  const payload = {
+    session_id: sessionId,
+    question_event_id: questionEventId,
+    query,
+    chat_history: options?.chatHistory || [],
+    user: {
+      email: options?.userEmail || oauthToken.email,
+      name: options?.userName || "",
+      company: options?.userCompany || "",
+      position: options?.userPosition || "",
+    },
+    local_datetime: new Date().toISOString(),
+    current_thread_id: threadId,
+    current_thread_messages: threadMessages,
+  };
+
+  // The AI endpoint returns a streaming response (Server-Sent Events),
+  // so we use fetch directly instead of superhumanFetch which expects JSON
+  const url = `${SUPERHUMAN_BACKEND_BASE}/v3/ai.askAIProxy`;
+
+  const fetchResponse = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${superhumanToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (fetchResponse.status === 401 || fetchResponse.status === 403) {
+    throw new Error("AI query failed - authentication error");
+  }
+
+  if (!fetchResponse.ok) {
+    const errorText = await fetchResponse.text().catch(() => "Unknown error");
+    throw new Error(`AI query failed: ${fetchResponse.status} ${fetchResponse.statusText} - ${errorText}`);
+  }
+
+  // Parse the streaming response (Server-Sent Events format)
+  const responseText = await fetchResponse.text();
+  let fullContent = "";
+
+  // Parse SSE data lines to extract the full response
+  const lines = responseText.split("\n");
+  for (const line of lines) {
+    if (line.startsWith("data: ")) {
+      const jsonStr = line.substring(6); // Remove "data: " prefix
+      if (jsonStr === "END") continue;
+
+      try {
+        const data = JSON.parse(jsonStr);
+        // Extract content from the chunk
+        // The final chunk has the complete content
+        if (data.content) {
+          fullContent = data.content;
+        }
+        // Also check for finished flag which indicates the response is complete
+        if (data.finished && data.content) {
+          fullContent = data.content;
+        }
+      } catch {
+        // Ignore non-JSON lines
+      }
+    }
+  }
+
+  return {
+    response: fullContent || responseText,
+    sessionId,
+  };
 }

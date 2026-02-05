@@ -53,9 +53,12 @@ import {
   loadTokensFromDisk,
   hasValidCachedTokens,
   getTokensFilePath,
+  extractSuperhumanToken,
+  extractUserPrefix,
+  askAI,
 } from "./token-api";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.1";
 const CDP_PORT = 9333;
 
 // ANSI colors
@@ -148,6 +151,7 @@ ${colors.bold}COMMANDS${colors.reset}
   ${colors.cyan}calendar-delete${colors.reset} Delete a calendar event
   ${colors.cyan}calendar-free${colors.reset} Check free/busy availability
   ${colors.cyan}contacts${colors.reset}   Search contacts by name
+  ${colors.cyan}ai${colors.reset}         Ask AI about an email thread (summarize, action items, etc.)
   ${colors.cyan}compose${colors.reset}    Open compose window and fill in email (keeps window open)
   ${colors.cyan}draft${colors.reset}      Create or update a draft
   ${colors.cyan}delete-draft${colors.reset} Delete draft(s) by ID
@@ -287,6 +291,12 @@ ${colors.bold}EXAMPLES${colors.reset}
   superhuman contacts search "john"
   superhuman contacts search "john" --limit 5 --json
 
+  ${colors.dim}# Ask AI about an email thread${colors.reset}
+  superhuman ai <thread-id> "summarize this thread"
+  superhuman ai <thread-id> "what are the action items?"
+  superhuman ai <thread-id> "draft a reply"
+  superhuman ai <thread-id> "who sent the last message?"
+
   ${colors.dim}# Create a draft${colors.reset}
   superhuman draft --to user@example.com --subject "Hello" --body "Hi there!"
 
@@ -366,6 +376,8 @@ interface CliOptions {
   contactsQuery: string; // search query for contacts
   // search options
   includeDone: boolean; // use direct Gmail API to search all emails including archived
+  // ai options
+  aiQuery: string; // question to ask the AI
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -406,6 +418,7 @@ function parseArgs(args: string[]): CliOptions {
     contactsSubcommand: "",
     contactsQuery: "",
     includeDone: false,
+    aiQuery: "",
   };
 
   let i = 0;
@@ -567,6 +580,14 @@ function parseArgs(args: string[]): CliOptions {
     } else if (options.command === "forward" && !options.threadId) {
       // Allow thread ID as positional argument for forward
       options.threadId = unescapeString(arg);
+      i += 1;
+    } else if (options.command === "ai" && !options.threadId) {
+      // First positional arg for ai is thread ID
+      options.threadId = unescapeString(arg);
+      i += 1;
+    } else if (options.command === "ai" && !options.aiQuery) {
+      // Second positional arg for ai is the question
+      options.aiQuery = unescapeString(arg);
       i += 1;
     } else if (options.command === "account" && !options.accountArg) {
       // Allow account index or email as positional argument
@@ -2337,6 +2358,76 @@ async function cmdContacts(options: CliOptions) {
   }
 }
 
+async function cmdAi(options: CliOptions) {
+  if (!options.threadId) {
+    error("Thread ID is required");
+    console.log(`Usage: superhuman ai <thread-id> "question"`);
+    process.exit(1);
+  }
+
+  if (!options.aiQuery) {
+    error("Question is required");
+    console.log(`Usage: superhuman ai <thread-id> "question"`);
+    console.log(`\nExamples:`);
+    console.log(`  superhuman ai <thread-id> "summarize this thread"`);
+    console.log(`  superhuman ai <thread-id> "what are the action items?"`);
+    console.log(`  superhuman ai <thread-id> "draft a reply"`);
+    process.exit(1);
+  }
+
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    process.exit(1);
+  }
+
+  try {
+    // Get OAuth token for thread content access
+    const accounts = await listAccounts(conn);
+    const currentAccount = accounts.find((a) => a.isCurrent);
+    if (!currentAccount) {
+      error("No active account found");
+      await disconnect(conn);
+      process.exit(1);
+    }
+
+    info(`Fetching thread context...`);
+    const oauthToken = await getToken(conn, currentAccount.email);
+
+    // Get Superhuman backend token for AI API
+    info(`Connecting to Superhuman AI...`);
+    const shToken = await extractSuperhumanToken(conn, currentAccount.email);
+
+    // Extract user prefix for valid event ID generation
+    const userPrefix = await extractUserPrefix(conn);
+    if (!userPrefix) {
+      error("Could not extract user prefix for AI API");
+      await disconnect(conn);
+      process.exit(1);
+    }
+
+    // Query the AI
+    info(`Asking AI: "${options.aiQuery}"`);
+    const result = await askAI(
+      shToken.token,
+      oauthToken,
+      options.threadId,
+      options.aiQuery,
+      { userPrefix }
+    );
+
+    // Display the response
+    console.log(`\n${colors.bold}AI Response:${colors.reset}\n`);
+    console.log(result.response);
+    console.log(`\n${colors.dim}Session: ${result.sessionId}${colors.reset}`);
+  } catch (e) {
+    error(`AI query failed: ${(e as Error).message}`);
+    await disconnect(conn);
+    process.exit(1);
+  }
+
+  await disconnect(conn);
+}
+
 async function cmdCalendarFree(options: CliOptions) {
   const conn = await checkConnection(options.port);
   if (!conn) {
@@ -2518,6 +2609,10 @@ async function main() {
 
     case "contacts":
       await cmdContacts(options);
+      break;
+
+    case "ai":
+      await cmdAi(options);
       break;
 
     case "compose":
