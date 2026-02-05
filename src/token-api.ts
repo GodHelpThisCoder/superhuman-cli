@@ -139,6 +139,140 @@ export function setTokenCacheForTest(email: string, token: TokenInfo): void {
   tokenCache.set(email, token);
 }
 
+// ============================================================================
+// Token Persistence
+// ============================================================================
+
+/**
+ * Persisted token format for disk storage.
+ */
+export interface PersistedTokens {
+  version: 1;
+  accounts: {
+    [email: string]: {
+      type: "google" | "microsoft";
+      accessToken: string;
+      expires: number; // Unix timestamp
+      superhumanToken?: {
+        token: string;
+        expires?: number;
+      };
+    };
+  };
+  lastUpdated: number;
+}
+
+// Config directory - evaluated at call time for testability
+function getConfigDir(): string {
+  return (
+    process.env.SUPERHUMAN_CLI_CONFIG_DIR ||
+    `${process.env.HOME}/.config/superhuman-cli`
+  );
+}
+
+function getTokensFile(): string {
+  return `${getConfigDir()}/tokens.json`;
+}
+
+/**
+ * Save all cached tokens to disk.
+ *
+ * Creates config directory if needed and writes tokens.json.
+ * Called by the `auth` command after extracting tokens via CDP.
+ */
+export async function saveTokensToDisk(): Promise<void> {
+  const { mkdir } = await import("node:fs/promises");
+  const configDir = getConfigDir();
+  const tokensFile = getTokensFile();
+
+  await mkdir(configDir, { recursive: true });
+
+  const data: PersistedTokens = {
+    version: 1,
+    accounts: {},
+    lastUpdated: Date.now(),
+  };
+
+  // Convert in-memory cache to persisted format
+  for (const [email, token] of Array.from(tokenCache.entries())) {
+    data.accounts[email] = {
+      type: token.isMicrosoft ? "microsoft" : "google",
+      accessToken: token.accessToken,
+      expires: token.expires,
+    };
+  }
+
+  await Bun.write(tokensFile, JSON.stringify(data, null, 2));
+}
+
+/**
+ * Load tokens from disk into memory cache.
+ *
+ * Called at CLI startup to check for cached tokens before
+ * attempting CDP connection.
+ *
+ * @returns true if tokens were loaded successfully, false otherwise
+ */
+export async function loadTokensFromDisk(): Promise<boolean> {
+  try {
+    const tokensFile = getTokensFile();
+    const file = Bun.file(tokensFile);
+    if (!(await file.exists())) {
+      return false;
+    }
+
+    const data = (await file.json()) as PersistedTokens;
+
+    // Validate version
+    if (data.version !== 1) {
+      return false;
+    }
+
+    // Populate in-memory cache
+    for (const [email, account] of Object.entries(data.accounts)) {
+      tokenCache.set(email, {
+        accessToken: account.accessToken,
+        email,
+        expires: account.expires,
+        isMicrosoft: account.type === "microsoft",
+      });
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if all cached tokens are still valid.
+ *
+ * Returns false if cache is empty or any token is expired
+ * or expiring within 5 minutes.
+ */
+export function hasValidCachedTokens(): boolean {
+  if (tokenCache.size === 0) {
+    return false;
+  }
+
+  const bufferMs = 5 * 60 * 1000; // 5 minutes
+  for (const token of tokenCache.values()) {
+    if (token.expires < Date.now() + bufferMs) {
+      return false; // At least one token expired or expiring soon
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Get the path to the tokens file.
+ * Useful for displaying to users where tokens are stored.
+ */
+export function getTokensFilePath(): string {
+  return getTokensFile();
+}
+
 const GMAIL_API_BASE = "https://www.googleapis.com/gmail/v1/users/me";
 const MSGRAPH_API_BASE = "https://graph.microsoft.com/v1.0";
 

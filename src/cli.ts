@@ -47,6 +47,13 @@ import {
 } from "./calendar";
 import { sendEmail, createDraft, updateDraft, sendDraftById, deleteDraft } from "./send-api";
 import { searchContacts, resolveRecipient, type Contact } from "./contacts";
+import {
+  getToken,
+  saveTokensToDisk,
+  loadTokensFromDisk,
+  hasValidCachedTokens,
+  getTokensFilePath,
+} from "./token-api";
 
 const VERSION = "0.4.0";
 const CDP_PORT = 9333;
@@ -110,6 +117,7 @@ ${colors.bold}USAGE${colors.reset}
   superhuman <command> [options]
 
 ${colors.bold}COMMANDS${colors.reset}
+  ${colors.cyan}auth${colors.reset}       Extract and save tokens for offline use
   ${colors.cyan}accounts${colors.reset}   List all linked accounts
   ${colors.cyan}account${colors.reset}    Switch to a different account
   ${colors.cyan}inbox${colors.reset}      List recent emails from inbox
@@ -177,6 +185,9 @@ ${colors.bold}OPTIONS${colors.reset}
   --port <number>    CDP port (default: ${CDP_PORT})
 
 ${colors.bold}EXAMPLES${colors.reset}
+  ${colors.dim}# Extract tokens for offline use${colors.reset}
+  superhuman auth
+
   ${colors.dim}# List linked accounts${colors.reset}
   superhuman accounts
   superhuman accounts --json
@@ -1734,6 +1745,42 @@ async function cmdDownload(options: CliOptions) {
   await disconnect(conn);
 }
 
+/**
+ * Extract OAuth tokens for all accounts and save to disk.
+ *
+ * This enables CLI operations without needing Superhuman running,
+ * as long as tokens haven't expired (typically ~1 hour).
+ */
+async function cmdAuth(options: CliOptions) {
+  log("Connecting to Superhuman...");
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    error("Cannot connect to Superhuman. Make sure it is running with:");
+    log(`  /Applications/Superhuman.app/Contents/MacOS/Superhuman --remote-debugging-port=${options.port}`);
+    process.exit(1);
+  }
+
+  try {
+    const accounts = await listAccounts(conn);
+    log(`Found ${accounts.length} account(s)`);
+
+    // Extract tokens for all accounts
+    for (const account of accounts) {
+      log(`Extracting token for ${account.email}...`);
+      await getToken(conn, account.email);
+    }
+
+    // Save to disk
+    await saveTokensToDisk();
+    success(`Tokens saved to ${getTokensFilePath()}`);
+    log("");
+    info("You can now use superhuman-cli without Superhuman running.");
+    info("Tokens are valid for ~1 hour. Run 'superhuman auth' again to refresh.");
+  } finally {
+    await disconnect(conn);
+  }
+}
+
 async function cmdAccounts(options: CliOptions) {
   const conn = await checkConnection(options.port);
   if (!conn) {
@@ -2347,6 +2394,10 @@ async function main() {
 
     case "status":
       await cmdStatus(options);
+      break;
+
+    case "auth":
+      await cmdAuth(options);
       break;
 
     case "accounts":
