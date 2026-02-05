@@ -12,6 +12,7 @@ import {
   getToken,
   getThreadDirect,
   downloadAttachmentDirect,
+  addAttachmentToDraft,
 } from "./token-api";
 import { listAccounts } from "./accounts";
 
@@ -185,4 +186,35 @@ export async function addAttachment(
   });
 
   return result.result.value as AddAttachmentResult;
+}
+
+/**
+ * Add an attachment to a draft via direct API
+ *
+ * This function adds attachments to drafts created via the direct API
+ * (createDraftGmail/createDraftMsgraph). The draft must exist in the
+ * native email provider's Drafts folder.
+ *
+ * For drafts created via Superhuman's compose UI, use addAttachment() instead.
+ *
+ * @param conn - Superhuman connection (for token extraction)
+ * @param draftId - The draft ID (Gmail draft ID or MS Graph message ID)
+ * @param filename - Name of the file
+ * @param base64Data - File content as base64 string
+ * @param mimeType - MIME type of the file
+ */
+export async function addAttachmentDirect(
+  conn: SuperhumanConnection,
+  draftId: string,
+  filename: string,
+  base64Data: string,
+  mimeType: string
+): Promise<AddAttachmentResult> {
+  try {
+    const token = await getCurrentToken(conn);
+    const success = await addAttachmentToDraft(token, draftId, filename, mimeType, base64Data);
+    return { success };
+  } catch (e: any) {
+    return { success: false, error: e.message || "Failed to add attachment" };
+  }
 }

@@ -920,3 +920,242 @@ export async function getConversationMessageIds(
 
   return result.value.map((m: any) => m.id);
 }
+
+/**
+ * Add an attachment to a draft via MS Graph API.
+ *
+ * @param token - Token info
+ * @param draftId - The draft/message ID
+ * @param filename - Attachment filename
+ * @param contentType - MIME type
+ * @param base64Data - Base64-encoded attachment data
+ * @returns true on success
+ */
+export async function addAttachmentToMsgraphDraft(
+  token: TokenInfo,
+  draftId: string,
+  filename: string,
+  contentType: string,
+  base64Data: string
+): Promise<boolean> {
+  if (!token.isMicrosoft) {
+    throw new Error("addAttachmentToMsgraphDraft is MS Graph-only");
+  }
+
+  const path = `/me/messages/${draftId}/attachments`;
+  const body = {
+    "@odata.type": "#microsoft.graph.fileAttachment",
+    name: filename,
+    contentType: contentType,
+    contentBytes: base64Data,
+  };
+
+  const result = await msgraphFetch(token.accessToken, path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  return result !== null;
+}
+
+/**
+ * Add an attachment to a Gmail draft.
+ *
+ * Gmail requires rebuilding the entire MIME message with attachments.
+ * This function fetches the draft, adds the attachment, and updates it.
+ *
+ * @param token - Token info
+ * @param draftId - The Gmail draft ID
+ * @param filename - Attachment filename
+ * @param contentType - MIME type
+ * @param base64Data - Base64-encoded attachment data
+ * @returns true on success
+ */
+export async function addAttachmentToGmailDraft(
+  token: TokenInfo,
+  draftId: string,
+  filename: string,
+  contentType: string,
+  base64Data: string
+): Promise<boolean> {
+  if (token.isMicrosoft) {
+    throw new Error("addAttachmentToGmailDraft is Gmail-only");
+  }
+
+  // Step 1: Get the existing draft
+  const draftPath = `/drafts/${draftId}?format=full`;
+  const draft = await gmailFetch(token.accessToken, draftPath);
+
+  if (!draft || !draft.message) {
+    throw new Error("Draft not found");
+  }
+
+  // Step 2: Extract existing message content
+  const message = draft.message;
+  const payload = message.payload;
+  const headers = payload.headers || [];
+
+  // Helper to get header value
+  const getHeader = (name: string) =>
+    headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || "";
+
+  const to = getHeader("To");
+  const cc = getHeader("Cc");
+  const bcc = getHeader("Bcc");
+  const subject = getHeader("Subject");
+  const from = getHeader("From");
+  const inReplyTo = getHeader("In-Reply-To");
+  const references = getHeader("References");
+
+  // Extract body from the message
+  let body = "";
+  let isHtml = false;
+
+  function extractBody(part: any): void {
+    if (part.mimeType === "text/html" && part.body?.data) {
+      body = Buffer.from(part.body.data, "base64url").toString("utf-8");
+      isHtml = true;
+    } else if (part.mimeType === "text/plain" && part.body?.data && !body) {
+      body = Buffer.from(part.body.data, "base64url").toString("utf-8");
+    }
+    if (part.parts) {
+      for (const p of part.parts) {
+        extractBody(p);
+      }
+    }
+  }
+  extractBody(payload);
+
+  // Collect existing attachments
+  const existingAttachments: Array<{
+    filename: string;
+    mimeType: string;
+    data: string;
+  }> = [];
+
+  async function collectAttachments(part: any): Promise<void> {
+    if (part.filename && part.body?.attachmentId) {
+      // Fetch the attachment data
+      const attPath = `/messages/${message.id}/attachments/${part.body.attachmentId}`;
+      const attData = await gmailFetch(token.accessToken, attPath);
+      if (attData?.data) {
+        existingAttachments.push({
+          filename: part.filename,
+          mimeType: part.mimeType || "application/octet-stream",
+          data: attData.data.replace(/-/g, "+").replace(/_/g, "/"),
+        });
+      }
+    }
+    if (part.parts) {
+      for (const p of part.parts) {
+        await collectAttachments(p);
+      }
+    }
+  }
+  await collectAttachments(payload);
+
+  // Add the new attachment
+  existingAttachments.push({
+    filename,
+    mimeType: contentType,
+    data: base64Data,
+  });
+
+  // Step 3: Build new MIME message with attachments
+  const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+  const mimeHeaders = [
+    "MIME-Version: 1.0",
+    `From: ${from}`,
+    `To: ${to}`,
+  ];
+
+  if (cc) mimeHeaders.push(`Cc: ${cc}`);
+  if (bcc) mimeHeaders.push(`Bcc: ${bcc}`);
+  mimeHeaders.push(`Subject: ${subject}`);
+  if (inReplyTo) mimeHeaders.push(`In-Reply-To: ${inReplyTo}`);
+  if (references) mimeHeaders.push(`References: ${references}`);
+  mimeHeaders.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+  mimeHeaders.push("");
+
+  // Body part
+  const bodyPart = [
+    `--${boundary}`,
+    `Content-Type: ${isHtml ? "text/html" : "text/plain"}; charset=utf-8`,
+    "",
+    body,
+  ].join("\r\n");
+
+  // Attachment parts
+  const attachmentParts = existingAttachments.map((att) => [
+    `--${boundary}`,
+    `Content-Type: ${att.mimeType}; name="${att.filename}"`,
+    `Content-Disposition: attachment; filename="${att.filename}"`,
+    "Content-Transfer-Encoding: base64",
+    "",
+    att.data,
+  ].join("\r\n")).join("\r\n");
+
+  const fullMessage = [
+    mimeHeaders.join("\r\n"),
+    bodyPart,
+    attachmentParts,
+    `--${boundary}--`,
+  ].join("\r\n");
+
+  // Base64url encode
+  const base64Message = Buffer.from(fullMessage)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+  // Step 4: Update the draft
+  const updatePath = `/drafts/${draftId}`;
+  const updateBody: any = {
+    message: { raw: base64Message },
+  };
+
+  if (message.threadId) {
+    updateBody.message.threadId = message.threadId;
+  }
+
+  const response = await fetch(
+    `https://www.googleapis.com/gmail/v1/users/me${updatePath}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(updateBody),
+    }
+  );
+
+  return response.ok;
+}
+
+/**
+ * Add an attachment to a draft (Gmail or MS Graph).
+ *
+ * @param token - Token info
+ * @param draftId - The draft ID
+ * @param filename - Attachment filename
+ * @param contentType - MIME type
+ * @param base64Data - Base64-encoded attachment data
+ * @returns true on success
+ */
+export async function addAttachmentToDraft(
+  token: TokenInfo,
+  draftId: string,
+  filename: string,
+  contentType: string,
+  base64Data: string
+): Promise<boolean> {
+  if (token.isMicrosoft) {
+    return addAttachmentToMsgraphDraft(token, draftId, filename, contentType, base64Data);
+  } else {
+    return addAttachmentToGmailDraft(token, draftId, filename, contentType, base64Data);
+  }
+}
