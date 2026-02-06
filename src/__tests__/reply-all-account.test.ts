@@ -22,7 +22,7 @@ describe("reply-all command with --account flag", () => {
     test("reply-all with --account requires thread-id argument", async () => {
       // Run reply-all without a thread-id - should show usage error
       const proc = Bun.spawn(
-        ["bun", "run", "src/cli.ts", "reply-all", "--account=test@example.com", "--body=Test reply-all"],
+        [process.execPath, "run", "src/cli.ts", "reply-all", "--account=test@example.com", "--body=Test reply-all"],
         {
           cwd: import.meta.dir + "/../..",
           stdout: "pipe",
@@ -44,7 +44,7 @@ describe("reply-all command with --account flag", () => {
       // Should warn about no cached credentials and fall back to CDP path
       // (which will fail because no Superhuman is running, but that's expected)
       const proc = Bun.spawn(
-        ["bun", "run", "src/cli.ts", "reply-all", "test-thread-123", "--account=nonexistent@example.com", "--body=Test reply-all"],
+        [process.execPath, "run", "src/cli.ts", "reply-all", "test-thread-123", "--account=nonexistent@example.com", "--body=Test reply-all"],
         {
           cwd: import.meta.dir + "/../..",
           stdout: "pipe",
@@ -64,7 +64,7 @@ describe("reply-all command with --account flag", () => {
       // This test verifies the code path exists - in practice needs mocking for full coverage
       // For now, verify it accepts the --account flag in the context of reply-all
       const proc = Bun.spawn(
-        ["bun", "run", "src/cli.ts", "reply-all", "thread123", "--account=test@example.com", "--body=Reply-all text"],
+        [process.execPath, "run", "src/cli.ts", "reply-all", "thread123", "--account=test@example.com", "--body=Reply-all text"],
         {
           cwd: import.meta.dir + "/../..",
           stdout: "pipe",
@@ -84,7 +84,7 @@ describe("reply-all command with --account flag", () => {
     test("reply-all with --account and --send attempts direct send", async () => {
       // This test verifies the --send + --account combo is handled
       const proc = Bun.spawn(
-        ["bun", "run", "src/cli.ts", "reply-all", "thread123", "--account=test@example.com", "--body=Reply-all text", "--send"],
+        [process.execPath, "run", "src/cli.ts", "reply-all", "thread123", "--account=test@example.com", "--body=Reply-all text", "--send"],
         {
           cwd: import.meta.dir + "/../..",
           stdout: "pipe",
@@ -105,7 +105,7 @@ describe("reply-all command with --account flag", () => {
     test("reply-all usage string includes --account flag", async () => {
       // Trigger the usage message by providing reply-all without thread-id
       const proc = Bun.spawn(
-        ["bun", "run", "src/cli.ts", "reply-all"],
+        [process.execPath, "run", "src/cli.ts", "reply-all"],
         {
           cwd: import.meta.dir + "/../..",
           stdout: "pipe",

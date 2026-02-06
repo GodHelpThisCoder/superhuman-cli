@@ -22,7 +22,7 @@ describe("reply command with --account flag", () => {
     test("reply with --account requires thread-id argument", async () => {
       // Run reply without a thread-id - should show usage error
       const proc = Bun.spawn(
-        ["bun", "run", "src/cli.ts", "reply", "--account=test@example.com", "--body=Test reply"],
+        [process.execPath, "run", "src/cli.ts", "reply", "--account=test@example.com", "--body=Test reply"],
         {
           cwd: import.meta.dir + "/../..",
           stdout: "pipe",
@@ -44,7 +44,7 @@ describe("reply command with --account flag", () => {
       // Should warn about no cached credentials and fall back to CDP path
       // (which will fail because no Superhuman is running, but that's expected)
       const proc = Bun.spawn(
-        ["bun", "run", "src/cli.ts", "reply", "test-thread-123", "--account=nonexistent@example.com", "--body=Test reply"],
+        [process.execPath, "run", "src/cli.ts", "reply", "test-thread-123", "--account=nonexistent@example.com", "--body=Test reply"],
         {
           cwd: import.meta.dir + "/../..",
           stdout: "pipe",
@@ -64,7 +64,7 @@ describe("reply command with --account flag", () => {
       // This test verifies the code path exists - in practice needs mocking for full coverage
       // For now, verify it accepts the --account flag in the context of reply
       const proc = Bun.spawn(
-        ["bun", "run", "src/cli.ts", "reply", "thread123", "--account=test@example.com", "--body=Reply text"],
+        [process.execPath, "run", "src/cli.ts", "reply", "thread123", "--account=test@example.com", "--body=Reply text"],
         {
           cwd: import.meta.dir + "/../..",
           stdout: "pipe",
@@ -84,7 +84,7 @@ describe("reply command with --account flag", () => {
     test("reply with --account and --send attempts direct send", async () => {
       // This test verifies the --send + --account combo is handled
       const proc = Bun.spawn(
-        ["bun", "run", "src/cli.ts", "reply", "thread123", "--account=test@example.com", "--body=Reply text", "--send"],
+        [process.execPath, "run", "src/cli.ts", "reply", "thread123", "--account=test@example.com", "--body=Reply text", "--send"],
         {
           cwd: import.meta.dir + "/../..",
           stdout: "pipe",
