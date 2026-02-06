@@ -65,7 +65,7 @@ import {
   sendEmailDirect,
 } from "./token-api";
 
-const VERSION = "0.10.1";
+const VERSION = "0.10.2";
 const CDP_PORT = 9333;
 
 // ANSI colors
