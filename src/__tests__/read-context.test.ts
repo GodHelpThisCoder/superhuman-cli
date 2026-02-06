@@ -3,15 +3,16 @@
 import { test, expect, describe } from "bun:test";
 
 describe("read command with --context", () => {
-  test("read command requires --account flag", async () => {
-    // Run: read <fake-thread-id> without --account
-    // Expect: non-zero exit, output mentions "account" or "required"
+  test("read command fails gracefully without cached tokens or --account", async () => {
+    // Run: read <fake-thread-id> without --account and no cached tokens
+    // Expect: non-zero exit, output mentions tokens/auth or API error
     const proc = Bun.spawn(
       [process.execPath, "run", "src/cli.ts", "read", "thread-fake-12345"],
       {
         cwd: import.meta.dir + "/../..",
         stdout: "pipe",
         stderr: "pipe",
+        env: { ...process.env, SUPERHUMAN_CLI_CONFIG_DIR: "/tmp/nonexistent-test-dir" },
       }
     );
     const stderr = await new Response(proc.stderr).text();
@@ -19,8 +20,8 @@ describe("read command with --context", () => {
     const exitCode = await proc.exited;
     const output = stdout + stderr;
 
-    // Should error about missing --account flag
-    expect(output).toMatch(/--account.*required|account.*required/i);
+    // Should error about missing tokens/credentials or fail to fetch
+    expect(output).toMatch(/cached|token|auth|connect|failed/i);
     expect(exitCode).not.toBe(0);
   });
 

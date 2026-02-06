@@ -5,13 +5,8 @@
  * Works with both Google and Microsoft/Outlook accounts.
  */
 
-import type { SuperhumanConnection } from "./superhuman-api";
-import {
-  type TokenInfo,
-  getToken,
-  searchContactsDirect,
-} from "./token-api";
-import { listAccounts } from "./accounts";
+import type { ConnectionProvider } from "./connection-provider";
+import { searchContactsDirect } from "./token-api";
 
 /**
  * Represents a contact returned from contact search.
@@ -39,36 +34,22 @@ export interface SearchContactsOptions {
 }
 
 /**
- * Get token for the current account.
- */
-async function getCurrentToken(conn: SuperhumanConnection): Promise<TokenInfo> {
-  const accounts = await listAccounts(conn);
-  const currentAccount = accounts.find((a) => a.isCurrent);
-
-  if (!currentAccount) {
-    throw new Error("No current account found");
-  }
-
-  return getToken(conn, currentAccount.email);
-}
-
-/**
  * Search contacts by name or email prefix.
  *
  * Uses direct Google People API or MS Graph People API for contact search.
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param query - The search query (name or email prefix)
  * @param options - Optional search options
  * @returns Array of matching contacts sorted by relevance
  */
 export async function searchContacts(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   query: string,
   options?: SearchContactsOptions
 ): Promise<Contact[]> {
   const limit = options?.limit ?? 20;
-  const token = await getCurrentToken(conn);
+  const token = await provider.getToken();
   return searchContactsDirect(token, query, limit);
 }
 
@@ -79,12 +60,12 @@ export async function searchContacts(
  * Otherwise, searches contacts and returns the email of the best match.
  * If no match is found, returns the original input unchanged.
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param recipient - Email address or name to resolve
  * @returns The resolved email address, or original input if not resolved
  */
 export async function resolveRecipient(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   recipient: string
 ): Promise<string> {
   // If already an email, return as-is
@@ -93,7 +74,7 @@ export async function resolveRecipient(
   }
 
   // Search contacts
-  const contacts = await searchContacts(conn, recipient, { limit: 1 });
+  const contacts = await searchContacts(provider, recipient, { limit: 1 });
 
   // Return best match's email, or original if no matches
   const first = contacts[0];

@@ -5,7 +5,6 @@
  * Command-line interface for composing and sending emails via Superhuman.
  *
  * Usage:
- *   superhuman compose --to <email> --subject <subject> --body <body>
  *   superhuman send --to <email> --subject <subject> --body <body>
  *   superhuman draft --to <email> --subject <subject> --body <body>
  *   superhuman status
@@ -13,15 +12,6 @@
 
 import {
   connectToSuperhuman,
-  openCompose,
-  getDraftState,
-  setSubject,
-  addRecipient,
-  addCcRecipient,
-  setBody,
-  saveDraft,
-  sendDraft,
-  closeCompose,
   disconnect,
   textToHtml,
   unescapeString,
@@ -33,8 +23,8 @@ import { replyToThread, replyAllToThread, forwardThread } from "./reply";
 import { archiveThread, deleteThread } from "./archive";
 import { markAsRead, markAsUnread } from "./read-status";
 import { listLabels, getThreadLabels, addLabel, removeLabel, starThread, unstarThread, listStarred } from "./labels";
-import { snoozeThread, unsnoozeThread, listSnoozed, parseSnoozeTime } from "./snooze";
-import { listAttachments, downloadAttachment, type Attachment } from "./attachments";
+import { parseSnoozeTime, snoozeThreadViaProvider, unsnoozeThreadViaProvider, listSnoozedViaProvider } from "./snooze";
+import { listAttachments, downloadAttachment } from "./attachments";
 import {
   listEvents,
   createEvent,
@@ -45,8 +35,8 @@ import {
   type CreateEventInput,
   type UpdateEventInput,
 } from "./calendar";
-import { sendEmail, createDraft, updateDraft, sendDraftById, deleteDraft } from "./send-api";
-import { createDraftDirect, createDraftWithUserInfo, getUserInfo, getUserInfoFromCache, sendDraftSuperhuman, type Recipient, type UserInfo } from "./draft-api";
+import { sendEmailViaProvider, createDraftViaProvider, updateDraftViaProvider, sendDraftByIdViaProvider, deleteDraftViaProvider } from "./send-api";
+import { createDraftWithUserInfo, getUserInfo, getUserInfoFromCache, sendDraftSuperhuman, type Recipient, type UserInfo } from "./draft-api";
 import { searchContacts, resolveRecipient, type Contact } from "./contacts";
 import { listSnippets, findSnippet, applyVars, parseVars } from "./snippets";
 import {
@@ -64,6 +54,8 @@ import {
   sendEmailDirect,
   getThreadMessages,
 } from "./token-api";
+import type { ConnectionProvider } from "./connection-provider";
+import { CachedTokenProvider, CDPConnectionProvider, resolveProvider } from "./connection-provider";
 
 const VERSION = "0.11.0";
 const CDP_PORT = 9333;
@@ -139,7 +131,6 @@ ${colors.bold}COMMANDS${colors.reset}
   ${colors.cyan}forward${colors.reset} <id>        Forward an email thread
   ${colors.cyan}archive${colors.reset} <id>        Archive email thread(s)
   ${colors.cyan}delete${colors.reset} <id>         Delete (trash) email thread(s)
-  ${colors.cyan}compose${colors.reset}             Open compose window (keeps window open)
   ${colors.cyan}send${colors.reset}                Compose and send, or send an existing draft
   ${colors.cyan}ai${colors.reset} <id> <query>     Ask AI about an email thread
   ${colors.cyan}status${colors.reset}              Check Superhuman connection status
@@ -291,9 +282,6 @@ ${colors.bold}EXAMPLES${colors.reset}
   superhuman draft send <draft-id> --account=user@example.com --to=recipient@example.com --subject="Subject" --body="Body"
   superhuman draft send <draft-id> --thread=<thread-id> --account=... ${colors.dim}# For reply/forward drafts${colors.reset}
 
-  ${colors.dim}# Compose (opens Superhuman UI)${colors.reset}
-  superhuman compose --to user@example.com --subject "Meeting"
-  superhuman compose --to "john" --subject "Meeting"
 
   ${colors.dim}# Send an email immediately${colors.reset}
   superhuman send --to user@example.com --subject "Quick note" --body "FYI"
@@ -721,16 +709,36 @@ async function checkConnection(port: number): Promise<SuperhumanConnection | nul
 }
 
 /**
- * Resolve all recipients in arrays (to, cc, bcc) from names to email addresses.
+ * Get a ConnectionProvider, preferring cached tokens over CDP.
+ * Exits with error message if neither is available.
+ */
+async function getProvider(options: CliOptions): Promise<ConnectionProvider> {
+  const provider = await resolveProvider({ account: options.account, port: options.port });
+  if (provider) {
+    return provider;
+  }
+  // No cached tokens — fall back to CDP
+  const conn = await checkConnection(options.port);
+  if (!conn) {
+    error("No cached tokens and could not connect to Superhuman");
+    info("Run 'superhuman account auth' to authenticate, or start Superhuman with:");
+    info(`  /Applications/Superhuman.app/Contents/MacOS/Superhuman --remote-debugging-port=${options.port}`);
+    process.exit(1);
+  }
+  return new CDPConnectionProvider(conn);
+}
+
+/**
+ * Resolve all recipients via ConnectionProvider.
  * Names without @ are looked up in contacts; emails are passed through unchanged.
  */
-async function resolveAllRecipients(
-  conn: SuperhumanConnection,
+async function resolveAllRecipientsViaProvider(
+  provider: ConnectionProvider,
   recipients: string[]
 ): Promise<string[]> {
   const resolved: string[] = [];
   for (const recipient of recipients) {
-    const email = await resolveRecipient(conn, recipient);
+    const email = await resolveRecipient(provider, recipient);
     if (email !== recipient && !recipient.includes("@")) {
       info(`Resolved "${recipient}" to ${email}`);
     }
@@ -738,6 +746,8 @@ async function resolveAllRecipients(
   }
   return resolved;
 }
+
+
 
 async function cmdStatus(options: CliOptions) {
   info(`Checking connection to Superhuman on port ${options.port}...`);
@@ -748,19 +758,6 @@ async function cmdStatus(options: CliOptions) {
   }
 
   success("Connected to Superhuman");
-
-  // Get current state
-  const state = await getDraftState(conn);
-  if (state) {
-    log(`\n${colors.bold}Current compose state:${colors.reset}`);
-    log(`  Draft ID: ${state.id}`);
-    log(`  From: ${state.from}`);
-    log(`  To: ${state.to.join(", ") || "(none)"}`);
-    log(`  Subject: ${state.subject || "(none)"}`);
-    log(`  Dirty: ${state.isDirty}`);
-  } else {
-    log("\nNo active compose window");
-  }
 
   await disconnect(conn);
 }
@@ -938,90 +935,23 @@ async function cmdSnippet(options: CliOptions) {
   }
 }
 
-async function cmdCompose(options: CliOptions, keepOpen = true) {
-  if (options.to.length === 0) {
-    error("At least one recipient is required (--to)");
-    process.exit(1);
-  }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
-
-  // Resolve names to emails
-  const resolvedTo = await resolveAllRecipients(conn, options.to);
-
-  info("Opening compose window...");
-  const draftKey = await openCompose(conn);
-  if (!draftKey) {
-    error("Failed to open compose window");
-    await disconnect(conn);
-    process.exit(1);
-  }
-  success(`Compose opened (${draftKey})`);
-
-  // Add recipients
-  for (const email of resolvedTo) {
-    info(`Adding recipient: ${email}`);
-    const added = await addRecipient(conn, email, undefined, draftKey);
-    if (added) {
-      success(`Added: ${email}`);
-    } else {
-      error(`Failed to add: ${email}`);
-    }
-  }
-
-  // Set subject
-  if (options.subject) {
-    info(`Setting subject: ${options.subject}`);
-    await setSubject(conn, options.subject, draftKey);
-    success("Subject set");
-  }
-
-  // Set body
-  const bodyContent = options.html || options.body;
-  if (bodyContent) {
-    info("Setting body...");
-    await setBody(conn, textToHtml(bodyContent), draftKey);
-    success("Body set");
-  }
-
-  // Get final state
-  const state = await getDraftState(conn);
-  if (state) {
-    log(`\n${colors.bold}Draft:${colors.reset}`);
-    log(`  To: ${state.to.join(", ")}`);
-    log(`  Subject: ${state.subject}`);
-    log(`  Body: ${state.body.substring(0, 100)}${state.body.length > 100 ? "..." : ""}`);
-  }
-
-  if (!keepOpen) {
-    await closeCompose(conn);
-  }
-
-  await disconnect(conn);
-  return state;
-}
 
 async function cmdDraft(options: CliOptions) {
   // If updating an existing draft
   if (options.updateDraftId) {
-    const conn = await checkConnection(options.port);
-    if (!conn) {
-      process.exit(1);
-    }
+    const provider = await getProvider(options);
 
     // Resolve names to emails
-    const resolvedTo = options.to.length > 0 ? await resolveAllRecipients(conn, options.to) : undefined;
-    const resolvedCc = options.cc.length > 0 ? await resolveAllRecipients(conn, options.cc) : undefined;
-    const resolvedBcc = options.bcc.length > 0 ? await resolveAllRecipients(conn, options.bcc) : undefined;
+    const resolvedTo = options.to.length > 0 ? await resolveAllRecipientsViaProvider(provider, options.to) : undefined;
+    const resolvedCc = options.cc.length > 0 ? await resolveAllRecipientsViaProvider(provider, options.cc) : undefined;
+    const resolvedBcc = options.bcc.length > 0 ? await resolveAllRecipientsViaProvider(provider, options.bcc) : undefined;
 
     // Use HTML body if provided, otherwise convert plain text to HTML (if body provided)
     const bodyContent = options.html || (options.body ? textToHtml(options.body) : undefined);
 
     info(`Updating draft ${options.updateDraftId}...`);
-    const result = await updateDraft(conn, options.updateDraftId, {
+    const result = await updateDraftViaProvider(provider, options.updateDraftId, {
       to: resolvedTo,
       cc: resolvedCc,
       bcc: resolvedBcc,
@@ -1039,7 +969,7 @@ async function cmdDraft(options: CliOptions) {
       error(`Failed to update draft: ${result.error}`);
     }
 
-    await disconnect(conn);
+    await provider.disconnect();
     return;
   }
 
@@ -1088,15 +1018,12 @@ async function cmdDraft(options: CliOptions) {
     }
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   // Resolve names to emails
-  const resolvedTo = await resolveAllRecipients(conn, options.to);
-  const resolvedCc = options.cc.length > 0 ? await resolveAllRecipients(conn, options.cc) : undefined;
-  const resolvedBcc = options.bcc.length > 0 ? await resolveAllRecipients(conn, options.bcc) : undefined;
+  const resolvedTo = await resolveAllRecipientsViaProvider(provider, options.to);
+  const resolvedCc = options.cc.length > 0 ? await resolveAllRecipientsViaProvider(provider, options.cc) : undefined;
+  const resolvedBcc = options.bcc.length > 0 ? await resolveAllRecipientsViaProvider(provider, options.bcc) : undefined;
 
   // Use HTML body if provided, otherwise convert plain text to HTML
   const bodyContent = options.html || textToHtml(options.body);
@@ -1105,7 +1032,7 @@ async function cmdDraft(options: CliOptions) {
     // Direct API approach - fast, no UI needed, supports BCC
     info("Creating draft via Superhuman API...");
 
-    const result = await createDraftDirect(conn, {
+    const result = await createDraftViaProvider(provider, {
       to: resolvedTo,
       cc: resolvedCc,
       bcc: resolvedBcc,
@@ -1123,7 +1050,7 @@ async function cmdDraft(options: CliOptions) {
   } else {
     // Direct API approach (Gmail/MS Graph)
     info("Creating draft via Gmail/MS Graph API...");
-    const result = await createDraft(conn, {
+    const result = await createDraftViaProvider(provider, {
       to: resolvedTo,
       cc: resolvedCc,
       bcc: resolvedBcc,
@@ -1142,7 +1069,7 @@ async function cmdDraft(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdDeleteDraft(options: CliOptions) {
@@ -1154,14 +1081,11 @@ async function cmdDeleteDraft(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   for (const draftId of draftIds) {
     info(`Deleting draft ${draftId.slice(-15)}...`);
-    const result = await deleteDraft(conn, draftId);
+    const result = await deleteDraftViaProvider(provider, draftId);
 
     if (result.success) {
       success(`Deleted draft ${draftId.slice(-15)}`);
@@ -1170,7 +1094,7 @@ async function cmdDeleteDraft(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdSendDraft(options: CliOptions) {
@@ -1263,13 +1187,10 @@ async function cmdSendDraft(options: CliOptions) {
 async function cmdSend(options: CliOptions) {
   // If sending an existing draft by ID
   if (options.sendDraftId) {
-    const conn = await checkConnection(options.port);
-    if (!conn) {
-      process.exit(1);
-    }
+    const provider = await getProvider(options);
 
     info(`Sending draft ${options.sendDraftId}...`);
-    const result = await sendDraftById(conn, options.sendDraftId);
+    const result = await sendDraftByIdViaProvider(provider, options.sendDraftId);
 
     if (result.success) {
       success("Draft sent!");
@@ -1280,7 +1201,7 @@ async function cmdSend(options: CliOptions) {
       error(`Failed to send draft: ${result.error}`);
     }
 
-    await disconnect(conn);
+    await provider.disconnect();
     return;
   }
 
@@ -1290,21 +1211,18 @@ async function cmdSend(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   // Resolve names to emails
-  const resolvedTo = await resolveAllRecipients(conn, options.to);
-  const resolvedCc = options.cc.length > 0 ? await resolveAllRecipients(conn, options.cc) : undefined;
-  const resolvedBcc = options.bcc.length > 0 ? await resolveAllRecipients(conn, options.bcc) : undefined;
+  const resolvedTo = await resolveAllRecipientsViaProvider(provider, options.to);
+  const resolvedCc = options.cc.length > 0 ? await resolveAllRecipientsViaProvider(provider, options.cc) : undefined;
+  const resolvedBcc = options.bcc.length > 0 ? await resolveAllRecipientsViaProvider(provider, options.bcc) : undefined;
 
   // Use HTML body if provided, otherwise convert plain text to HTML
   const bodyContent = options.html || textToHtml(options.body);
 
   info("Sending email...");
-  const result = await sendEmail(conn, {
+  const result = await sendEmailViaProvider(provider, {
     to: resolvedTo,
     cc: resolvedCc,
     bcc: resolvedBcc,
@@ -1322,7 +1240,7 @@ async function cmdSend(options: CliOptions) {
     error(`Failed to send: ${result.error}`);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 function formatDate(dateStr: string): string {
@@ -1343,12 +1261,9 @@ function truncate(str: string | null | undefined, maxLen: number): string {
 }
 
 async function cmdInbox(options: CliOptions) {
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
-  const threads = await listInbox(conn, { limit: options.limit });
+  const threads = await listInbox(provider, { limit: options.limit });
 
   if (options.json) {
     console.log(JSON.stringify(threads, null, 2));
@@ -1371,7 +1286,7 @@ async function cmdInbox(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdSearch(options: CliOptions) {
@@ -1381,12 +1296,9 @@ async function cmdSearch(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
-  const threads = await searchInbox(conn, {
+  const threads = await searchInbox(provider, {
     query: options.query,
     limit: options.limit,
     includeDone: options.includeDone,
@@ -1413,10 +1325,10 @@ async function cmdSearch(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
-const READ_USAGE = `Usage: superhuman read <thread-id> --account <email> [--context N]`;
+const READ_USAGE = `Usage: superhuman read <thread-id> [--account <email>] [--context N]`;
 
 async function cmdRead(options: CliOptions) {
   if (!options.threadId) {
@@ -1425,18 +1337,8 @@ async function cmdRead(options: CliOptions) {
     process.exit(1);
   }
 
-  if (!options.account) {
-    error("--account is required for read");
-    console.log(READ_USAGE);
-    process.exit(1);
-  }
-
-  await loadTokensFromDisk();
-  const token = await getCachedToken(options.account);
-  if (!token) {
-    error(`No cached credentials for ${options.account}. Run 'superhuman account auth' first.`);
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
+  const token = await provider.getToken();
 
   let messages;
   try {
@@ -1482,6 +1384,8 @@ async function cmdRead(options: CliOptions) {
       console.log(msg.snippet);
     }
   }
+
+  await provider.disconnect();
 }
 
 async function cmdReply(options: CliOptions) {
@@ -1576,16 +1480,13 @@ async function cmdReply(options: CliOptions) {
   }
 
   // CDP path (original behavior)
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   const body = options.body || "";
   const action = options.send ? "Sending" : "Creating draft for";
   info(`${action} reply to thread ${options.threadId}...`);
 
-  const result = await replyToThread(conn, options.threadId, body, options.send);
+  const result = await replyToThread(provider, options.threadId, body, options.send);
 
   if (result.success) {
     if (options.send) {
@@ -1597,7 +1498,7 @@ async function cmdReply(options: CliOptions) {
     error(result.error || "Failed to create reply");
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdReplyAll(options: CliOptions) {
@@ -1690,7 +1591,7 @@ async function cmdReplyAll(options: CliOptions) {
             to: uniqueRecipients,
             subject,
             body: textToHtml(body),
-            action: "reply-all",
+            action: "reply" as const,  // reply-all uses reply action
             inReplyToThreadId: options.threadId,
             inReplyToRfc822Id: threadInfo.messageId || undefined,
           });
@@ -1712,16 +1613,13 @@ async function cmdReplyAll(options: CliOptions) {
   }
 
   // CDP path (original behavior)
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   const body = options.body || "";
   const action = options.send ? "Sending" : "Creating draft for";
   info(`${action} reply-all to thread ${options.threadId}...`);
 
-  const result = await replyAllToThread(conn, options.threadId, body, options.send);
+  const result = await replyAllToThread(provider, options.threadId, body, options.send);
 
   if (result.success) {
     if (options.send) {
@@ -1733,7 +1631,7 @@ async function cmdReplyAll(options: CliOptions) {
     error(result.error || "Failed to create reply-all");
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdForward(options: CliOptions) {
@@ -1831,20 +1729,17 @@ async function cmdForward(options: CliOptions) {
   }
 
   // CDP path (original behavior)
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   // Resolve name to email
-  const resolvedTo = await resolveAllRecipients(conn, options.to);
+  const resolvedTo = await resolveAllRecipientsViaProvider(provider, options.to);
   const toEmail = resolvedTo[0]; // Use first recipient for forward
 
   const body = options.body || "";
   const action = options.send ? "Sending" : "Creating draft for";
   info(`${action} forward to ${toEmail}...`);
 
-  const result = await forwardThread(conn, options.threadId, toEmail, body, options.send);
+  const result = await forwardThread(provider, options.threadId, toEmail, body, options.send);
 
   if (result.success) {
     if (options.send) {
@@ -1856,7 +1751,7 @@ async function cmdForward(options: CliOptions) {
     error(result.error || "Failed to create forward");
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdArchive(options: CliOptions) {
@@ -1866,16 +1761,13 @@ async function cmdArchive(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   let successCount = 0;
   let failCount = 0;
 
   for (const threadId of options.threadIds) {
-    const result = await archiveThread(conn, threadId);
+    const result = await archiveThread(provider, threadId);
     if (result.success) {
       success(`Archived: ${threadId}`);
       successCount++;
@@ -1889,7 +1781,7 @@ async function cmdArchive(options: CliOptions) {
     log(`\n${successCount} archived, ${failCount} failed`);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdDelete(options: CliOptions) {
@@ -1899,16 +1791,13 @@ async function cmdDelete(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   let successCount = 0;
   let failCount = 0;
 
   for (const threadId of options.threadIds) {
-    const result = await deleteThread(conn, threadId);
+    const result = await deleteThread(provider, threadId);
     if (result.success) {
       success(`Deleted: ${threadId}`);
       successCount++;
@@ -1922,7 +1811,7 @@ async function cmdDelete(options: CliOptions) {
     log(`\n${successCount} deleted, ${failCount} failed`);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdMarkRead(options: CliOptions) {
@@ -1932,16 +1821,13 @@ async function cmdMarkRead(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   let successCount = 0;
   let failCount = 0;
 
   for (const threadId of options.threadIds) {
-    const result = await markAsRead(conn, threadId);
+    const result = await markAsRead(provider, threadId);
     if (result.success) {
       success(`Marked as read: ${threadId}`);
       successCount++;
@@ -1955,7 +1841,7 @@ async function cmdMarkRead(options: CliOptions) {
     log(`\n${successCount} marked as read, ${failCount} failed`);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdMarkUnread(options: CliOptions) {
@@ -1965,16 +1851,13 @@ async function cmdMarkUnread(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   let successCount = 0;
   let failCount = 0;
 
   for (const threadId of options.threadIds) {
-    const result = await markAsUnread(conn, threadId);
+    const result = await markAsUnread(provider, threadId);
     if (result.success) {
       success(`Marked as unread: ${threadId}`);
       successCount++;
@@ -1988,16 +1871,13 @@ async function cmdMarkUnread(options: CliOptions) {
     log(`\n${successCount} marked as unread, ${failCount} failed`);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdLabels(options: CliOptions) {
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
-  const labels = await listLabels(conn);
+  const labels = await listLabels(provider);
 
   if (options.json) {
     console.log(JSON.stringify(labels, null, 2));
@@ -2014,7 +1894,7 @@ async function cmdLabels(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdGetLabels(options: CliOptions) {
@@ -2024,12 +1904,9 @@ async function cmdGetLabels(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
-  const labels = await getThreadLabels(conn, options.threadId);
+  const labels = await getThreadLabels(provider, options.threadId);
 
   if (options.json) {
     console.log(JSON.stringify(labels, null, 2));
@@ -2046,7 +1923,7 @@ async function cmdGetLabels(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdAddLabel(options: CliOptions) {
@@ -2062,16 +1939,13 @@ async function cmdAddLabel(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   let successCount = 0;
   let failCount = 0;
 
   for (const threadId of options.threadIds) {
-    const result = await addLabel(conn, threadId, options.labelId);
+    const result = await addLabel(provider, threadId, options.labelId);
     if (result.success) {
       success(`Added label to: ${threadId}`);
       successCount++;
@@ -2085,7 +1959,7 @@ async function cmdAddLabel(options: CliOptions) {
     log(`\n${successCount} labeled, ${failCount} failed`);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdRemoveLabel(options: CliOptions) {
@@ -2101,16 +1975,13 @@ async function cmdRemoveLabel(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   let successCount = 0;
   let failCount = 0;
 
   for (const threadId of options.threadIds) {
-    const result = await removeLabel(conn, threadId, options.labelId);
+    const result = await removeLabel(provider, threadId, options.labelId);
     if (result.success) {
       success(`Removed label from: ${threadId}`);
       successCount++;
@@ -2124,7 +1995,7 @@ async function cmdRemoveLabel(options: CliOptions) {
     log(`\n${successCount} updated, ${failCount} failed`);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdStar(options: CliOptions) {
@@ -2134,16 +2005,13 @@ async function cmdStar(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   let successCount = 0;
   let failCount = 0;
 
   for (const threadId of options.threadIds) {
-    const result = await starThread(conn, threadId);
+    const result = await starThread(provider, threadId);
     if (result.success) {
       success(`Starred thread: ${threadId}`);
       successCount++;
@@ -2157,7 +2025,7 @@ async function cmdStar(options: CliOptions) {
     log(`\n${successCount} starred, ${failCount} failed`);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdUnstar(options: CliOptions) {
@@ -2167,16 +2035,13 @@ async function cmdUnstar(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   let successCount = 0;
   let failCount = 0;
 
   for (const threadId of options.threadIds) {
-    const result = await unstarThread(conn, threadId);
+    const result = await unstarThread(provider, threadId);
     if (result.success) {
       success(`Unstarred thread: ${threadId}`);
       successCount++;
@@ -2190,16 +2055,13 @@ async function cmdUnstar(options: CliOptions) {
     log(`\n${successCount} unstarred, ${failCount} failed`);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdStarred(options: CliOptions) {
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
-  const threads = await listStarred(conn, options.limit);
+  const threads = await listStarred(provider, options.limit);
 
   if (options.json) {
     console.log(JSON.stringify(threads, null, 2));
@@ -2214,7 +2076,7 @@ async function cmdStarred(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdSnooze(options: CliOptions) {
@@ -2240,16 +2102,15 @@ async function cmdSnooze(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   let successCount = 0;
   let failCount = 0;
 
-  for (const threadId of options.threadIds) {
-    const result = await snoozeThread(conn, threadId, snoozeTime);
+  const results = await snoozeThreadViaProvider(provider, options.threadIds, snoozeTime);
+  for (let i = 0; i < options.threadIds.length; i++) {
+    const threadId = options.threadIds[i];
+    const result = results[i];
     if (result.success) {
       success(`Snoozed thread: ${threadId} until ${snoozeTime.toLocaleString()}`);
       successCount++;
@@ -2263,7 +2124,7 @@ async function cmdSnooze(options: CliOptions) {
     log(`\n${successCount} snoozed, ${failCount} failed`);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdUnsnooze(options: CliOptions) {
@@ -2273,16 +2134,15 @@ async function cmdUnsnooze(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   let successCount = 0;
   let failCount = 0;
 
-  for (const threadId of options.threadIds) {
-    const result = await unsnoozeThread(conn, threadId);
+  const results = await unsnoozeThreadViaProvider(provider, options.threadIds);
+  for (let i = 0; i < options.threadIds.length; i++) {
+    const threadId = options.threadIds[i];
+    const result = results[i];
     if (result.success) {
       success(`Unsnoozed thread: ${threadId}`);
       successCount++;
@@ -2296,16 +2156,13 @@ async function cmdUnsnooze(options: CliOptions) {
     log(`\n${successCount} unsnoozed, ${failCount} failed`);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdSnoozed(options: CliOptions) {
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
-  const threads = await listSnoozed(conn, options.limit);
+  const threads = await listSnoozedViaProvider(provider, options.limit);
 
   if (options.json) {
     console.log(JSON.stringify(threads, null, 2));
@@ -2323,7 +2180,7 @@ async function cmdSnoozed(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 function formatFileSize(bytes: number): string {
@@ -2339,12 +2196,9 @@ async function cmdAttachments(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
-  const attachments = await listAttachments(conn, options.threadId);
+  const attachments = await listAttachments(provider, options.threadId);
 
   if (options.json) {
     console.log(JSON.stringify(attachments, null, 2));
@@ -2362,7 +2216,7 @@ async function cmdAttachments(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdDownload(options: CliOptions) {
@@ -2374,14 +2228,11 @@ async function cmdDownload(options: CliOptions) {
       process.exit(1);
     }
 
-    const conn = await checkConnection(options.port);
-    if (!conn) {
-      process.exit(1);
-    }
+    const provider = await getProvider(options);
 
     try {
       info(`Downloading attachment ${options.attachmentId}...`);
-      const content = await downloadAttachment(conn, options.messageId, options.attachmentId);
+      const content = await downloadAttachment(provider, options.messageId, options.attachmentId);
       const outputPath = options.outputPath || `attachment-${options.attachmentId}`;
       await Bun.write(outputPath, Buffer.from(content.data, "base64"));
       success(`Downloaded: ${outputPath} (${formatFileSize(content.size)})`);
@@ -2389,7 +2240,7 @@ async function cmdDownload(options: CliOptions) {
       error(`Failed to download: ${(e as Error).message}`);
     }
 
-    await disconnect(conn);
+    await provider.disconnect();
     return;
   }
 
@@ -2401,16 +2252,13 @@ async function cmdDownload(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
-  const attachments = await listAttachments(conn, options.threadId);
+  const attachments = await listAttachments(provider, options.threadId);
 
   if (attachments.length === 0) {
     info("No attachments in this thread");
-    await disconnect(conn);
+    await provider.disconnect();
     return;
   }
 
@@ -2422,7 +2270,7 @@ async function cmdDownload(options: CliOptions) {
     try {
       info(`Downloading ${att.name}...`);
       const content = await downloadAttachment(
-        conn,
+        provider,
         att.messageId,
         att.attachmentId,
         att.threadId,
@@ -2442,7 +2290,7 @@ async function cmdDownload(options: CliOptions) {
     log(`\n${successCount} downloaded, ${failCount} failed`);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 /**
@@ -2730,10 +2578,7 @@ async function resolveCalendarId(conn: SuperhumanConnection, arg: string): Promi
 }
 
 async function cmdCalendar(options: CliOptions) {
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   // Parse date range
   let timeMin: Date;
@@ -2750,15 +2595,27 @@ async function cmdCalendar(options: CliOptions) {
   timeMax.setDate(timeMax.getDate() + options.calendarRange);
   timeMax.setHours(23, 59, 59, 999);
 
-  // Resolve calendar ID if provided
-  const calendarId = await resolveCalendarId(conn, options.calendarArg);
+  // Resolve calendar ID if provided (requires CDP for name resolution)
+  let calendarId: string | null = null;
+  if (options.calendarArg && provider instanceof CDPConnectionProvider) {
+    calendarId = await resolveCalendarId(provider.getConnection(), options.calendarArg);
+  } else if (options.calendarArg) {
+    // Without CDP, use the arg as-is (must be an ID)
+    calendarId = options.calendarArg;
+  }
 
   let allEvents: CalendarEvent[] = [];
 
   if (options.allAccounts) {
-    // Get all accounts and query each
+    // All-accounts mode requires CDP for account switching
+    if (!(provider instanceof CDPConnectionProvider)) {
+      error("--all-accounts requires Superhuman running with CDP");
+      await provider.disconnect();
+      process.exit(1);
+    }
+    const conn = provider.getConnection();
     const accounts = await listAccounts(conn);
-    const originalAccount = accounts.find(a => a.current)?.email;
+    const originalAccount = accounts.find(a => a.isCurrent)?.email;
 
     for (const account of accounts) {
       // Switch to this account
@@ -2766,7 +2623,7 @@ async function cmdCalendar(options: CliOptions) {
       // Small delay for account switch to take effect
       await new Promise(r => setTimeout(r, 300));
 
-      const events = await listEvents(conn, { timeMin, timeMax });
+      const events = await listEvents(provider, { timeMin, timeMax });
       // Tag events with account info
       for (const event of events) {
         (event as CalendarEvent & { account?: string }).account = account.email;
@@ -2779,7 +2636,7 @@ async function cmdCalendar(options: CliOptions) {
       await switchAccount(conn, originalAccount);
     }
   } else {
-    allEvents = await listEvents(conn, { timeMin, timeMax, calendarId: calendarId || undefined });
+    allEvents = await listEvents(provider, { timeMin, timeMax, calendarId: calendarId || undefined });
   }
 
   // Sort all events by start time
@@ -2814,7 +2671,7 @@ async function cmdCalendar(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdCalendarCreate(options: CliOptions) {
@@ -2823,17 +2680,19 @@ async function cmdCalendarCreate(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   const title = options.eventTitle || options.subject;
   let startTime: Date;
   let endTime: Date;
 
-  // Resolve calendar ID if provided
-  const calendarId = await resolveCalendarId(conn, options.calendarArg);
+  // Resolve calendar ID if provided (requires CDP for name resolution)
+  let calendarId: string | null = null;
+  if (options.calendarArg && provider instanceof CDPConnectionProvider) {
+    calendarId = await resolveCalendarId(provider.getConnection(), options.calendarArg);
+  } else if (options.calendarArg) {
+    calendarId = options.calendarArg;
+  }
 
   // Determine if this is an all-day event
   const isAllDay = options.calendarDate && !options.eventStart;
@@ -2845,7 +2704,7 @@ async function cmdCalendarCreate(options: CliOptions) {
   } else {
     if (!options.eventStart) {
       error("Event start time is required (--start) or use --date for all-day event");
-      await disconnect(conn);
+      await provider.disconnect();
       process.exit(1);
     }
 
@@ -2872,11 +2731,11 @@ async function cmdCalendarCreate(options: CliOptions) {
 
   // Add attendees from --to option (resolve names to emails)
   if (options.to.length > 0) {
-    const resolvedAttendees = await resolveAllRecipients(conn, options.to);
+    const resolvedAttendees = await resolveAllRecipientsViaProvider(provider, options.to);
     eventInput.attendees = resolvedAttendees.map(email => ({ email }));
   }
 
-  const result = await createEvent(conn, eventInput);
+  const result = await createEvent(provider, eventInput);
 
   if (result.success) {
     success(`Event created: ${result.eventId}`);
@@ -2890,7 +2749,7 @@ async function cmdCalendarCreate(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdCalendarUpdate(options: CliOptions) {
@@ -2899,10 +2758,7 @@ async function cmdCalendarUpdate(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   const updates: UpdateEventInput = {};
 
@@ -2927,17 +2783,17 @@ async function cmdCalendarUpdate(options: CliOptions) {
     updates.end = { dateTime: endTime.toISOString() };
   }
   if (options.to.length > 0) {
-    const resolvedAttendees = await resolveAllRecipients(conn, options.to);
+    const resolvedAttendees = await resolveAllRecipientsViaProvider(provider, options.to);
     updates.attendees = resolvedAttendees.map(email => ({ email }));
   }
 
   if (Object.keys(updates).length === 0) {
     error("No updates specified. Use --title, --start, --end, --body, or --to");
-    await disconnect(conn);
+    await provider.disconnect();
     process.exit(1);
   }
 
-  const result = await updateEvent(conn, options.eventId, updates);
+  const result = await updateEvent(provider, options.eventId, updates);
 
   if (result.success) {
     success(`Event updated: ${result.eventId}`);
@@ -2951,7 +2807,7 @@ async function cmdCalendarUpdate(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdCalendarDelete(options: CliOptions) {
@@ -2960,12 +2816,9 @@ async function cmdCalendarDelete(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
-  const result = await deleteCalendarEvent(conn, options.eventId);
+  const result = await deleteCalendarEvent(provider, options.eventId);
 
   if (result.success) {
     success(`Event deleted: ${options.eventId}`);
@@ -2976,7 +2829,7 @@ async function cmdCalendarDelete(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 /**
@@ -3002,23 +2855,20 @@ async function cmdContacts(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   try {
     let contacts: Contact[];
 
     if (options.account) {
       // Use direct API with specified account
-      const { getToken, searchContactsDirect, clearTokenCache } = await import("./token-api");
-      const token = await getToken(conn, options.account);
+      const { searchContactsDirect } = await import("./token-api");
+      const token = await provider.getToken(options.account);
       contacts = await searchContactsDirect(token, options.contactsQuery, options.limit);
       info(`Searching contacts in account: ${options.account}`);
     } else {
       // Use existing DI-based approach (current account)
-      contacts = await searchContacts(conn, options.contactsQuery, { limit: options.limit });
+      contacts = await searchContacts(provider, options.contactsQuery, { limit: options.limit });
     }
 
     if (options.json) {
@@ -3033,7 +2883,7 @@ async function cmdContacts(options: CliOptions) {
       }
     }
   } finally {
-    await disconnect(conn);
+    await provider.disconnect();
   }
 }
 
@@ -3049,34 +2899,34 @@ async function cmdAi(options: CliOptions) {
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   try {
-    // Get OAuth token for thread content access
-    const accounts = await listAccounts(conn);
-    const currentAccount = accounts.find((a) => a.isCurrent);
-    if (!currentAccount) {
-      error("No active account found");
-      await disconnect(conn);
-      process.exit(1);
-    }
-
+    // Get OAuth token
     if (options.threadId) {
       info(`Fetching thread context...`);
     }
-    const oauthToken = await getToken(conn, currentAccount.email);
+    const oauthToken = await provider.getToken();
 
     // Get Superhuman backend token for AI API
-    info(`Connecting to Superhuman AI...`);
-    const shToken = await extractSuperhumanToken(conn, currentAccount.email);
+    // Try cached idToken first, fall back to CDP extraction
+    let superhumanToken: string;
+    if (oauthToken.idToken) {
+      superhumanToken = oauthToken.idToken;
+    } else if (provider instanceof CDPConnectionProvider) {
+      info(`Connecting to Superhuman AI...`);
+      const shToken = await extractSuperhumanToken(provider.getConnection(), oauthToken.email);
+      superhumanToken = shToken.token;
+    } else {
+      error("Superhuman backend credentials required for AI. Run 'superhuman account auth'.");
+      await provider.disconnect();
+      process.exit(1);
+    }
 
     // Query the AI
     info(`Asking AI: "${options.aiQuery}"`);
     const result = await askAI(
-      shToken.token,
+      superhumanToken,
       oauthToken,
       options.threadId,
       options.aiQuery,
@@ -3088,18 +2938,15 @@ async function cmdAi(options: CliOptions) {
     console.log(`\n${colors.dim}Session: ${result.sessionId}${colors.reset}`);
   } catch (e) {
     error(`AI query failed: ${(e as Error).message}`);
-    await disconnect(conn);
+    await provider.disconnect();
     process.exit(1);
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function cmdCalendarFree(options: CliOptions) {
-  const conn = await checkConnection(options.port);
-  if (!conn) {
-    process.exit(1);
-  }
+  const provider = await getProvider(options);
 
   // Parse date range
   let timeMin: Date;
@@ -3114,7 +2961,7 @@ async function cmdCalendarFree(options: CliOptions) {
   timeMax = new Date(timeMin);
   timeMax.setDate(timeMax.getDate() + options.calendarRange);
 
-  const result = await getFreeBusy(conn, { timeMin, timeMax });
+  const result = await getFreeBusy(provider, { timeMin, timeMax });
 
   if (options.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -3131,7 +2978,7 @@ async function cmdCalendarFree(options: CliOptions) {
     }
   }
 
-  await disconnect(conn);
+  await provider.disconnect();
 }
 
 async function main() {
@@ -3362,10 +3209,6 @@ async function main() {
       }
       break;
 
-    case "compose":
-      await cmdCompose(options, true);
-      log(`\n${colors.dim}Compose window left open for editing${colors.reset}`);
-      break;
 
     // draft create|update|delete|send
     case "draft":

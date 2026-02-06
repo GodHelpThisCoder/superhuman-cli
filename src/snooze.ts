@@ -1,20 +1,15 @@
 /**
  * Snooze Module
  *
- * Functions for snoozing and unsnoozing email threads via Superhuman's internal APIs.
+ * Functions for snoozing and unsnoozing email threads via Superhuman's backend API.
  * Supports both Microsoft/Outlook and Gmail accounts.
  *
- * Two modes of operation:
- * 1. CDP-based (via Superhuman's internal backend object): Default approach
- * 2. Direct API (via superhumanFetch): Available when API endpoints are known
- *
- * Note: Superhuman's backend API is proprietary and undocumented. The direct API
- * functions are placeholders for when the endpoints are discovered.
+ * Uses direct API calls via superhumanFetch (no CDP/browser connection needed).
  */
 
-import type { SuperhumanConnection } from "./superhuman-api";
-import type { SuperhumanTokenInfo } from "./token-api";
-import { superhumanFetch } from "./token-api";
+import type { SuperhumanTokenInfo, TokenInfo } from "./token-api";
+import { superhumanFetch, gmailFetch, msgraphFetch } from "./token-api";
+import type { ConnectionProvider } from "./connection-provider";
 
 export interface SnoozeResult {
   success: boolean;
@@ -89,261 +84,9 @@ export function parseSnoozeTime(timeStr: string): Date {
   return date;
 }
 
-/**
- * Snooze a thread until a specific time
- *
- * @param conn - The Superhuman connection
- * @param threadId - The thread ID to snooze
- * @param snoozeUntil - When to unsnooze (Date object or ISO string)
- * @returns Result with success status and reminder ID
- */
-export async function snoozeThread(
-  conn: SuperhumanConnection,
-  threadId: string,
-  snoozeUntil: Date | string
-): Promise<SnoozeResult> {
-  const { Runtime } = conn;
-
-  const triggerAt = typeof snoozeUntil === "string" ? snoozeUntil : snoozeUntil.toISOString();
-
-  const result = await Runtime.evaluate({
-    expression: `
-      (async () => {
-        try {
-          const threadId = ${JSON.stringify(threadId)};
-          const triggerAt = ${JSON.stringify(triggerAt)};
-          const ga = window.GoogleAccount;
-          const backend = ga?.backend;
-
-          if (!backend) {
-            return { success: false, error: "Backend not found" };
-          }
-
-          // Get the thread and its message IDs
-          const thread = ga?.threads?.identityMap?.get?.(threadId);
-          if (!thread) {
-            return { success: false, error: "Thread not found" };
-          }
-
-          const model = thread._threadModel;
-          const messageIds = model?.messageIds || [];
-
-          if (messageIds.length === 0) {
-            return { success: false, error: "No messages found in thread" };
-          }
-
-          // Generate a unique reminder ID
-          function generateUUID() {
-            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-              const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-              return v.toString(16);
-            });
-          }
-
-          const reminderId = generateUUID();
-          const now = new Date();
-
-          // Create a reminder object
-          const reminderData = {
-            attributes: {
-              reminderId: reminderId,
-              threadId: threadId,
-              messageIds: messageIds,
-              triggerAt: triggerAt,
-              clientCreatedAt: now.toISOString(),
-            },
-            toJson: function() {
-              return {
-                reminderId: this.attributes.reminderId,
-                threadId: this.attributes.threadId,
-                messageIds: this.attributes.messageIds,
-                triggerAt: this.attributes.triggerAt,
-                clientCreatedAt: this.attributes.clientCreatedAt,
-              };
-            }
-          };
-
-          try {
-            await backend.createReminder(reminderData, { markDone: false, moveToInbox: false });
-            return { success: true, reminderId: reminderId };
-          } catch (e) {
-            return { success: false, error: e.message || "Failed to create reminder" };
-          }
-        } catch (e) {
-          return { success: false, error: e.message || "Unknown error" };
-        }
-      })()
-    `,
-    returnByValue: true,
-    awaitPromise: true,
-  });
-
-  const value = result.result.value as SnoozeResult | null;
-  return {
-    success: value?.success ?? false,
-    reminderId: value?.reminderId,
-    error: value?.error,
-  };
-}
-
-/**
- * Unsnooze a thread (cancel the reminder)
- *
- * @param conn - The Superhuman connection
- * @param threadId - The thread ID to unsnooze
- * @param reminderId - Optional reminder ID. If not provided, will try to find it.
- * @returns Result with success status
- */
-export async function unsnoozeThread(
-  conn: SuperhumanConnection,
-  threadId: string,
-  reminderId?: string
-): Promise<SnoozeResult> {
-  const { Runtime } = conn;
-
-  const result = await Runtime.evaluate({
-    expression: `
-      (async () => {
-        try {
-          const threadId = ${JSON.stringify(threadId)};
-          let reminderId = ${reminderId ? JSON.stringify(reminderId) : "null"};
-          const ga = window.GoogleAccount;
-          const backend = ga?.backend;
-
-          if (!backend) {
-            return { success: false, error: "Backend not found" };
-          }
-
-          // If no reminder ID provided, try to find it from the thread's superhumanData
-          if (!reminderId) {
-            const thread = ga?.threads?.identityMap?.get?.(threadId);
-            if (thread) {
-              const model = thread._threadModel;
-              const shData = model?.superhumanData;
-              reminderId = shData?.reminderId;
-            }
-          }
-
-          // If still no reminder ID, try to find from snoozed list
-          if (!reminderId) {
-            try {
-              const portal = ga?.portal;
-              const snoozedResult = await portal.invoke(
-                "threadInternal",
-                "listAsync",
-                ["SNOOZED", { limit: 100, filters: [], query: "" }]
-              );
-
-              const snoozedThread = (snoozedResult?.threads || []).find(t =>
-                t.json?.id === threadId
-              );
-
-              if (snoozedThread?.superhumanData?.reminderId) {
-                reminderId = snoozedThread.superhumanData.reminderId;
-              }
-            } catch (e) {
-              // Ignore errors in finding reminder ID
-            }
-          }
-
-          if (!reminderId) {
-            // Generate a dummy ID and try anyway - the backend might accept it
-            // This is a fallback when we can't find the reminder ID
-            return { success: false, error: "Could not find reminder ID for thread" };
-          }
-
-          try {
-            await backend.cancelReminder({
-              reminderId: reminderId,
-              threadId: threadId,
-              moveToInbox: true
-            });
-            return { success: true };
-          } catch (e) {
-            return { success: false, error: e.message || "Failed to cancel reminder" };
-          }
-        } catch (e) {
-          return { success: false, error: e.message || "Unknown error" };
-        }
-      })()
-    `,
-    returnByValue: true,
-    awaitPromise: true,
-  });
-
-  const value = result.result.value as SnoozeResult | null;
-  return {
-    success: value?.success ?? false,
-    error: value?.error,
-  };
-}
-
-/**
- * List all snoozed threads
- *
- * @param conn - The Superhuman connection
- * @param limit - Maximum number of threads to return (default: 50)
- * @returns Array of snoozed threads with their IDs
- */
-export async function listSnoozed(
-  conn: SuperhumanConnection,
-  limit: number = 50
-): Promise<SnoozedThread[]> {
-  const { Runtime } = conn;
-
-  const result = await Runtime.evaluate({
-    expression: `
-      (async () => {
-        try {
-          const ga = window.GoogleAccount;
-          const portal = ga?.portal;
-
-          if (!portal) {
-            return { error: "Portal not found", threads: [] };
-          }
-
-          try {
-            const snoozedResult = await portal.invoke(
-              "threadInternal",
-              "listAsync",
-              ["SNOOZED", { limit: ${limit}, filters: [], query: "" }]
-            );
-
-            if (!snoozedResult?.threads) {
-              return { threads: [] };
-            }
-
-            return {
-              threads: snoozedResult.threads.map(t => {
-                const json = t.json || {};
-                const shData = t.superhumanData || {};
-                return {
-                  id: json.id || '',
-                  snoozeUntil: shData.snoozeUntil || shData.triggerAt,
-                  reminderId: shData.reminderId
-                };
-              })
-            };
-          } catch (e) {
-            return { error: e.message, threads: [] };
-          }
-        } catch (e) {
-          return { error: e.message || "Unknown error", threads: [] };
-        }
-      })()
-    `,
-    returnByValue: true,
-    awaitPromise: true,
-  });
-
-  const value = result.result.value as { threads: SnoozedThread[]; error?: string } | null;
-  return value?.threads ?? [];
-}
-
 // ============================================================================
 // Direct API Functions (using Superhuman Backend Token)
 // These bypass CDP and call Superhuman's backend APIs directly.
-// Note: API endpoints are proprietary and may need adjustment.
 // ============================================================================
 
 /**
@@ -359,10 +102,6 @@ function generateUUID(): string {
 
 /**
  * Snooze a thread using direct Superhuman backend API.
- *
- * Note: This requires knowing the thread's message IDs, which currently
- * can only be obtained via CDP. For a fully direct implementation,
- * you would need to first fetch thread info via Gmail/MS Graph API.
  *
  * @param token - Superhuman backend token
  * @param threadId - Thread ID to snooze
@@ -388,7 +127,6 @@ export async function snoozeThreadDirect(
   };
 
   try {
-    // Discovered via CDP network monitoring: /~backend/reminders/create
     const result = await superhumanFetch(token.token, "/reminders/create", {
       method: "POST",
       body: JSON.stringify({
@@ -423,7 +161,6 @@ export async function unsnoozeThreadDirect(
   reminderId: string
 ): Promise<SnoozeResult> {
   try {
-    // Discovered via CDP network monitoring: /~backend/reminders/cancel
     const result = await superhumanFetch(token.token, "/reminders/cancel", {
       method: "POST",
       body: JSON.stringify({
@@ -456,8 +193,6 @@ export async function listSnoozedDirect(
   limit: number = 50
 ): Promise<SnoozedThread[]> {
   try {
-    // Discovered via CDP network monitoring: /~backend/v3/userdata.getThreads
-    // with filter type: "reminder"
     const result = await superhumanFetch(token.token, "/v3/userdata.getThreads", {
       method: "POST",
       body: JSON.stringify({
@@ -479,4 +214,140 @@ export async function listSnoozedDirect(
   } catch (_e) {
     return [];
   }
+}
+
+// ============================================================================
+// ConnectionProvider-based Functions
+// These accept a ConnectionProvider and use the direct API functions internally.
+// ============================================================================
+
+/**
+ * Get message IDs for a thread using direct Gmail/MS Graph API.
+ */
+async function getThreadMessageIds(
+  token: TokenInfo,
+  threadId: string
+): Promise<string[]> {
+  if (token.isMicrosoft) {
+    // MS Graph: search messages by conversationId
+    const result = await msgraphFetch(token.accessToken, `/me/messages?$top=50&$select=id,conversationId&$orderby=receivedDateTime desc`);
+    if (!result?.value) return [];
+    return result.value
+      .filter((m: any) => m.conversationId === threadId)
+      .map((m: any) => m.id);
+  } else {
+    // Gmail: GET /threads/{threadId} to get message list
+    const result = await gmailFetch(token.accessToken, `/threads/${threadId}?format=minimal`);
+    if (!result?.messages) return [];
+    return result.messages.map((m: any) => m.id);
+  }
+}
+
+/**
+ * Snooze a thread using ConnectionProvider.
+ * Gets token from the provider, resolves message IDs, then calls the direct API.
+ */
+export async function snoozeThreadViaProvider(
+  provider: ConnectionProvider,
+  threadIds: string[],
+  snoozeUntil: Date | string
+): Promise<SnoozeResult[]> {
+  const token = await provider.getToken();
+
+  if (!token.idToken) {
+    throw new Error(
+      "Superhuman backend credentials required for snooze. Run 'superhuman account auth'."
+    );
+  }
+
+  const superhumanToken: SuperhumanTokenInfo = {
+    token: token.idToken,
+    email: token.email,
+  };
+
+  const triggerAt = typeof snoozeUntil === "string" ? snoozeUntil : snoozeUntil.toISOString();
+  const results: SnoozeResult[] = [];
+
+  for (const threadId of threadIds) {
+    // Get message IDs for the thread
+    const messageIds = await getThreadMessageIds(token, threadId);
+    if (messageIds.length === 0) {
+      results.push({ success: false, error: "No messages found in thread" });
+      continue;
+    }
+
+    const result = await snoozeThreadDirect(superhumanToken, threadId, messageIds, triggerAt);
+    results.push(result);
+  }
+
+  return results;
+}
+
+/**
+ * Unsnooze threads using ConnectionProvider.
+ * First lists snoozed threads to find reminder IDs, then cancels them.
+ */
+export async function unsnoozeThreadViaProvider(
+  provider: ConnectionProvider,
+  threadIds: string[]
+): Promise<SnoozeResult[]> {
+  const token = await provider.getToken();
+
+  if (!token.idToken) {
+    throw new Error(
+      "Superhuman backend credentials required for unsnooze. Run 'superhuman account auth'."
+    );
+  }
+
+  const superhumanToken: SuperhumanTokenInfo = {
+    token: token.idToken,
+    email: token.email,
+  };
+
+  // Fetch all snoozed threads to find reminder IDs
+  const snoozedThreads = await listSnoozedDirect(superhumanToken, 200);
+  const results: SnoozeResult[] = [];
+
+  for (const threadId of threadIds) {
+    const snoozed = snoozedThreads.find((t) => t.id === threadId);
+    if (!snoozed?.reminderId) {
+      results.push({
+        success: false,
+        error: "Could not find reminder ID for thread",
+      });
+      continue;
+    }
+
+    const result = await unsnoozeThreadDirect(
+      superhumanToken,
+      threadId,
+      snoozed.reminderId
+    );
+    results.push(result);
+  }
+
+  return results;
+}
+
+/**
+ * List snoozed threads using ConnectionProvider.
+ */
+export async function listSnoozedViaProvider(
+  provider: ConnectionProvider,
+  limit: number = 50
+): Promise<SnoozedThread[]> {
+  const token = await provider.getToken();
+
+  if (!token.idToken) {
+    throw new Error(
+      "Superhuman backend credentials required for listing snoozed threads. Run 'superhuman account auth'."
+    );
+  }
+
+  const superhumanToken: SuperhumanTokenInfo = {
+    token: token.idToken,
+    email: token.email,
+  };
+
+  return listSnoozedDirect(superhumanToken, limit);
 }

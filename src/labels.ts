@@ -5,17 +5,14 @@
  * Supports both Microsoft/Outlook accounts (via MS Graph folders) and Gmail accounts (via Gmail labels).
  */
 
-import type { SuperhumanConnection } from "./superhuman-api";
+import type { ConnectionProvider } from "./connection-provider";
 import {
-  type TokenInfo,
-  getToken,
   modifyThreadLabels,
   updateMessage,
   listLabelsDirect,
   searchGmailDirect,
   getConversationMessageIds,
 } from "./token-api";
-import { listAccounts } from "./accounts";
 
 export interface Label {
   id: string;
@@ -29,42 +26,28 @@ export interface LabelResult {
 }
 
 /**
- * Get token for the current account.
- */
-async function getCurrentToken(conn: SuperhumanConnection): Promise<TokenInfo> {
-  const accounts = await listAccounts(conn);
-  const currentAccount = accounts.find((a) => a.isCurrent);
-
-  if (!currentAccount) {
-    throw new Error("No current account found");
-  }
-
-  return getToken(conn, currentAccount.email);
-}
-
-/**
  * List all available labels/folders in the account
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @returns Array of labels with id and name
  */
-export async function listLabels(conn: SuperhumanConnection): Promise<Label[]> {
-  const token = await getCurrentToken(conn);
+export async function listLabels(provider: ConnectionProvider): Promise<Label[]> {
+  const token = await provider.getToken();
   return listLabelsDirect(token);
 }
 
 /**
  * Get labels for a specific thread
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param threadId - The thread ID to get labels for
  * @returns Array of labels on the thread
  */
 export async function getThreadLabels(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string
 ): Promise<Label[]> {
-  const token = await getCurrentToken(conn);
+  const token = await provider.getToken();
 
   // Get all labels to build name mapping
   const allLabels = await listLabelsDirect(token);
@@ -117,18 +100,18 @@ export async function getThreadLabels(
 /**
  * Add a label to a thread (server-persisted)
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param threadId - The thread ID to add the label to
  * @param labelId - The label ID to add
  * @returns Result with success status
  */
 export async function addLabel(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string,
   labelId: string
 ): Promise<LabelResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
 
     if (token.isMicrosoft) {
       // Microsoft: Move messages to the folder (label = folder in MS)
@@ -151,18 +134,18 @@ export async function addLabel(
 /**
  * Remove a label from a thread (server-persisted)
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param threadId - The thread ID to remove the label from
  * @param labelId - The label ID to remove
  * @returns Result with success status
  */
 export async function removeLabel(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string,
   labelId: string
 ): Promise<LabelResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
 
     if (token.isMicrosoft) {
       return {
@@ -182,16 +165,16 @@ export async function removeLabel(
 /**
  * Star a thread (adds STARRED label)
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param threadId - The thread ID to star
  * @returns Result with success status
  */
 export async function starThread(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string
 ): Promise<LabelResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
 
     if (token.isMicrosoft) {
       // Microsoft: Flag all messages in the conversation
@@ -222,16 +205,16 @@ export async function starThread(
 /**
  * Unstar a thread (removes STARRED label)
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param threadId - The thread ID to unstar
  * @returns Result with success status
  */
 export async function unstarThread(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string
 ): Promise<LabelResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
 
     if (token.isMicrosoft) {
       // Microsoft: Unflag all messages in the conversation
@@ -262,16 +245,16 @@ export async function unstarThread(
 /**
  * List all starred threads
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param limit - Maximum number of threads to return (default: 50)
  * @returns Array of starred threads with their IDs
  */
 export async function listStarred(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   limit: number = 50
 ): Promise<Array<{ id: string }>> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
 
     if (token.isMicrosoft) {
       // MS Graph: Search for flagged messages

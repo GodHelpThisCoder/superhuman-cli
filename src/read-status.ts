@@ -5,33 +5,16 @@
  * Supports both Microsoft/Outlook accounts (via MS Graph) and Gmail accounts (via Gmail API).
  */
 
-import type { SuperhumanConnection } from "./superhuman-api";
+import type { ConnectionProvider } from "./connection-provider";
 import {
-  type TokenInfo,
-  getToken,
   modifyThreadLabels,
   updateMessage,
   getConversationMessageIds,
 } from "./token-api";
-import { listAccounts } from "./accounts";
 
 export interface ReadStatusResult {
   success: boolean;
   error?: string;
-}
-
-/**
- * Get token for the current account.
- */
-async function getCurrentToken(conn: SuperhumanConnection): Promise<TokenInfo> {
-  const accounts = await listAccounts(conn);
-  const currentAccount = accounts.find((a) => a.isCurrent);
-
-  if (!currentAccount) {
-    throw new Error("No current account found");
-  }
-
-  return getToken(conn, currentAccount.email);
 }
 
 /**
@@ -40,16 +23,16 @@ async function getCurrentToken(conn: SuperhumanConnection): Promise<TokenInfo> {
  * For Microsoft accounts: Updates message isRead property via MS Graph API
  * For Gmail accounts: Removes UNREAD label via Gmail API
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param threadId - The thread ID to mark as read
  * @returns Result with success status
  */
 export async function markAsRead(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string
 ): Promise<ReadStatusResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
 
     if (token.isMicrosoft) {
       // Microsoft: Update isRead property on all messages in conversation
@@ -81,16 +64,16 @@ export async function markAsRead(
  * For Microsoft accounts: Updates message isRead property via MS Graph API
  * For Gmail accounts: Adds UNREAD label via Gmail API
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param threadId - The thread ID to mark as unread
  * @returns Result with success status
  */
 export async function markAsUnread(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string
 ): Promise<ReadStatusResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
 
     if (token.isMicrosoft) {
       // Microsoft: Update isRead property on all messages in conversation

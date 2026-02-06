@@ -1,21 +1,20 @@
 /**
  * Reply Module
  *
- * Functions for replying to email threads via Superhuman's internal APIs.
- * Uses native Superhuman commands for drafts, and direct API for sending.
+ * Functions for replying to and forwarding email threads via direct API.
+ * Uses token-based API calls (no CDP/browser connection needed).
  */
 
-import type { SuperhumanConnection } from "./superhuman-api.js";
+import type { ConnectionProvider } from "./connection-provider";
+import { textToHtml } from "./superhuman-api.js";
 import {
-  openReplyCompose,
-  openReplyAllCompose,
-  openForwardCompose,
-  addRecipient,
-  setBody,
-  saveDraft,
-  textToHtml,
-} from "./superhuman-api.js";
-import { sendReply, sendEmail, getThreadInfoForReply, createReplyDraft } from "./send-api.js";
+  sendReplyWithToken,
+  sendEmailWithToken,
+  createReplyDraftWithToken,
+  createDraftWithToken,
+  getThreadInfoForReplyWithToken,
+} from "./send-api.js";
+import { getThreadMessages } from "./token-api";
 
 export interface ReplyResult {
   success: boolean;
@@ -25,125 +24,56 @@ export interface ReplyResult {
 }
 
 /**
- * Complete a draft by saving it (used only for draft mode, not send)
- */
-async function saveDraftAndClose(
-  conn: SuperhumanConnection,
-  draftKey: string
-): Promise<ReplyResult> {
-  const saved = await saveDraft(conn, draftKey);
-  if (!saved) {
-    return { success: false, error: "Failed to save draft" };
-  }
-  return { success: true, draftId: draftKey };
-}
-
-/**
- * Retry a function with exponential backoff
- */
-async function withRetry<T>(
-  fn: () => Promise<T | null>,
-  maxRetries: number = 3,
-  baseDelay: number = 500
-): Promise<T | null> {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const result = await fn();
-    if (result !== null) {
-      return result;
-    }
-    if (attempt < maxRetries - 1) {
-      const delay = baseDelay * Math.pow(2, attempt);
-      await new Promise(r => setTimeout(r, delay));
-    }
-  }
-  return null;
-}
-
-/**
- * Reply to a thread
+ * Reply to a thread (reply to sender only).
  *
- * When sending: Uses direct Gmail/Graph API for reliable delivery.
- * When drafting: Uses Superhuman's native REPLY_POP_OUT command.
- *
- * @param conn - The Superhuman connection
- * @param threadId - The thread ID to reply to
- * @param body - The reply body text
- * @param send - If true, send immediately via API; if false, save as draft
- * @returns Result with success status, optional draft/message ID, and error message if failed
+ * Uses direct Gmail/Graph API for both sending and draft creation.
  */
 export async function replyToThread(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string,
   body: string,
   send: boolean = false
 ): Promise<ReplyResult> {
-  // For sending, use the direct API approach (faster and more reliable)
-  if (send) {
-    const result = await sendReply(conn, threadId, textToHtml(body), {
-      replyAll: false,
-      isHtml: true,
-    });
-
-    if (result.success) {
-      return { success: true, messageId: result.messageId };
-    }
-    return { success: false, error: result.error };
-  }
-
-  // For drafts, use the native API (creates draft in native email provider)
-  const result = await createReplyDraft(conn, threadId, textToHtml(body), {
-    replyAll: false,
-    isHtml: true,
-  });
-
-  if (result.success) {
-    return { success: true, draftId: result.draftId };
-  }
-  return { success: false, error: result.error };
+  return replyImpl(provider, threadId, body, send, false);
 }
 
 /**
- * Reply-all to a thread
+ * Reply-all to a thread (reply to all recipients).
  *
- * When sending: Uses direct Gmail/Graph API for reliable delivery.
- * When drafting: Uses Superhuman's native REPLY_ALL_POP_OUT command.
- *
- * Note: For reply-all sends, we use the UI approach to properly capture
- * all recipients (To and Cc) which requires thread analysis that the
- * simple API doesn't provide. The API is used for the final send.
- *
- * @param conn - The Superhuman connection
- * @param threadId - The thread ID to reply to
- * @param body - The reply body text
- * @param send - If true, send immediately; if false, save as draft
- * @returns Result with success status, optional draft ID, and error message if failed
+ * Uses direct Gmail/Graph API for both sending and draft creation.
  */
 export async function replyAllToThread(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string,
   body: string,
   send: boolean = false
 ): Promise<ReplyResult> {
-  // For sending reply-all, we need to get all recipients from the thread
-  // The sendReply function handles this with replyAll: true
-  if (send) {
-    const result = await sendReply(conn, threadId, textToHtml(body), {
-      replyAll: true,
-      isHtml: true,
-    });
+  return replyImpl(provider, threadId, body, send, true);
+}
 
+/**
+ * Shared implementation for reply and reply-all.
+ */
+async function replyImpl(
+  provider: ConnectionProvider,
+  threadId: string,
+  body: string,
+  send: boolean,
+  replyAll: boolean
+): Promise<ReplyResult> {
+  const token = await provider.getToken();
+  const htmlBody = textToHtml(body);
+  const opts = { replyAll, isHtml: true };
+
+  if (send) {
+    const result = await sendReplyWithToken(token, threadId, htmlBody, opts);
     if (result.success) {
       return { success: true, messageId: result.messageId };
     }
     return { success: false, error: result.error };
   }
 
-  // For drafts, use the native API (creates draft in native email provider)
-  const result = await createReplyDraft(conn, threadId, textToHtml(body), {
-    replyAll: true,
-    isHtml: true,
-  });
-
+  const result = await createReplyDraftWithToken(token, threadId, htmlBody, opts);
   if (result.success) {
     return { success: true, draftId: result.draftId };
   }
@@ -153,14 +83,11 @@ export async function replyAllToThread(
 /**
  * Forward a thread
  *
- * When sending: Uses direct Gmail/Graph API for reliable delivery.
- * When drafting: Uses Superhuman's native FORWARD_POP_OUT command.
+ * Fetches the original message content and constructs a forwarded email
+ * with proper "Forwarded message" header. Uses direct API for both
+ * sending and draft creation.
  *
- * Note: Forward requires getting the original message content to include
- * in the forwarded email. For now, we use the UI approach for both
- * drafts and sends to properly capture the forwarded content.
- *
- * @param conn - The Superhuman connection
+ * @param provider - Connection provider for token resolution
  * @param threadId - The thread ID to forward
  * @param toEmail - The email address to forward to
  * @param body - The message body to include before the forwarded content
@@ -168,73 +95,46 @@ export async function replyAllToThread(
  * @returns Result with success status, optional draft ID, and error message if failed
  */
 export async function forwardThread(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string,
   toEmail: string,
   body: string,
   send: boolean = false
 ): Promise<ReplyResult> {
-  // For forward, we need the original message content which is complex to get via API
-  // Use UI approach to set up the forward, then use API to send if requested
-  const draftKey = await withRetry(() => openForwardCompose(conn, threadId), 3, 500);
-  if (!draftKey) {
-    return {
-      success: false,
-      error: "Failed to open forward compose (UI may be blocked by existing compose window or overlay)"
-    };
+  const token = await provider.getToken();
+
+  // Get thread info for headers (subject, from, to, date)
+  const threadInfo = await getThreadInfoForReplyWithToken(token, threadId);
+  if (!threadInfo) {
+    return { success: false, error: "Could not get thread information for forward" };
   }
 
-  const recipientAdded = await addRecipient(conn, toEmail, undefined, draftKey);
-  if (!recipientAdded) {
-    return { success: false, error: "Failed to add forward recipient" };
-  }
+  // Get thread messages for the original body content
+  const messages = await getThreadMessages(token, threadId);
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  const originalBody = lastMessage?.body || "";
 
-  if (body) {
-    const bodySet = await setBody(conn, textToHtml(body), draftKey);
-    if (!bodySet) {
-      return { success: false, error: "Failed to set forward body" };
-    }
-  }
+  // Build subject with Fwd: prefix
+  const subject = threadInfo.subject.startsWith("Fwd:")
+    ? threadInfo.subject
+    : `Fwd: ${threadInfo.subject}`;
+
+  // Build the forwarded message body
+  const userHtml = body ? textToHtml(body) : "";
+  const forwardBody = buildForwardBody({
+    userHtml,
+    from: threadInfo.replyTo || "unknown",
+    date: new Date().toUTCString(), // Best effort; threadInfo doesn't have date
+    subject: threadInfo.subject,
+    to: threadInfo.allTo.join(", ") || "unknown",
+    originalBody,
+  });
 
   if (send) {
-    // Get the thread info to send via API with proper threading
-    const threadInfo = await getThreadInfoForReply(conn, threadId);
-    if (!threadInfo) {
-      return { success: false, error: "Could not get thread information for forward" };
-    }
-
-    // Build subject with Fwd: prefix
-    const subject = threadInfo.subject.startsWith("Fwd:")
-      ? threadInfo.subject
-      : `Fwd: ${threadInfo.subject}`;
-
-    // Get the body content that was set in the draft (includes forwarded content)
-    const { Runtime } = conn;
-    const draftBody = await Runtime.evaluate({
-      expression: `
-        (() => {
-          try {
-            const cfc = window.ViewState?._composeFormController;
-            if (!cfc) return null;
-            const draftKey = ${JSON.stringify(draftKey)};
-            const ctrl = cfc[draftKey];
-            const draft = ctrl?.state?.draft;
-            return draft?.body || '';
-          } catch (e) {
-            return '';
-          }
-        })()
-      `,
-      returnByValue: true,
-    });
-
-    const fullBody = draftBody.result.value as string || body;
-
-    // Send via API
-    const result = await sendEmail(conn, {
+    const result = await sendEmailWithToken(token, {
       to: [toEmail],
       subject,
-      body: fullBody,
+      body: forwardBody,
       isHtml: true,
     });
 
@@ -244,5 +144,62 @@ export async function forwardThread(
     return { success: false, error: result.error };
   }
 
-  return saveDraftAndClose(conn, draftKey);
+  // Draft mode
+  const result = await createDraftWithToken(token, {
+    to: [toEmail],
+    subject,
+    body: forwardBody,
+    isHtml: true,
+  });
+
+  if (result.success) {
+    return { success: true, draftId: result.draftId };
+  }
+  return { success: false, error: result.error };
+}
+
+/**
+ * Build the forwarded message HTML body.
+ */
+function buildForwardBody(opts: {
+  userHtml: string;
+  from: string;
+  date: string;
+  subject: string;
+  to: string;
+  originalBody: string;
+}): string {
+  const parts: string[] = [];
+
+  if (opts.userHtml) {
+    parts.push(`<div>${opts.userHtml}</div>`);
+    parts.push("<br>");
+  }
+
+  parts.push("<div>---------- Forwarded message ---------</div>");
+  parts.push(`<div>From: ${escapeHtml(opts.from)}</div>`);
+  parts.push(`<div>Date: ${escapeHtml(opts.date)}</div>`);
+  parts.push(`<div>Subject: ${escapeHtml(opts.subject)}</div>`);
+  parts.push(`<div>To: ${escapeHtml(opts.to)}</div>`);
+  parts.push("<br>");
+
+  // If originalBody already contains HTML, use it as-is; otherwise wrap in div
+  if (opts.originalBody.includes("<")) {
+    parts.push(`<div>${opts.originalBody}</div>`);
+  } else {
+    parts.push(`<div>${textToHtml(opts.originalBody)}</div>`);
+  }
+
+  return parts.join("\n");
+}
+
+/**
+ * Escape HTML special characters to prevent injection.
+ */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
