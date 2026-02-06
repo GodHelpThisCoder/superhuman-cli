@@ -2869,13 +2869,19 @@ export interface AIChatMessage {
 }
 
 /**
- * Thread message for AI context.
- * Note: The AI API only accepts these three fields - additional fields cause 400 errors.
+ * Full thread message with all metadata.
+ * Note: The AI API (ai.compose) only accepts message_id, subject, body —
+ * additional fields cause 400 errors, so callers must map accordingly.
  */
-export interface AIThreadMessage {
+export interface FullThreadMessage {
   message_id: string;
   subject: string;
   body: string;
+  from: { email: string; name: string };
+  to: Array<{ email: string; name: string }>;
+  cc: Array<{ email: string; name: string }>;
+  date: string;
+  snippet: string;
 }
 
 /**
@@ -2984,93 +2990,148 @@ export async function extractUserPrefix(
 }
 
 /**
- * Get thread messages for AI context.
- * Fetches the full thread content including body text.
+ * Parse an email address string like "Name <email>" or just "email".
+ */
+function parseEmailAddress(raw: string): { email: string; name: string } {
+  const match = raw.match(/^(.*?)\s*<([^>]+)>$/);
+  if (match) {
+    return { name: match[1].trim().replace(/^"|"$/g, ""), email: match[2] };
+  }
+  return { name: "", email: raw.trim() };
+}
+
+/**
+ * Parse a comma-separated list of email addresses from a header value.
+ */
+function parseRecipientList(header: string): Array<{ email: string; name: string }> {
+  if (!header) return [];
+  return header.split(",").map((r) => parseEmailAddress(r.trim())).filter((r) => r.email);
+}
+
+/**
+ * Map an MS Graph emailAddress object to { email, name }.
+ */
+function mapMsGraphContact(contact: any): { email: string; name: string } {
+  return {
+    email: contact?.emailAddress?.address || "",
+    name: contact?.emailAddress?.name || "",
+  };
+}
+
+/**
+ * Map an array of MS Graph recipient objects to { email, name }[].
+ */
+function mapMsGraphContacts(recipients: any[] | undefined): Array<{ email: string; name: string }> {
+  return (recipients || []).map(mapMsGraphContact);
+}
+
+/**
+ * Get full thread messages with all metadata.
+ * Fetches complete thread content including body text, headers, and recipients.
  *
  * @param token - OAuth token info
  * @param threadId - Thread ID to get messages from
- * @returns Array of thread messages with body text
+ * @returns Array of full thread messages
  */
-export async function getThreadMessagesForAI(
+export async function getThreadMessages(
   token: TokenInfo,
   threadId: string
-): Promise<AIThreadMessage[]> {
+): Promise<FullThreadMessage[]> {
   if (token.isMicrosoft) {
-    // MS Graph: Get messages in conversation.
-    // The $filter on conversationId at /me/messages level returns "InefficientFilter",
-    // so we fetch recent messages and filter client-side by conversationId.
-    const recentPath = `/me/messages?$select=id,subject,body,conversationId,receivedDateTime&$top=50&$orderby=receivedDateTime desc`;
-    const recentResult = await msgraphFetch(token.accessToken, recentPath);
-
-    let messages: any[] = [];
-    if (recentResult?.value) {
-      messages = recentResult.value.filter((m: any) => m.conversationId === threadId);
-      // Sort oldest first for thread context
-      messages.sort((a: any, b: any) =>
-        new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime()
-      );
-    }
-
-    // Fallback: if threadId is actually a message ID, fetch it directly
-    if (messages.length === 0) {
-      try {
-        const msg = await msgraphFetch(token.accessToken, `/me/messages/${threadId}?$select=id,subject,body`);
-        if (msg) {
-          messages = [msg];
-        }
-      } catch {
-        // Not a message ID either
-      }
-    }
-
-    return messages.map((msg: any) => ({
-      message_id: msg.id,
-      subject: msg.subject || "",
-      body: msg.body?.content || "",
-    }));
-  } else {
-    // Gmail: Get thread with full format to get body
-    const path = `/threads/${threadId}?format=full`;
-    const result = await gmailFetch(token.accessToken, path);
-
-    if (!result || !result.messages) {
-      return [];
-    }
-
-    return result.messages.map((msg: any) => {
-      const headers = msg.payload?.headers || [];
-      const getHeader = (name: string): string => {
-        const h = headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
-        return h?.value || "";
-      };
-
-      // Extract body from parts
-      let body = "";
-      function extractBody(part: any): void {
-        if (part.mimeType === "text/plain" && part.body?.data) {
-          body = Buffer.from(part.body.data, "base64url").toString("utf-8");
-        } else if (part.mimeType === "text/html" && part.body?.data && !body) {
-          // Strip HTML tags for AI context (prefer plain text)
-          const htmlBody = Buffer.from(part.body.data, "base64url").toString("utf-8");
-          body = htmlBody.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-        }
-        if (part.parts) {
-          for (const p of part.parts) {
-            extractBody(p);
-          }
-        }
-      }
-      extractBody(msg.payload);
-
-      // Note: The AI API only accepts message_id, subject, and body fields
-      // Additional fields like from, to, date cause a 400 error
-      return {
-        message_id: msg.id,
-        subject: getHeader("Subject"),
-        body: body || msg.snippet || "",
-      };
-    });
+    return getThreadMessagesMsGraph(token, threadId);
   }
+  return getThreadMessagesGmail(token, threadId);
+}
+
+async function getThreadMessagesMsGraph(
+  token: TokenInfo,
+  threadId: string
+): Promise<FullThreadMessage[]> {
+  // The $filter on conversationId at /me/messages level returns "InefficientFilter",
+  // so we fetch recent messages and filter client-side by conversationId.
+  const selectFields = "id,subject,body,conversationId,receivedDateTime,from,toRecipients,ccRecipients,bodyPreview";
+  const recentPath = `/me/messages?$select=${selectFields}&$top=50&$orderby=receivedDateTime desc`;
+  const recentResult = await msgraphFetch(token.accessToken, recentPath);
+
+  let messages: any[] = [];
+  if (recentResult?.value) {
+    messages = recentResult.value.filter((m: any) => m.conversationId === threadId);
+    // Sort oldest first for thread context
+    messages.sort((a: any, b: any) =>
+      new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime()
+    );
+  }
+
+  // Fallback: if threadId is actually a message ID, fetch it directly
+  if (messages.length === 0) {
+    const fallbackFields = "id,subject,body,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview";
+    try {
+      const msg = await msgraphFetch(token.accessToken, `/me/messages/${threadId}?$select=${fallbackFields}`);
+      if (msg) {
+        messages = [msg];
+      }
+    } catch {
+      // Not a message ID either
+    }
+  }
+
+  return messages.map((msg: any) => ({
+    message_id: msg.id,
+    subject: msg.subject || "",
+    body: msg.body?.content || "",
+    from: mapMsGraphContact(msg.from),
+    to: mapMsGraphContacts(msg.toRecipients),
+    cc: mapMsGraphContacts(msg.ccRecipients),
+    date: msg.receivedDateTime || "",
+    snippet: msg.bodyPreview || "",
+  }));
+}
+
+async function getThreadMessagesGmail(
+  token: TokenInfo,
+  threadId: string
+): Promise<FullThreadMessage[]> {
+  const result = await gmailFetch(token.accessToken, `/threads/${threadId}?format=full`);
+
+  if (!result || !result.messages) {
+    return [];
+  }
+
+  return result.messages.map((msg: any) => {
+    const headers = msg.payload?.headers || [];
+    const getHeader = (name: string): string => {
+      const h = headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
+      return h?.value || "";
+    };
+
+    // Extract body from MIME parts, preferring plain text over HTML
+    let body = "";
+    function extractBody(part: any): void {
+      if (part.mimeType === "text/plain" && part.body?.data) {
+        body = Buffer.from(part.body.data, "base64url").toString("utf-8");
+      } else if (part.mimeType === "text/html" && part.body?.data && !body) {
+        const htmlBody = Buffer.from(part.body.data, "base64url").toString("utf-8");
+        body = htmlBody.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+      }
+      if (part.parts) {
+        for (const p of part.parts) {
+          extractBody(p);
+        }
+      }
+    }
+    extractBody(msg.payload);
+
+    return {
+      message_id: msg.id,
+      subject: getHeader("Subject"),
+      body: body || msg.snippet || "",
+      from: parseEmailAddress(getHeader("From")),
+      to: parseRecipientList(getHeader("To")),
+      cc: parseRecipientList(getHeader("Cc")),
+      date: getHeader("Date"),
+      snippet: msg.snippet || "",
+    };
+  });
 }
 
 /**
@@ -3099,7 +3160,12 @@ export async function askAI(
 
   if (threadId) {
     // Reply mode: fetch thread messages for context
-    const threadMessages = await getThreadMessagesForAI(oauthToken, threadId);
+    const fullMessages = await getThreadMessages(oauthToken, threadId);
+    const threadMessages = fullMessages.map((m) => ({
+      message_id: m.message_id,
+      subject: m.subject,
+      body: m.body,
+    }));
 
     if (threadMessages.length === 0) {
       throw new Error(`Thread not found or has no messages: ${threadId}`);

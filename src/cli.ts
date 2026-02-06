@@ -28,7 +28,6 @@ import {
   type SuperhumanConnection,
 } from "./superhuman-api";
 import { listInbox, searchInbox } from "./inbox";
-import { readThread } from "./read";
 import { listAccounts, switchAccount, type Account } from "./accounts";
 import { replyToThread, replyAllToThread, forwardThread } from "./reply";
 import { archiveThread, deleteThread } from "./archive";
@@ -63,6 +62,7 @@ import {
   hasCachedSuperhumanCredentials,
   getThreadInfoDirect,
   sendEmailDirect,
+  getThreadMessages,
 } from "./token-api";
 
 const VERSION = "0.10.2";
@@ -133,7 +133,7 @@ ${colors.bold}USAGE${colors.reset}
 ${colors.bold}COMMANDS${colors.reset}
   ${colors.cyan}inbox${colors.reset}              List recent emails from inbox
   ${colors.cyan}search${colors.reset} <query>      Search emails
-  ${colors.cyan}read${colors.reset} <id>           Read a specific email thread
+  ${colors.cyan}read${colors.reset} <id>           Read a specific email thread (requires --account)
   ${colors.cyan}reply${colors.reset} <id>          Reply to an email thread
   ${colors.cyan}reply-all${colors.reset} <id>      Reply-all to an email thread
   ${colors.cyan}forward${colors.reset} <id>        Forward an email thread
@@ -178,6 +178,7 @@ ${colors.bold}OPTIONS${colors.reset}
   --message <id>     Message ID (required with --attachment)
   --limit <number>   Number of results (default: 10, for inbox/search)
   --include-done     Search all emails including archived/done (uses Gmail API directly)
+  --context <number> Number of messages to show full body (default: all, for read)
   --json             Output as JSON
   --date <date>      Date for calendar (YYYY-MM-DD or "today", "tomorrow")
   --calendar <name>  Calendar name or ID (default: primary)
@@ -207,8 +208,9 @@ ${colors.bold}EXAMPLES${colors.reset}
   superhuman search "from:anthropic" --include-done
 
   ${colors.dim}# Read an email thread${colors.reset}
-  superhuman read <thread-id>
-  superhuman read <thread-id> --json
+  superhuman read <thread-id> --account user@example.com
+  superhuman read <thread-id> --account user@example.com --context 3
+  superhuman read <thread-id> --account user@example.com --json
 
   ${colors.dim}# Reply to an email${colors.reset}
   superhuman reply <thread-id> --body "Thanks for the update!"
@@ -369,6 +371,8 @@ interface CliOptions {
   // snippet options
   snippetQuery: string; // snippet name for fuzzy matching
   vars: string; // template variable substitution: "key1=val1,key2=val2"
+  // read options
+  context: number; // number of messages to show full body for (0 = all)
   // draft provider option
   provider: "superhuman" | "gmail" | "outlook"; // which API to use for drafts (default: superhuman)
 }
@@ -417,6 +421,7 @@ function parseArgs(args: string[]): CliOptions {
     aiQuery: "",
     snippetQuery: "",
     vars: "",
+    context: 0,
     provider: "superhuman",
   };
 
@@ -532,6 +537,10 @@ function parseArgs(args: string[]): CliOptions {
           break;
         case "range":
           options.calendarRange = parseInt(value, 10);
+          i += inc;
+          break;
+        case "context":
+          options.context = parseInt(value, 10);
           i += inc;
           break;
         case "all-accounts":
@@ -1407,49 +1416,72 @@ async function cmdSearch(options: CliOptions) {
   await disconnect(conn);
 }
 
+const READ_USAGE = `Usage: superhuman read <thread-id> --account <email> [--context N]`;
+
 async function cmdRead(options: CliOptions) {
   if (!options.threadId) {
     error("Thread ID is required");
-    console.log(`Usage: superhuman read <thread-id>`);
+    console.log(READ_USAGE);
     process.exit(1);
   }
 
-  const conn = await checkConnection(options.port);
-  if (!conn) {
+  if (!options.account) {
+    error("--account is required for read");
+    console.log(READ_USAGE);
     process.exit(1);
   }
 
-  const messages = await readThread(conn, options.threadId);
+  await loadTokensFromDisk();
+  const token = await getCachedToken(options.account);
+  if (!token) {
+    error(`No cached credentials for ${options.account}. Run 'superhuman account auth' first.`);
+    process.exit(1);
+  }
+
+  let messages;
+  try {
+    messages = await getThreadMessages(token, options.threadId);
+  } catch (e) {
+    error(`Failed to fetch thread: ${e instanceof Error ? e.message : e}`);
+    process.exit(1);
+  }
 
   if (options.json) {
     console.log(JSON.stringify(messages, null, 2));
-  } else {
-    if (messages.length === 0) {
-      error("Thread not found or no messages");
-    } else {
-      for (let i = 0; i < messages.length; i++) {
-        const msg = messages[i];
-        if (i > 0) {
-          console.log("\n" + colors.dim + "─".repeat(60) + colors.reset + "\n");
-        }
-        console.log(`${colors.bold}${msg.subject}${colors.reset}`);
-        console.log(`${colors.cyan}From:${colors.reset} ${msg.from.name} <${msg.from.email}>`);
-        console.log(
-          `${colors.cyan}To:${colors.reset} ${msg.to.map((r) => r.email).join(", ")}`
-        );
-        if (msg.cc.length > 0) {
-          console.log(
-            `${colors.cyan}Cc:${colors.reset} ${msg.cc.map((r) => r.email).join(", ")}`
-          );
-        }
-        console.log(`${colors.cyan}Date:${colors.reset} ${new Date(msg.date).toLocaleString()}`);
-        console.log();
-        console.log(msg.snippet);
-      }
-    }
+    return;
   }
 
-  await disconnect(conn);
+  if (messages.length === 0) {
+    error("Thread not found or no messages");
+    return;
+  }
+
+  const contextCount = options.context;
+  const separator = "\n" + colors.dim + "─".repeat(60) + colors.reset + "\n";
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (i > 0) {
+      console.log(separator);
+    }
+    console.log(`${colors.bold}${msg.subject}${colors.reset}`);
+    console.log(`${colors.cyan}From:${colors.reset} ${msg.from.name} <${msg.from.email}>`);
+    console.log(`${colors.cyan}To:${colors.reset} ${msg.to.map((r) => r.email).join(", ")}`);
+    if (msg.cc.length > 0) {
+      console.log(`${colors.cyan}Cc:${colors.reset} ${msg.cc.map((r) => r.email).join(", ")}`);
+    }
+    console.log(`${colors.cyan}Date:${colors.reset} ${new Date(msg.date).toLocaleString()}`);
+    console.log();
+
+    // When contextCount is 0 (default), show full body for all messages.
+    // Otherwise, show full body only for the last N messages.
+    const isWithinContext = contextCount === 0 || (messages.length - i) <= contextCount;
+    if (isWithinContext && msg.body) {
+      console.log(msg.body);
+    } else {
+      console.log(msg.snippet);
+    }
+  }
 }
 
 async function cmdReply(options: CliOptions) {
