@@ -13,7 +13,7 @@ import {
   MarkReadSchema, MarkUnreadSchema, LabelsSchema, GetLabelsSchema, AddLabelSchema, RemoveLabelSchema,
   StarSchema, UnstarSchema, StarredSchema,
   SnoozeSchema, UnsnoozeSchema, SnoozedSchema,
-  AttachmentsSchema, DownloadAttachmentSchema, AddAttachmentSchema,
+  AttachmentsSchema, DownloadAttachmentSchema,
   CalendarListSchema, CalendarCreateSchema, CalendarUpdateSchema, CalendarDeleteSchema, CalendarFreeBusySchema,
   draftHandler, sendHandler, searchHandler, inboxHandler, readHandler,
   accountsHandler, switchAccountHandler, replyHandler, replyAllHandler, forwardHandler,
@@ -21,7 +21,7 @@ import {
   markReadHandler, markUnreadHandler, labelsHandler, getLabelsHandler, addLabelHandler, removeLabelHandler,
   starHandler, unstarHandler, starredHandler,
   snoozeHandler, unsnoozeHandler, snoozedHandler,
-  attachmentsHandler, downloadAttachmentHandler, addAttachmentHandler,
+  attachmentsHandler, downloadAttachmentHandler,
   calendarListHandler, calendarCreateHandler, calendarUpdateHandler, calendarDeleteHandler, calendarFreeBusyHandler,
   SnippetsSchema, UseSnippetSchema,
   snippetsHandler, useSnippetHandler
@@ -36,7 +36,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_draft",
     {
-      description: "Create an email draft in Superhuman. Opens the compose window, fills in the fields, and saves as draft.",
+      description: "Create an email draft via Gmail/Outlook API using cached OAuth tokens.",
       inputSchema: DraftSchema,
     },
     draftHandler
@@ -45,7 +45,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_send",
     {
-      description: "Send an email via Superhuman. Opens the compose window, fills in the fields, and sends the email.",
+      description: "Send an email via Gmail/Outlook API using cached OAuth tokens.",
       inputSchema: SendSchema,
     },
     sendHandler
@@ -265,15 +265,6 @@ function createMcpServer(): McpServer {
       inputSchema: DownloadAttachmentSchema,
     },
     downloadAttachmentHandler
-  );
-
-  server.registerTool(
-    "superhuman_add_attachment",
-    {
-      description: "Add an attachment to the current draft. A compose window must be open first (use superhuman_draft or superhuman_reply). Accepts base64-encoded file data.",
-      inputSchema: AddAttachmentSchema,
-    },
-    addAttachmentHandler
   );
 
   server.registerTool(

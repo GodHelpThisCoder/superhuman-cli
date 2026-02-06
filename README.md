@@ -40,10 +40,12 @@ superhuman inbox --limit 20 --json
 # Search emails
 superhuman search "from:john subject:meeting"
 superhuman search "project update" --limit 20
+superhuman search "from:anthropic" --include-done    # Search all including archived
 
-# Read a specific thread
-superhuman read <thread-id>
-superhuman read <thread-id> --json
+# Read a specific thread (requires --account)
+superhuman read <thread-id> --account user@gmail.com
+superhuman read <thread-id> --account user@gmail.com --context 3   # Full body for last 3 only
+superhuman read <thread-id> --account user@gmail.com --json
 ```
 
 ### Ask AI
@@ -267,6 +269,16 @@ superhuman calendar free --date tomorrow --range 7
 | `--attachment <id>` | Specific attachment ID |
 | `--message <id>` | Message ID (required with --attachment) |
 | `--limit <number>` | Number of results (default: 10) |
+| `--include-done` | Search all emails including archived (for search) |
+| `--context <number>` | Number of messages to show full body (default: all, for read) |
+| `--date <date>` | Date for calendar (YYYY-MM-DD or "today", "tomorrow") |
+| `--range <days>` | Days to show for calendar (default: 1) |
+| `--start <time>` | Event start time (ISO datetime or natural: "2pm", "tomorrow 3pm") |
+| `--end <time>` | Event end time (ISO datetime) |
+| `--duration <mins>` | Event duration in minutes (default: 30) |
+| `--title <text>` | Event title (for calendar create/update) |
+| `--event <id>` | Event ID (for calendar update/delete) |
+| `--calendar <name>` | Calendar name or ID (default: primary) |
 | `--json` | Output as JSON |
 | `--port <number>` | CDP port (default: 9333) |
 
@@ -285,7 +297,6 @@ bun src/index.ts --mcp
 | `superhuman_inbox` | List recent emails from inbox |
 | `superhuman_search` | Search emails |
 | `superhuman_read` | Read a thread |
-| `superhuman_ai` | Ask AI about a thread |
 | `superhuman_draft` | Create an email draft |
 | `superhuman_send` | Send an email |
 | `superhuman_reply` | Reply to a thread |
@@ -307,11 +318,15 @@ bun src/index.ts --mcp
 | `superhuman_snoozed` | List snoozed threads |
 | `superhuman_attachments` | List attachments in a thread |
 | `superhuman_download_attachment` | Download an attachment |
-| `superhuman_add_attachment` | Add attachment to current draft |
 | `superhuman_snippets` | List all snippets |
 | `superhuman_snippet` | Use a snippet to compose or send |
 | `superhuman_accounts` | List linked accounts |
 | `superhuman_switch_account` | Switch to a different account |
+| `superhuman_calendar_list` | List calendar events |
+| `superhuman_calendar_create` | Create calendar event |
+| `superhuman_calendar_update` | Update calendar event |
+| `superhuman_calendar_delete` | Delete calendar event |
+| `superhuman_calendar_free_busy` | Check free/busy availability |
 
 ### Claude Desktop Configuration
 
@@ -330,11 +345,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ## How It Works
 
-This tool uses a hybrid approach for maximum reliability:
-
 ### Direct API (Primary)
 
-Most operations use **direct Gmail API and Microsoft Graph API** calls:
+Most operations use **direct Gmail API and Microsoft Graph API** calls with cached OAuth tokens:
 
 | Operation | Gmail API | MS Graph API |
 |-----------|-----------|--------------|
@@ -354,17 +367,21 @@ OAuth tokens (including refresh tokens) are extracted from Superhuman and cached
 
 ### CDP (Secondary)
 
-Chrome DevTools Protocol is used only for operations that require Superhuman's UI state:
+Chrome DevTools Protocol is only needed for:
 
-- `window.ViewState._composeFormController` - Compose form and draft management (when using UI compose)
-- `window.GoogleAccount` - Token extraction and account switching
+- `account auth` — One-time token extraction from `window.GoogleAccount`
+- `status` — Check Superhuman connection
+- `compose` — Open Superhuman's compose UI
+- `search` / `inbox` (when no cached tokens) — Fallback via Superhuman's portal API
+
+All other operations (read, reply, forward, draft, archive, delete, labels, star, snooze, attachments, calendar, contacts, snippets) use direct API with cached tokens.
 
 ### Benefits
 
 - **Reliability**: Direct API calls don't depend on Superhuman's UI state
 - **Speed**: No CDP round-trips for most operations
-- **Testability**: API calls can be unit tested without running Superhuman
-- **Multi-account**: Token extraction enables operating on any linked account
+- **Offline from CDP**: After initial `account auth`, most operations work without CDP
+- **Multi-account**: Cached tokens enable operating on any linked account
 
 Supports both Gmail and Microsoft/Outlook accounts.
 

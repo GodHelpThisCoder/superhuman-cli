@@ -1,89 +1,178 @@
 ---
 name: superhuman
-description: This skill should be used when the user asks to "check email", "read inbox", "send email", "reply to email", "search emails", "archive email", "snooze email", "star email", "add label", "forward email", "download attachment", "switch email account", "check calendar", "list events", "create event", "schedule meeting", "check availability", "free busy", or needs to interact with Superhuman email client or calendar.
+description: This skill should be used when the user asks to "check email", "read inbox", "send email", "reply to email", "search emails", "archive email", "snooze email", "star email", "add label", "forward email", "download attachment", "switch email account", "check calendar", "list events", "create event", "schedule meeting", "check availability", "free busy", "use snippet", "search contacts", or needs to interact with Superhuman email client or calendar.
 ---
 
 # Superhuman Email & Calendar Automation
 
-Automate Superhuman email client via CLI or MCP server using Chrome DevTools Protocol.
+Automate Superhuman email client via CLI or MCP server. Most operations use direct Gmail/MS Graph API with cached OAuth tokens. CDP is only needed for initial auth and status checks.
 
 ## Prerequisites
 
-Superhuman must be running with remote debugging enabled. The CLI auto-launches it if needed:
+Extract OAuth tokens first (one-time, requires Superhuman running with CDP):
 
 ```bash
 /Applications/Superhuman.app/Contents/MacOS/Superhuman --remote-debugging-port=9333
+superhuman account auth
 ```
 
 ## CLI Usage
 
-The `superhuman` binary provides direct command-line access:
+### Status & Accounts
 
 ```bash
-# Check connection
-superhuman status
+superhuman status                                    # Check connection
+superhuman account auth                              # Extract & cache OAuth tokens
+superhuman account list                              # List linked accounts
+superhuman account list --json
+superhuman account switch 2                          # Switch by index
+superhuman account switch user@example.com           # Switch by email
+```
 
-# List inbox
-superhuman inbox
+### Inbox & Search
+
+```bash
+superhuman inbox                                     # List recent inbox
 superhuman inbox --limit 20 --json
-
-# Search emails
 superhuman search "from:john subject:meeting"
+superhuman search "project update" --limit 20
+superhuman search "from:anthropic" --include-done    # Search all (not just inbox)
+```
 
-# Read a thread
-superhuman read <thread-id>
-superhuman read <thread-id> --json
+### Read Threads
 
-# Reply/forward
+The `read` command requires `--account` and fetches full message bodies via direct API:
+
+```bash
+superhuman read <thread-id> --account user@gmail.com
+superhuman read <thread-id> --account user@gmail.com --context 3   # Full body for last 3 only
+superhuman read <thread-id> --account user@gmail.com --json
+```
+
+### Reply / Forward
+
+```bash
 superhuman reply <thread-id> --body "Thanks!"
 superhuman reply <thread-id> --body "Got it" --send
 superhuman reply-all <thread-id> --body "Thanks everyone"
-superhuman forward <thread-id> --to user@example.com --body "FYI"
+superhuman forward <thread-id> --to user@example.com --body "FYI" --send
+```
 
-# Compose/send
+### Compose & Send
+
+Recipients can be email addresses or contact names (auto-resolved):
+
+```bash
 superhuman send --to user@example.com --subject "Hello" --body "Hi there"
-superhuman draft --to user@example.com --subject "Hello" --body "Draft content"
+superhuman send --to "john" --subject "Hello" --body "Hi there"
+superhuman compose --to user@example.com --subject "Meeting"       # Opens UI
+```
 
-# Organize
+### Drafts
+
+```bash
+superhuman draft create --to user@example.com --subject "Hello" --body "Draft content"
+superhuman draft update <draft-id> --body "Updated content"
+superhuman draft delete <draft-id>
+superhuman draft send <draft-id> --account=user@example.com --to=recipient@example.com --subject="Subject" --body="Body"
+```
+
+### Archive / Delete
+
+```bash
 superhuman archive <thread-id>
+superhuman archive <thread-id1> <thread-id2>
 superhuman delete <thread-id>
-superhuman mark-read <thread-id>
-superhuman mark-unread <thread-id>
-superhuman star <thread-id>
-superhuman unstar <thread-id>
+```
 
-# Labels
-superhuman labels
-superhuman get-labels <thread-id>
-superhuman add-label <thread-id> --label Label_123
-superhuman remove-label <thread-id> --label Label_123
+### Mark Read/Unread
 
-# Snooze
-superhuman snooze <thread-id> --until tomorrow
-superhuman snooze <thread-id> --until next-week
-superhuman snooze <thread-id> --until "2024-02-15T14:00:00Z"
-superhuman unsnooze <thread-id>
-superhuman snoozed
+```bash
+superhuman mark read <thread-id>
+superhuman mark unread <thread-id1> <thread-id2>
+```
 
-# Attachments
-superhuman attachments <thread-id>
-superhuman download <thread-id> --output ./downloads
+### Star
 
-# Accounts
-superhuman accounts
-superhuman account 2
-superhuman account user@example.com
+```bash
+superhuman star add <thread-id>
+superhuman star add <thread-id1> <thread-id2>
+superhuman star remove <thread-id>
+superhuman star list
+superhuman star list --json
+```
 
-# Calendar
-superhuman calendar                              # List today's events
-superhuman calendar --date tomorrow              # List tomorrow's events
-superhuman calendar --range 7 --json             # List next 7 days as JSON
-superhuman calendar-create --title "Meeting" --start "2pm" --duration 30
-superhuman calendar-create --title "All Day" --date 2026-02-05
-superhuman calendar-update --event <event-id> --title "New Title"
-superhuman calendar-delete --event <event-id>
-superhuman calendar-free                         # Check today's availability
-superhuman calendar-free --date tomorrow --range 7
+### Labels
+
+```bash
+superhuman label list
+superhuman label list --json
+superhuman label get <thread-id>
+superhuman label add <thread-id> --label Label_123
+superhuman label remove <thread-id> --label Label_123
+```
+
+### Snooze
+
+```bash
+superhuman snooze set <thread-id> --until tomorrow
+superhuman snooze set <thread-id> --until next-week
+superhuman snooze set <thread-id> --until "2024-02-15T14:00:00Z"
+superhuman snooze cancel <thread-id>
+superhuman snooze list
+superhuman snooze list --json
+```
+
+### Attachments
+
+```bash
+superhuman attachment list <thread-id>
+superhuman attachment list <thread-id> --json
+superhuman attachment download <thread-id>
+superhuman attachment download <thread-id> --output ./downloads
+superhuman attachment download --attachment <attachment-id> --message <message-id> --output ./file.pdf
+```
+
+### Contacts
+
+```bash
+superhuman contact search "john"
+superhuman contact search "john" --limit 5 --json
+superhuman contact search "john" --account user@gmail.com
+```
+
+### Snippets
+
+Reusable email templates with template variables:
+
+```bash
+superhuman snippet list
+superhuman snippet list --json
+superhuman snippet use "zoom link" --to user@example.com
+superhuman snippet use "share recordings" --to user@example.com --vars "date=Feb 5,student_name=Jane"
+superhuman snippet use "share recordings" --to user@example.com --vars "date=Feb 5" --send
+```
+
+### Calendar
+
+```bash
+superhuman calendar list                              # Today's events
+superhuman calendar list --date tomorrow --range 7    # Week from tomorrow
+superhuman calendar list --json
+superhuman calendar create --title "Meeting" --start "2pm" --duration 30
+superhuman calendar create --title "All Day" --date 2026-02-05
+superhuman calendar update --event <event-id> --title "New Title"
+superhuman calendar delete --event <event-id>
+superhuman calendar free                              # Today's availability
+superhuman calendar free --date tomorrow --range 7
+```
+
+### AI
+
+```bash
+superhuman ai <thread-id> "summarize this thread"
+superhuman ai <thread-id> "what are the action items?"
+superhuman ai "draft an email about project status"   # Compose mode (no thread)
 ```
 
 ## MCP Server Usage
@@ -92,8 +181,6 @@ Run as MCP server for Claude Code integration:
 
 ```bash
 superhuman --mcp
-# or
-bun run mcp
 ```
 
 Configure in Claude Code settings:
@@ -137,7 +224,6 @@ Configure in Claude Code settings:
 | `superhuman_snoozed` | List snoozed threads |
 | `superhuman_attachments` | List attachments |
 | `superhuman_download_attachment` | Download attachment |
-| `superhuman_add_attachment` | Add attachment to draft |
 | `superhuman_accounts` | List linked accounts |
 | `superhuman_switch_account` | Switch active account |
 | `superhuman_calendar_list` | List calendar events |
@@ -145,86 +231,60 @@ Configure in Claude Code settings:
 | `superhuman_calendar_update` | Update calendar event |
 | `superhuman_calendar_delete` | Delete calendar event |
 | `superhuman_calendar_free_busy` | Check availability |
+| `superhuman_snippets` | List all snippets |
+| `superhuman_snippet` | Use a snippet to compose/send |
 
 ## Common Workflows
 
 ### Triage Inbox
 
 ```bash
-# Get recent emails
 superhuman inbox --limit 20
-
-# Read important ones
-superhuman read <thread-id>
-
-# Quick actions
+superhuman read <thread-id> --account user@gmail.com
 superhuman archive <thread-id1> <thread-id2>
-superhuman snooze <thread-id> --until tomorrow
-superhuman star <thread-id>
+superhuman snooze set <thread-id> --until tomorrow
+superhuman star add <thread-id>
 ```
 
 ### Reply to Email
 
 ```bash
-# Read the thread first
-superhuman read <thread-id>
-
-# Draft a reply (saves without sending)
-superhuman reply <thread-id> --body "Thanks for the update. I'll review and get back to you."
-
-# Or send immediately
-superhuman reply <thread-id> --body "Sounds good!" --send
+superhuman read <thread-id> --account user@gmail.com
+superhuman reply <thread-id> --body "Thanks for the update." --send
 ```
 
 ### Search and Process
 
 ```bash
-# Find emails from specific sender
 superhuman search "from:boss@company.com" --limit 10
-
-# Find unread emails with attachments
 superhuman search "is:unread has:attachment"
-
-# Archive old threads
-superhuman search "older_than:30d" | xargs superhuman archive
+superhuman search "from:anthropic" --include-done    # Include archived
 ```
 
 ### Multi-Account
 
 ```bash
-# List accounts
-superhuman accounts
-
-# Switch to work account
-superhuman account work@company.com
-
-# Or by index
-superhuman account 2
+superhuman account list
+superhuman account switch work@company.com
+superhuman contact search "john" --account personal@gmail.com
 ```
 
 ### Calendar Management
 
 ```bash
-# Check today's schedule
-superhuman calendar
+superhuman calendar list
+superhuman calendar list --range 7
+superhuman calendar free --date tomorrow
+superhuman calendar create --title "Team Sync" --start "2pm" --duration 60
+superhuman calendar update --event <event-id> --start "3pm"
+superhuman calendar delete --event <event-id>
+```
 
-# View the week ahead
-superhuman calendar --range 7
+### Snippets
 
-# Check availability before scheduling
-superhuman calendar-free --date tomorrow
-
-# Create a meeting
-superhuman calendar-create --title "Team Sync" --start "2pm" --duration 60
-
-# Create all-day event
-superhuman calendar-create --title "Conference" --date 2026-02-15
-
-# Reschedule an event
-superhuman calendar-update --event <event-id> --start "3pm"
-
-# Cancel an event
-superhuman calendar-delete --event <event-id>
+```bash
+superhuman snippet list
+superhuman snippet use "meeting invite" --to colleague@example.com --vars "date=Feb 10" --send
 ```
 
 ## Snooze Presets
@@ -247,27 +307,24 @@ superhuman inbox --json | jq '.[] | {id, subject, from}'
 
 ## Troubleshooting
 
+### Token Expired
+
+```bash
+superhuman account auth    # Re-extract tokens from Superhuman
+```
+
+Tokens auto-refresh. If refresh fails: `Token for user@email.com expired. Run 'superhuman account auth' to re-authenticate.`
+
 ### Connection Failed
 
-Superhuman auto-launches on first connection. If it fails:
-
 1. Check if Superhuman is installed at `/Applications/Superhuman.app`
-2. Manually launch with debugging: `/Applications/Superhuman.app/Contents/MacOS/Superhuman --remote-debugging-port=9333`
-3. Verify connection: `superhuman status`
+2. Launch with debugging: `/Applications/Superhuman.app/Contents/MacOS/Superhuman --remote-debugging-port=9333`
+3. Verify: `superhuman status`
 
 ### Thread Not Found
 
-Thread IDs come from inbox/search results. Use `--json` to get exact IDs:
+Thread IDs come from inbox/search. Use `--json` to get exact IDs:
 
 ```bash
 superhuman inbox --json | jq '.[0].id'
 ```
-
-### Account Not Switching
-
-Ensure the email is linked in Superhuman. List available accounts:
-
-```bash
-superhuman accounts
-```
-

@@ -11,7 +11,7 @@ import {
   textToHtml,
   type SuperhumanConnection,
 } from "../superhuman-api";
-import { listInbox, searchInbox } from "../inbox";
+import { listInbox, searchInbox, type SearchOptions } from "../inbox";
 import { readThread } from "../read";
 import { listAccounts, switchAccount } from "../accounts";
 import { replyToThread, replyAllToThread, forwardThread } from "../reply";
@@ -30,7 +30,7 @@ import {
   type UpdateEventInput,
 } from "../calendar";
 import { listSnippets, findSnippet, applyVars, parseVars } from "../snippets";
-import { getUserInfo, createDraftWithUserInfo, sendDraftSuperhuman } from "../draft-api";
+import { getUserInfo, getUserInfoFromCache, createDraftWithUserInfo, sendDraftSuperhuman } from "../draft-api";
 import { sendEmailViaProvider, createDraftViaProvider } from "../send-api";
 import { CDPConnectionProvider, resolveProvider, type ConnectionProvider } from "../connection-provider";
 
@@ -229,15 +229,6 @@ export const DownloadAttachmentSchema = z.object({
 });
 
 /**
- * Zod schema for adding an attachment to current draft
- */
-export const AddAttachmentSchema = z.object({
-  filename: z.string().describe("The filename for the attachment"),
-  data: z.string().describe("The file content as a base64-encoded string"),
-  mimeType: z.string().describe("The MIME type of the file (e.g., 'application/pdf', 'image/png')"),
-});
-
-/**
  * Zod schema for listing calendar events
  */
 export const CalendarListSchema = z.object({
@@ -379,89 +370,31 @@ export async function sendHandler(args: z.infer<typeof SendSchema>): Promise<Too
  * Handler for superhuman_search tool
  */
 export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise<ToolResult> {
-  let conn: SuperhumanConnection | null = null;
+  let provider: ConnectionProvider | null = null;
 
   try {
-    conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
-    }
-
-    const { Runtime } = conn;
+    provider = await getMcpProvider();
     const limit = args.limit ?? 10;
 
-    const searchResult = await Runtime.evaluate({
-      expression: `
-        (async () => {
-          try {
-            const portal = window.GoogleAccount?.portal;
-            if (!portal) return { error: 'Superhuman portal not found' };
+    const threads = await searchInbox(provider, { query: args.query, limit });
 
-            const listResult = await portal.invoke("threadInternal", "listAsync", [
-              "INBOX",
-              { limit: ${limit}, filters: [], query: ${JSON.stringify(args.query)} }
-            ]);
-
-            const threads = listResult?.threads || [];
-            return {
-              results: threads.slice(0, ${limit}).map(t => {
-                const json = t.json || {};
-                const shData = t.superhumanData || {};
-
-                let firstMessage = null;
-                if (shData.messages && typeof shData.messages === 'object') {
-                  const msgKeys = Object.keys(shData.messages);
-                  if (msgKeys.length > 0) {
-                    const msg = shData.messages[msgKeys[0]];
-                    firstMessage = msg.draft || msg;
-                  }
-                } else if (json.messages && json.messages.length > 0) {
-                  firstMessage = json.messages[0];
-                }
-
-                return {
-                  id: json.id || '',
-                  from: firstMessage?.from?.email || '',
-                  subject: firstMessage?.subject || json.snippet || '',
-                  snippet: firstMessage?.snippet || json.snippet || '',
-                  date: firstMessage?.date || firstMessage?.clientCreatedAt || ''
-                };
-              })
-            };
-          } catch (err) {
-            return { error: err.message };
-          }
-        })()
-      `,
-      returnByValue: true,
-      awaitPromise: true,
-    });
-
-    const result = searchResult.result.value as {
-      results?: Array<{ id: string; from: string; subject: string; snippet: string; date: string }>;
-      error?: string;
-    };
-
-    if (result.error) {
-      throw new Error(result.error);
-    }
-
-    const results = result.results || [];
-
-    if (results.length === 0) {
+    if (threads.length === 0) {
       return successResult(`No results found for query: "${args.query}"`);
     }
 
-    const resultsText = results
-      .map((r, i) => `${i + 1}. From: ${r.from}\n   Subject: ${r.subject}\n   Date: ${r.date}\n   Snippet: ${r.snippet}`)
+    const resultsText = threads
+      .map((t, i) => {
+        const from = t.from.name || t.from.email;
+        return `${i + 1}. From: ${from}\n   Subject: ${t.subject}\n   Date: ${t.date}\n   Snippet: ${t.snippet.substring(0, 100)}...`;
+      })
       .join("\n\n");
 
-    return successResult(`Found ${results.length} result(s) for query: "${args.query}"\n\n${resultsText}`);
+    return successResult(`Found ${threads.length} result(s) for query: "${args.query}"\n\n${resultsText}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to search inbox: ${message}`);
   } finally {
-    if (conn) await disconnect(conn);
+    if (provider) await provider.disconnect();
   }
 }
 
@@ -1252,14 +1185,6 @@ export async function downloadAttachmentHandler(args: z.infer<typeof DownloadAtt
   }
 }
 
-/**
- * Handler for superhuman_add_attachment tool
- */
-export async function addAttachmentHandler(args: z.infer<typeof AddAttachmentSchema>): Promise<ToolResult> {
-  // addAttachment was a CDP-only function and has been removed.
-  // Use addAttachmentDirect for drafts created via direct API instead.
-  return errorResult("addAttachment (CDP-only) has been removed. Use draft attachments via direct API instead.");
-}
 
 /**
  * Handler for superhuman_calendar_list tool
@@ -1452,18 +1377,34 @@ export const UseSnippetSchema = z.object({
 });
 
 /**
+ * Get UserInfo from a ConnectionProvider (prefers cached tokens, falls back to CDP).
+ */
+async function getUserInfoFromProvider(provider: ConnectionProvider): Promise<import("../draft-api").UserInfo> {
+  const token = await provider.getToken();
+  if (token.userId && token.idToken) {
+    return getUserInfoFromCache(token.userId, token.email, token.idToken);
+  }
+  // Fallback: if token lacks userId/idToken, try CDP
+  const conn = await connectToSuperhuman(CDP_PORT);
+  if (!conn) {
+    throw new Error("Cached token missing userId/idToken. Run 'superhuman account auth' to re-authenticate.");
+  }
+  try {
+    return await getUserInfo(conn);
+  } finally {
+    await disconnect(conn);
+  }
+}
+
+/**
  * Handler for superhuman_snippets tool - list all snippets
  */
 export async function snippetsHandler(_args: z.infer<typeof SnippetsSchema>): Promise<ToolResult> {
-  let conn: SuperhumanConnection | null = null;
+  let provider: ConnectionProvider | null = null;
 
   try {
-    conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
-    }
-
-    const userInfo = await getUserInfo(conn);
+    provider = await getMcpProvider();
+    const userInfo = await getUserInfoFromProvider(provider);
     const snippets = await listSnippets(userInfo);
 
     if (snippets.length === 0) {
@@ -1482,7 +1423,7 @@ export async function snippetsHandler(_args: z.infer<typeof SnippetsSchema>): Pr
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to list snippets: ${message}`);
   } finally {
-    if (conn) await disconnect(conn);
+    if (provider) await provider.disconnect();
   }
 }
 
@@ -1490,15 +1431,11 @@ export async function snippetsHandler(_args: z.infer<typeof SnippetsSchema>): Pr
  * Handler for superhuman_snippet tool - use a snippet to compose/send
  */
 export async function useSnippetHandler(args: z.infer<typeof UseSnippetSchema>): Promise<ToolResult> {
-  let conn: SuperhumanConnection | null = null;
+  let provider: ConnectionProvider | null = null;
 
   try {
-    conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
-    }
-
-    const userInfo = await getUserInfo(conn);
+    provider = await getMcpProvider();
+    const userInfo = await getUserInfoFromProvider(provider);
     const snippets = await listSnippets(userInfo);
     const snippet = findSnippet(snippets, args.name);
 
@@ -1561,6 +1498,6 @@ export async function useSnippetHandler(args: z.infer<typeof UseSnippetSchema>):
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to use snippet: ${message}`);
   } finally {
-    if (conn) await disconnect(conn);
+    if (provider) await provider.disconnect();
   }
 }
