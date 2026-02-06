@@ -65,7 +65,7 @@ import {
   getThreadMessages,
 } from "./token-api";
 
-const VERSION = "0.10.2";
+const VERSION = "0.11.0";
 const CDP_PORT = 9333;
 
 // ANSI colors
