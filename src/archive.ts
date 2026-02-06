@@ -5,16 +5,13 @@
  * Supports both Microsoft/Outlook accounts (via MS Graph) and Gmail accounts (via Gmail API).
  */
 
-import type { SuperhumanConnection } from "./superhuman-api";
+import type { ConnectionProvider } from "./connection-provider";
 import {
-  type TokenInfo,
-  getToken,
   modifyThreadLabels,
   moveMessageToFolder,
   getConversationMessageIds,
   getWellKnownFolder,
 } from "./token-api";
-import { listAccounts } from "./accounts";
 
 export interface ArchiveResult {
   success: boolean;
@@ -27,35 +24,21 @@ export interface DeleteResult {
 }
 
 /**
- * Get token for the current account.
- */
-async function getCurrentToken(conn: SuperhumanConnection): Promise<TokenInfo> {
-  const accounts = await listAccounts(conn);
-  const currentAccount = accounts.find((a) => a.isCurrent);
-
-  if (!currentAccount) {
-    throw new Error("No current account found");
-  }
-
-  return getToken(conn, currentAccount.email);
-}
-
-/**
  * Archive a thread by removing it from inbox (server-persisted)
  *
  * For Microsoft accounts: Moves messages to the Archive folder via MS Graph API
  * For Gmail accounts: Removes INBOX label via Gmail API
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param threadId - The thread ID to archive
  * @returns Result with success status
  */
 export async function archiveThread(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string
 ): Promise<ArchiveResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
 
     if (token.isMicrosoft) {
       // Microsoft: Move messages to Archive folder
@@ -93,16 +76,16 @@ export async function archiveThread(
  * For Microsoft accounts: Moves messages to Deleted Items folder via MS Graph API
  * For Gmail accounts: Adds TRASH label and removes INBOX via Gmail API
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param threadId - The thread ID to delete
  * @returns Result with success status
  */
 export async function deleteThread(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string
 ): Promise<DeleteResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
 
     if (token.isMicrosoft) {
       // Microsoft: Move messages to Deleted Items folder

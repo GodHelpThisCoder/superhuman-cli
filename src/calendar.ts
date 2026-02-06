@@ -5,21 +5,18 @@
  * Supports both Google Calendar and Microsoft Graph accounts.
  */
 
-import type { SuperhumanConnection } from "./superhuman-api";
+import type { ConnectionProvider } from "./connection-provider";
 import {
-  type TokenInfo,
   type CalendarEventDirect as CalendarEvent,
   type CreateCalendarEventInput as CreateEventInput,
   type UpdateCalendarEventInput as UpdateEventInput,
   type FreeBusySlot,
-  getToken,
   listCalendarEventsDirect,
   createCalendarEventDirect,
   updateCalendarEventDirect,
   deleteCalendarEventDirect,
   getFreeBusyDirect,
 } from "./token-api";
-import { listAccounts } from "./accounts";
 
 // Re-export the calendar event type for external use
 export type { CalendarEvent };
@@ -55,32 +52,18 @@ export interface ListEventsOptions {
 }
 
 /**
- * Get token for the current account.
- */
-async function getCurrentToken(conn: SuperhumanConnection): Promise<TokenInfo> {
-  const accounts = await listAccounts(conn);
-  const currentAccount = accounts.find((a) => a.isCurrent);
-
-  if (!currentAccount) {
-    throw new Error("No current account found");
-  }
-
-  return getToken(conn, currentAccount.email);
-}
-
-/**
  * List calendar events within a time range
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param options - Optional filters for time range and limit
  * @returns Array of calendar events
  */
 export async function listEvents(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   options?: ListEventsOptions
 ): Promise<CalendarEvent[]> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
 
     const toISOString = (v: Date | string): string =>
       typeof v === "string" ? v : v.toISOString();
@@ -100,16 +83,16 @@ export async function listEvents(
 /**
  * Create a new calendar event
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param event - The event data to create
  * @returns Result with success status and eventId if successful
  */
 export async function createEvent(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   event: CreateEventInput
 ): Promise<CalendarResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
     const result = await createCalendarEventDirect(token, event);
 
     if (!result) {
@@ -125,18 +108,18 @@ export async function createEvent(
 /**
  * Delete a calendar event
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param eventId - The ID of the event to delete
  * @param calendarId - Optional calendar ID (required for Google Calendar)
  * @returns Result with success status
  */
 export async function deleteEvent(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   eventId: string,
   calendarId?: string
 ): Promise<CalendarResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
 
     const success = await deleteCalendarEventDirect(token, eventId, calendarId);
 
@@ -153,20 +136,20 @@ export async function deleteEvent(
 /**
  * Update an existing calendar event
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param eventId - The ID of the event to update
  * @param updates - The fields to update (partial update)
  * @param calendarId - Optional calendar ID (required for Google Calendar)
  * @returns Result with success status
  */
 export async function updateEvent(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   eventId: string,
   updates: UpdateEventInput,
   calendarId?: string
 ): Promise<CalendarResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
     const success = await updateCalendarEventDirect(token, eventId, updates, calendarId);
 
     if (!success) {
@@ -191,16 +174,16 @@ export interface FreeBusyOptions {
 /**
  * Check free/busy availability for a time range
  *
- * @param conn - The Superhuman connection
+ * @param provider - The connection provider
  * @param options - Time range and optional calendar IDs
  * @returns Free/busy slots
  */
 export async function getFreeBusy(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   options: FreeBusyOptions
 ): Promise<FreeBusyResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
 
     const toISOString = (v: Date | string): string =>
       typeof v === "string" ? v : v.toISOString();

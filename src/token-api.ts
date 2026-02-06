@@ -2596,6 +2596,138 @@ export async function sendReplyDirect(
 }
 
 /**
+ * Update an existing draft via direct Gmail/MS Graph API.
+ *
+ * @param token - Token info
+ * @param draftId - Draft ID to update
+ * @param options - Fields to update (only provided fields are changed)
+ * @returns Updated draft info or null on failure
+ */
+export async function updateDraftDirect(
+  token: TokenInfo,
+  draftId: string,
+  options: {
+    to?: string[];
+    cc?: string[];
+    bcc?: string[];
+    subject?: string;
+    body?: string;
+    isHtml?: boolean;
+  }
+): Promise<{ draftId: string; messageId?: string } | null> {
+  if (token.isMicrosoft) {
+    // MS Graph: PATCH /me/messages/{id}
+    const updates: Record<string, unknown> = {};
+
+    if (options.subject !== undefined) {
+      updates.subject = options.subject;
+    }
+    if (options.body !== undefined) {
+      updates.body = {
+        contentType: (options.isHtml ?? true) ? "HTML" : "Text",
+        content: options.body,
+      };
+    }
+    if (options.to) {
+      updates.toRecipients = options.to.map((email) => ({
+        emailAddress: { address: email },
+      }));
+    }
+    if (options.cc) {
+      updates.ccRecipients = options.cc.map((email) => ({
+        emailAddress: { address: email },
+      }));
+    }
+    if (options.bcc) {
+      updates.bccRecipients = options.bcc.map((email) => ({
+        emailAddress: { address: email },
+      }));
+    }
+
+    const result = await msgraphFetch(token.accessToken, `/me/messages/${draftId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+
+    if (!result?.id) return null;
+    return { draftId: result.id, messageId: result.id };
+  } else {
+    // Gmail: GET existing draft, merge updates, PUT back
+    const existing = await gmailFetch(token.accessToken, `/drafts/${draftId}?format=full`);
+    if (!existing?.message) return null;
+
+    const existingHeaders = existing.message.payload?.headers || [];
+    const getHeader = (name: string) =>
+      existingHeaders.find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || "";
+
+    const to = options.to || getHeader("To").split(",").map((s: string) => s.trim()).filter(Boolean);
+    const cc = options.cc || getHeader("Cc").split(",").map((s: string) => s.trim()).filter(Boolean);
+    const bcc = options.bcc || getHeader("Bcc").split(",").map((s: string) => s.trim()).filter(Boolean);
+    const subject = options.subject ?? getHeader("Subject");
+
+    // Extract existing body if not being replaced
+    let body = options.body;
+    let isHtml = options.isHtml ?? true;
+    if (body === undefined) {
+      const payload = existing.message.payload;
+      const extractBody = (part: any): string | undefined => {
+        if (part.mimeType === "text/html" && part.body?.data) {
+          isHtml = true;
+          return Buffer.from(part.body.data, "base64url").toString("utf-8");
+        }
+        if (part.mimeType === "text/plain" && part.body?.data) {
+          return Buffer.from(part.body.data, "base64url").toString("utf-8");
+        }
+        if (part.parts) {
+          for (const p of part.parts) {
+            const result = extractBody(p);
+            if (result) return result;
+          }
+        }
+        return undefined;
+      };
+      body = extractBody(payload) || "";
+    }
+
+    const mimeMessage = buildMimeMessage({
+      from: token.email,
+      to,
+      cc: cc.length > 0 ? cc : undefined,
+      bcc: bcc.length > 0 ? bcc : undefined,
+      subject,
+      body: body || "",
+      isHtml,
+      inReplyTo: getHeader("In-Reply-To") || undefined,
+      references: getHeader("References") ? getHeader("References").split(/\s+/).filter(Boolean) : undefined,
+    });
+
+    const payload: Record<string, unknown> = {
+      message: { raw: mimeMessage },
+    };
+    if (existing.message.threadId) {
+      (payload.message as Record<string, unknown>).threadId = existing.message.threadId;
+    }
+
+    const result = await fetch(
+      `https://www.googleapis.com/gmail/v1/users/me/drafts/${draftId}`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    if (!result.ok) return null;
+    const data = await result.json() as any;
+    return { draftId: data.id, messageId: data.message?.id };
+  }
+}
+
+/**
  * Delete a draft via direct API.
  *
  * @param token - Token info

@@ -5,16 +5,12 @@
  * via direct Gmail/MS Graph API.
  */
 
-import type { SuperhumanConnection } from "./superhuman-api";
+import type { ConnectionProvider } from "./connection-provider";
 import {
-  type TokenInfo,
-  type AttachmentInfo,
-  getToken,
   getThreadDirect,
   downloadAttachmentDirect,
   addAttachmentToDraft,
 } from "./token-api";
-import { listAccounts } from "./accounts";
 
 export interface Attachment {
   id: string;
@@ -38,20 +34,6 @@ export interface AddAttachmentResult {
 }
 
 /**
- * Get token for the current account.
- */
-async function getCurrentToken(conn: SuperhumanConnection): Promise<TokenInfo> {
-  const accounts = await listAccounts(conn);
-  const currentAccount = accounts.find((a) => a.isCurrent);
-
-  if (!currentAccount) {
-    throw new Error("No current account found");
-  }
-
-  return getToken(conn, currentAccount.email);
-}
-
-/**
  * Extract file extension from filename.
  */
 function getExtension(filename: string): string {
@@ -63,10 +45,10 @@ function getExtension(filename: string): string {
  * List all attachments from a thread
  */
 export async function listAttachments(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   threadId: string
 ): Promise<Attachment[]> {
-  const token = await getCurrentToken(conn);
+  const token = await provider.getToken();
   const thread = await getThreadDirect(token, threadId);
 
   if (!thread) {
@@ -98,94 +80,14 @@ export async function listAttachments(
  * Works for both Gmail and Microsoft accounts
  */
 export async function downloadAttachment(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   messageId: string,
   attachmentId: string,
   _threadId?: string, // Kept for backward compatibility
   _mimeType?: string  // Kept for backward compatibility
 ): Promise<AttachmentContent> {
-  const token = await getCurrentToken(conn);
+  const token = await provider.getToken();
   return downloadAttachmentDirect(token, messageId, attachmentId);
-}
-
-/**
- * Add an attachment to the current draft
- *
- * Note: This still uses CDP because it needs to interact with Superhuman's
- * compose form controller, which manages draft state locally.
- *
- * @param conn - Superhuman connection
- * @param filename - Name of the file
- * @param base64Data - File content as base64 string
- * @param mimeType - MIME type of the file
- */
-export async function addAttachment(
-  conn: SuperhumanConnection,
-  filename: string,
-  base64Data: string,
-  mimeType: string
-): Promise<AddAttachmentResult> {
-  const { Runtime } = conn;
-
-  const result = await Runtime.evaluate({
-    expression: `
-      (async () => {
-        try {
-          const cfc = window.ViewState?._composeFormController;
-          if (!cfc) return { success: false, error: "No compose form controller" };
-
-          const draftKey = Object.keys(cfc).find(k => k.startsWith('draft'));
-          if (!draftKey) return { success: false, error: "No draft open" };
-
-          const ctrl = cfc[draftKey];
-          if (!ctrl) return { success: false, error: "No draft controller" };
-
-          // Convert base64 to Blob
-          const base64 = ${JSON.stringify(base64Data)};
-          const mimeType = ${JSON.stringify(mimeType)};
-          const filename = ${JSON.stringify(filename)};
-
-          const byteCharacters = atob(base64);
-          const byteNumbers = new Array(byteCharacters.length);
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
-          }
-          const byteArray = new Uint8Array(byteNumbers);
-          const blob = new Blob([byteArray], { type: mimeType });
-
-          // Create a File object
-          const file = new File([blob], filename, { type: mimeType });
-
-          // Try using _onAddAttachments
-          if (typeof ctrl._onAddAttachments === 'function') {
-            await ctrl._onAddAttachments([file]);
-            return { success: true };
-          }
-
-          // Try using onPasteFile
-          if (typeof ctrl.onPasteFile === 'function') {
-            await ctrl.onPasteFile(file);
-            return { success: true };
-          }
-
-          // Try accessing draft directly
-          const draft = ctrl?.state?.draft;
-          if (draft && typeof draft.addUploads === 'function') {
-            await draft.addUploads([file]);
-            return { success: true };
-          }
-
-          return { success: false, error: "No method available to add attachments" };
-        } catch (e) {
-          return { success: false, error: e.message || "Failed to add attachment" };
-        }
-      })()
-    `,
-    returnByValue: true,
-    awaitPromise: true,
-  });
-
-  return result.result.value as AddAttachmentResult;
 }
 
 /**
@@ -195,23 +97,21 @@ export async function addAttachment(
  * (createDraftGmail/createDraftMsgraph). The draft must exist in the
  * native email provider's Drafts folder.
  *
- * For drafts created via Superhuman's compose UI, use addAttachment() instead.
- *
- * @param conn - Superhuman connection (for token extraction)
+ * @param provider - The connection provider (for token extraction)
  * @param draftId - The draft ID (Gmail draft ID or MS Graph message ID)
  * @param filename - Name of the file
  * @param base64Data - File content as base64 string
  * @param mimeType - MIME type of the file
  */
 export async function addAttachmentDirect(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   draftId: string,
   filename: string,
   base64Data: string,
   mimeType: string
 ): Promise<AddAttachmentResult> {
   try {
-    const token = await getCurrentToken(conn);
+    const token = await provider.getToken();
     const success = await addAttachmentToDraft(token, draftId, filename, mimeType, base64Data);
     return { success };
   } catch (e: any) {

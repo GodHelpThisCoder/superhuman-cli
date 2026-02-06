@@ -4,14 +4,11 @@
  * Functions for listing and searching inbox threads via direct Gmail/MS Graph API.
  */
 
-import type { SuperhumanConnection } from "./superhuman-api";
+import type { ConnectionProvider } from "./connection-provider";
 import {
-  type TokenInfo,
-  getToken,
   searchGmailDirect,
   listInboxDirect,
 } from "./token-api";
-import { listAccounts } from "./accounts";
 
 export interface InboxThread {
   id: string;
@@ -45,28 +42,14 @@ export interface SearchOptions {
 }
 
 /**
- * Get token for the current account.
- */
-async function getCurrentToken(conn: SuperhumanConnection): Promise<TokenInfo> {
-  const accounts = await listAccounts(conn);
-  const currentAccount = accounts.find((a) => a.isCurrent);
-
-  if (!currentAccount) {
-    throw new Error("No current account found");
-  }
-
-  return getToken(conn, currentAccount.email);
-}
-
-/**
  * List threads from the current inbox view
  */
 export async function listInbox(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   options: ListInboxOptions = {}
 ): Promise<InboxThread[]> {
   const limit = options.limit ?? 10;
-  const token = await getCurrentToken(conn);
+  const token = await provider.getToken();
   return listInboxDirect(token, limit);
 }
 
@@ -77,11 +60,11 @@ export async function listInbox(
  * When includeDone is true, searches ALL emails including archived/done items.
  */
 export async function searchInbox(
-  conn: SuperhumanConnection,
+  provider: ConnectionProvider,
   options: SearchOptions
 ): Promise<InboxThread[]> {
   const { query, limit = 10, includeDone = false } = options;
-  const token = await getCurrentToken(conn);
+  const token = await provider.getToken();
 
   if (includeDone) {
     // Search all emails (no inbox filter)
