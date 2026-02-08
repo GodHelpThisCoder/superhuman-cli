@@ -68,6 +68,15 @@ describe("parseCalendarDate", () => {
 });
 
 describe("parseEventTime", () => {
+  test("parseEventTime handles date-only YYYY-MM-DD as local midnight", () => {
+    const result = parseEventTime("2026-02-10");
+    expect(result.getFullYear()).toBe(2026);
+    expect(result.getMonth()).toBe(1); // Feb = 1 (0-indexed)
+    expect(result.getDate()).toBe(10);
+    expect(result.getHours()).toBe(0);
+    expect(result.getMinutes()).toBe(0);
+  });
+
   test("ISO datetime without timezone parses as local time", () => {
     const result = parseEventTime("2026-02-10T00:00:00");
     expect(result.getFullYear()).toBe(2026);

@@ -59,7 +59,7 @@ import {
 import type { ConnectionProvider } from "./connection-provider";
 import { CachedTokenProvider, CDPConnectionProvider, resolveProvider } from "./connection-provider";
 
-const VERSION = "0.12.3";
+const VERSION = "0.12.4";
 const CDP_PORT = 9333;
 
 // ANSI colors
@@ -2460,7 +2460,15 @@ export function parseCalendarDate(dateStr: string): Date {
 export function parseEventTime(timeStr: string): Date {
   const now = new Date();
 
-  // Try ISO format first
+  // Parse YYYY-MM-DD as local midnight (not UTC)
+  // new Date("2026-02-10") per ECMAScript spec parses as UTC midnight,
+  // which becomes the previous day in timezones west of UTC (e.g. EST).
+  const dateMatch = timeStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateMatch) {
+    return new Date(parseInt(dateMatch[1]), parseInt(dateMatch[2]) - 1, parseInt(dateMatch[3]));
+  }
+
+  // Try ISO format (datetime strings with time component)
   const iso = new Date(timeStr);
   if (!isNaN(iso.getTime())) {
     return iso;
@@ -2605,6 +2613,11 @@ async function cmdCalendar(options: CliOptions) {
     timeMin = parseEventTime(options.eventStart);
     if (options.eventEnd) {
       timeMax = parseEventTime(options.eventEnd);
+      // If end is same as or before start (e.g. both are date-only midnight),
+      // extend to end of that day
+      if (timeMax <= timeMin) {
+        timeMax.setHours(23, 59, 59, 999);
+      }
     } else {
       // Default: end of same day as start
       timeMax = new Date(timeMin);
