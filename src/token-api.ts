@@ -2216,6 +2216,143 @@ export async function getThreadInfoDirect(
     };
   }
 }
+/**
+ * Draft message object returned from listDraftsDirect
+ */
+export interface DraftMessage {
+  id: string;
+  subject: string;
+  from: string;
+  to: string[];
+  preview: string;
+  timestamp: string;
+}
+
+/**
+ * List draft messages via direct Gmail/MS Graph API.
+ *
+ * Fetches draft messages from the Drafts folder without using Superhuman's UI.
+ *
+ * @param token - Token info with accessToken and isMicrosoft flag
+ * @param limit - Maximum results (default 50)
+ * @param offset - Results offset for pagination (default 0)
+ * @returns Array of DraftMessage objects
+ */
+export async function listDraftsDirect(
+  token: TokenInfo,
+  limit: number = 50,
+  offset: number = 0
+): Promise<DraftMessage[]> {
+  if (token.isMicrosoft) {
+    // MS Graph: GET /me/mailFolders('Drafts')/messages
+    const path = `/me/mailFolders('Drafts')/messages?$top=${limit}&$skip=${offset}&$select=id,subject,from,toRecipients,bodyPreview,receivedDateTime&$orderby=receivedDateTime desc`;
+    const result = await msgraphFetch(token.accessToken, path) as MSGraphMessagesResponse | null;
+
+    if (!result || !result.value) {
+      return [];
+    }
+
+    return result.value.map((message: any) => ({
+      id: message.id,
+      subject: message.subject || "(no subject)",
+      from: message.from?.emailAddress?.address || "",
+      to: (message.toRecipients || []).map((r: any) => r.emailAddress?.address || "").filter(Boolean),
+      preview: message.bodyPreview || "",
+      timestamp: message.receivedDateTime || new Date().toISOString(),
+    }));
+  } else {
+    // Gmail: GET /drafts?includeSpamTrash=false
+    // Gmail doesn't have offset directly, but we can use pagination with pageToken
+    const pageToken = offset > 0 ? `&pageToken=${offset}` : "";
+    const path = `/drafts?maxResults=${limit}${pageToken}`;
+    const result = await gmailFetch(token.accessToken, path) as GmailMessagesListResponse | null;
+
+    if (!result || !result.messages || result.messages.length === 0) {
+      return [];
+    }
+
+    const drafts: DraftMessage[] = [];
+
+    // For each draft message ID, fetch its details
+    for (const draft of result.messages) {
+      try {
+        const detailPath = `/drafts/${draft.id}?format=full`;
+        const detailResult = await gmailFetch(token.accessToken, detailPath);
+
+        if (!detailResult || !detailResult.message) {
+          continue;
+        }
+
+        const message = detailResult.message;
+        const payload = message.payload || {};
+        const headers = payload.headers || [];
+
+        // Helper to get header value
+        const getHeader = (name: string) =>
+          headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || "";
+
+        // Parse From header (format: "Name <email>" or just "email")
+        const fromHeader = getHeader("From");
+        const fromMatch = fromHeader.match(/<([^>]+)>/) || [null, fromHeader];
+        const from = fromMatch[1] || fromHeader;
+
+        // Parse To header
+        const parseRecipients = (header: string): string[] => {
+          if (!header) return [];
+          return header
+            .split(",")
+            .map((r) => {
+              const match = r.match(/<([^>]+)>/) || [null, r.trim()];
+              return match[1] || r.trim();
+            })
+            .filter(Boolean);
+        };
+
+        const to = parseRecipients(getHeader("To"));
+
+        // Extract body preview
+        let preview = "";
+        function extractPreview(part: any): void {
+          if (part.body?.data) {
+            const content = Buffer.from(part.body.data, "base64url").toString("utf-8");
+            preview = content.substring(0, 200); // First 200 chars
+          } else if (part.parts) {
+            for (const p of part.parts) {
+              if (!preview) {
+                extractPreview(p);
+              }
+            }
+          }
+        }
+        extractPreview(payload);
+
+        // Use snippet as fallback for preview
+        if (!preview && message.snippet) {
+          preview = message.snippet;
+        }
+
+        // Get timestamp
+        const dateHeader = getHeader("Date");
+        const timestamp = dateHeader || new Date(parseInt(message.internalDate || "0")).toISOString();
+
+        drafts.push({
+          id: message.id,
+          subject: getHeader("Subject") || "(no subject)",
+          from,
+          to,
+          preview,
+          timestamp,
+        });
+      } catch (error) {
+        // Log error but continue processing other drafts
+        console.error(`Error fetching draft ${draft.id}:`, error);
+        continue;
+      }
+    }
+
+    return drafts;
+  }
+}
 
 /**
  * Create a draft via direct Gmail/MS Graph API.

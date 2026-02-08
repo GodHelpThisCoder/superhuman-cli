@@ -54,6 +54,7 @@ import {
   getThreadInfoDirect,
   sendEmailDirect,
   getThreadMessages,
+  listDraftsDirect,
   type TokenInfo,
 } from "./token-api";
 import type { ConnectionProvider } from "./connection-provider";
@@ -142,7 +143,7 @@ ${colors.bold}COMMANDS${colors.reset}
 ${colors.bold}SUBCOMMAND GROUPS${colors.reset}
   ${colors.cyan}account${colors.reset}  list | switch <email|index> | auth
   ${colors.cyan}calendar${colors.reset} list | create | update | delete | free
-  ${colors.cyan}draft${colors.reset}    create | update <id> | delete <id> | send <id>
+  ${colors.cyan}draft${colors.reset}    list | create | update <id> | delete <id> | send <id>
   ${colors.cyan}label${colors.reset}    list | get <id> | add <id> | remove <id>
   ${colors.cyan}mark${colors.reset}     read <id> | unread <id>
   ${colors.cyan}star${colors.reset}     add <id> | remove <id> | list
@@ -279,6 +280,7 @@ ${colors.bold}EXAMPLES${colors.reset}
   superhuman ai <thread-id> "what are the action items?"
 
   ${colors.dim}# Drafts${colors.reset}
+  superhuman draft list [--limit N] [--offset N] [--account EMAIL]
   superhuman draft create --to user@example.com --subject "Hello" --body "Hi there!"
   superhuman draft create --provider=gmail --to user@example.com --subject "Hello" --body "Hi there!"
   superhuman draft update <draft-id> --body "Updated content"
@@ -319,6 +321,7 @@ interface CliOptions {
   port: number;
   // inbox/search/read options
   limit: number;
+  offset: number;
   query: string;
   threadId: string;
   threadIds: string[]; // for bulk operations (archive/delete)
@@ -383,6 +386,7 @@ function parseArgs(args: string[]): CliOptions {
     html: "",
     port: CDP_PORT,
     limit: 10,
+    offset: 0,
     query: "",
     threadId: "",
     threadIds: [],
@@ -475,6 +479,10 @@ function parseArgs(args: string[]): CliOptions {
           break;
         case "limit":
           options.limit = parseInt(value, 10);
+          i += inc;
+          break;
+        case "offset":
+          options.offset = parseInt(value, 10);
           i += inc;
           break;
         case "query":
@@ -1204,6 +1212,72 @@ async function cmdSendDraft(options: CliOptions) {
     log(`  ${colors.dim}Account: ${options.account}${colors.reset}`);
   } else {
     error(`Failed to send draft: ${result.error}`);
+    process.exit(1);
+  }
+}
+
+async function cmdListDrafts(options: CliOptions) {
+  const account = options.account;
+  const limit = options.limit || 50;
+  const offset = options.offset || 0;
+
+  // Determine email to use
+  let email = account;
+  if (!email) {
+    // Try to get the current account
+    try {
+      const cached = getCachedAccounts();
+      if (cached && cached.length > 0) {
+        email = cached[0];
+        info(`Using account: ${email}`);
+      } else {
+        error("No account specified. Use --account <email> or set a default account.");
+        process.exit(1);
+      }
+    } catch (e) {
+      error("No account specified. Use --account <email>");
+      process.exit(1);
+    }
+  }
+
+  info(`Fetching drafts from ${email}...`);
+
+  try {
+    // Get token for the account
+    const token = await getCachedToken(email);
+    if (!token) {
+      error(`No cached token for ${email}. Please run 'superhuman login' first.`);
+      process.exit(1);
+    }
+
+    // Fetch drafts
+    const drafts = await listDraftsDirect(token, limit, offset);
+
+    if (drafts.length === 0) {
+      log(`${colors.dim}No drafts found.${colors.reset}`);
+      return;
+    }
+
+    log(`\n${colors.cyan}${drafts.length} draft(s):${colors.reset}\n`);
+
+    // Display drafts
+    for (const draft of drafts) {
+      const dateStr = new Date(draft.timestamp).toLocaleString();
+      log(`${colors.blue}${draft.id}${colors.reset}`);
+      log(`  Subject: ${draft.subject || "(no subject)"}`);
+      log(`  From: ${draft.from}`);
+      if (draft.to.length > 0) {
+        log(`  To: ${draft.to.join(", ")}`);
+      }
+      if (draft.preview) {
+        const preview = draft.preview.substring(0, 100).replace(/\n/g, " ");
+        log(`  Preview: ${preview}${draft.preview.length > 100 ? "..." : ""}`);
+      }
+      log(`  Date: ${dateStr}`);
+      log("");
+    }
+  } catch (error) {
+    error(`Failed to fetch drafts: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
 }
@@ -3280,9 +3354,12 @@ async function main() {
         case "send":
           await cmdSendDraft(options);
           break;
+        case "list":
+          await cmdListDrafts(options);
+          break;
         default:
           error(`Unknown subcommand: draft ${options.subcommand || "(none)"}`);
-          log(`Usage: superhuman draft create|update|delete|send`);
+          log(`Usage: superhuman draft create|update|delete|send|list`);
           process.exit(1);
       }
       break;
