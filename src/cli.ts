@@ -58,7 +58,7 @@ import {
 import type { ConnectionProvider } from "./connection-provider";
 import { CachedTokenProvider, CDPConnectionProvider, resolveProvider } from "./connection-provider";
 
-const VERSION = "0.11.0";
+const VERSION = "0.11.1";
 const CDP_PORT = 9333;
 
 // ANSI colors
