@@ -256,8 +256,10 @@ export const DownloadAttachmentSchema = z.object({
  * Zod schema for listing calendar events
  */
 export const CalendarListSchema = z.object({
-  date: z.string().optional().describe("Start date (YYYY-MM-DD or 'today', 'tomorrow'). Defaults to today."),
-  range: z.number().optional().describe("Number of days to show (default: 1)"),
+  date: z.string().optional().describe("Start date (YYYY-MM-DD or 'today', 'tomorrow'). Defaults to today. Ignored if 'start' is provided."),
+  range: z.number().optional().describe("Number of days to show (default: 1). Ignored if 'start' is provided."),
+  start: z.string().optional().describe("Exact start time as ISO datetime (e.g., '2026-02-10T00:00:00'). Takes precedence over 'date'/'range'."),
+  end: z.string().optional().describe("Exact end time as ISO datetime (e.g., '2026-02-10T23:59:59'). Used with 'start'. Defaults to end of start day."),
 });
 
 /**
@@ -1241,37 +1243,53 @@ export async function calendarListHandler(args: z.infer<typeof CalendarListSchem
   try {
     provider = await getMcpProvider();
 
-    // Parse date
+    // Parse date range
     let timeMin: Date;
-    if (args.date) {
-      const lowerDate = args.date.toLowerCase();
-      if (lowerDate === "today") {
-        timeMin = new Date();
-        timeMin.setHours(0, 0, 0, 0);
-      } else if (lowerDate === "tomorrow") {
-        timeMin = new Date();
-        timeMin.setDate(timeMin.getDate() + 1);
-        timeMin.setHours(0, 0, 0, 0);
+    let timeMax: Date;
+
+    if (args.start) {
+      // --start/--end take precedence over date/range
+      timeMin = new Date(args.start);
+      if (isNaN(timeMin.getTime())) throw new Error(`Invalid start time: ${args.start}`);
+      if (args.end) {
+        timeMax = new Date(args.end);
+        if (isNaN(timeMax.getTime())) throw new Error(`Invalid end time: ${args.end}`);
       } else {
-        // Parse YYYY-MM-DD as local midnight (not UTC)
-        // new Date("YYYY-MM-DD") per ECMAScript spec parses as UTC midnight,
-        // which becomes the previous day in timezones west of UTC.
-        const dateMatch = args.date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-        if (dateMatch) {
-          timeMin = new Date(parseInt(dateMatch[1]), parseInt(dateMatch[2]) - 1, parseInt(dateMatch[3]));
-        } else {
-          timeMin = new Date(args.date);
-        }
+        // Default: end of same day as start
+        timeMax = new Date(timeMin);
+        timeMax.setHours(23, 59, 59, 999);
       }
     } else {
-      timeMin = new Date();
-      timeMin.setHours(0, 0, 0, 0);
-    }
+      if (args.date) {
+        const lowerDate = args.date.toLowerCase();
+        if (lowerDate === "today") {
+          timeMin = new Date();
+          timeMin.setHours(0, 0, 0, 0);
+        } else if (lowerDate === "tomorrow") {
+          timeMin = new Date();
+          timeMin.setDate(timeMin.getDate() + 1);
+          timeMin.setHours(0, 0, 0, 0);
+        } else {
+          // Parse YYYY-MM-DD as local midnight (not UTC)
+          // new Date("YYYY-MM-DD") per ECMAScript spec parses as UTC midnight,
+          // which becomes the previous day in timezones west of UTC.
+          const dateMatch = args.date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+          if (dateMatch) {
+            timeMin = new Date(parseInt(dateMatch[1]), parseInt(dateMatch[2]) - 1, parseInt(dateMatch[3]));
+          } else {
+            timeMin = new Date(args.date);
+          }
+        }
+      } else {
+        timeMin = new Date();
+        timeMin.setHours(0, 0, 0, 0);
+      }
 
-    const range = args.range || 1;
-    const timeMax = new Date(timeMin);
-    timeMax.setDate(timeMax.getDate() + range);
-    timeMax.setHours(23, 59, 59, 999);
+      const range = args.range || 1;
+      timeMax = new Date(timeMin);
+      timeMax.setDate(timeMax.getDate() + range);
+      timeMax.setHours(23, 59, 59, 999);
+    }
 
     const events = await listEvents(provider, { timeMin, timeMax });
 

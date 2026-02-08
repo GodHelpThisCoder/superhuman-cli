@@ -59,7 +59,7 @@ import {
 import type { ConnectionProvider } from "./connection-provider";
 import { CachedTokenProvider, CDPConnectionProvider, resolveProvider } from "./connection-provider";
 
-const VERSION = "0.12.2";
+const VERSION = "0.12.3";
 const CDP_PORT = 9333;
 
 // ANSI colors
@@ -2457,7 +2457,7 @@ export function parseCalendarDate(dateStr: string): Date {
  * Parse a time string into a Date object
  * Supports: ISO datetime, or simple times like "2pm", "14:00", "tomorrow 3pm"
  */
-function parseEventTime(timeStr: string): Date {
+export function parseEventTime(timeStr: string): Date {
   const now = new Date();
 
   // Try ISO format first
@@ -2600,16 +2600,28 @@ async function cmdCalendar(options: CliOptions) {
   let timeMin: Date;
   let timeMax: Date;
 
-  if (options.calendarDate) {
+  if (options.eventStart) {
+    // --start/--end flags take precedence over --date/--range
+    timeMin = parseEventTime(options.eventStart);
+    if (options.eventEnd) {
+      timeMax = parseEventTime(options.eventEnd);
+    } else {
+      // Default: end of same day as start
+      timeMax = new Date(timeMin);
+      timeMax.setHours(23, 59, 59, 999);
+    }
+  } else if (options.calendarDate) {
     timeMin = parseCalendarDate(options.calendarDate);
+    timeMax = new Date(timeMin);
+    timeMax.setDate(timeMax.getDate() + options.calendarRange);
+    timeMax.setHours(23, 59, 59, 999);
   } else {
     timeMin = new Date();
     timeMin.setHours(0, 0, 0, 0);
+    timeMax = new Date(timeMin);
+    timeMax.setDate(timeMax.getDate() + options.calendarRange);
+    timeMax.setHours(23, 59, 59, 999);
   }
-
-  timeMax = new Date(timeMin);
-  timeMax.setDate(timeMax.getDate() + options.calendarRange);
-  timeMax.setHours(23, 59, 59, 999);
 
   // Resolve calendar ID if provided (requires CDP for name resolution)
   let calendarId: string | null = null;
@@ -2971,14 +2983,25 @@ async function cmdCalendarFree(options: CliOptions) {
   let timeMin: Date;
   let timeMax: Date;
 
-  if (options.calendarDate) {
+  if (options.eventStart) {
+    // --start/--end flags take precedence over --date/--range
+    timeMin = parseEventTime(options.eventStart);
+    if (options.eventEnd) {
+      timeMax = parseEventTime(options.eventEnd);
+    } else {
+      // Default: end of same day as start
+      timeMax = new Date(timeMin);
+      timeMax.setDate(timeMax.getDate() + options.calendarRange);
+    }
+  } else if (options.calendarDate) {
     timeMin = parseCalendarDate(options.calendarDate);
+    timeMax = new Date(timeMin);
+    timeMax.setDate(timeMax.getDate() + options.calendarRange);
   } else {
     timeMin = new Date();
+    timeMax = new Date(timeMin);
+    timeMax.setDate(timeMax.getDate() + options.calendarRange);
   }
-
-  timeMax = new Date(timeMin);
-  timeMax.setDate(timeMax.getDate() + options.calendarRange);
 
   const result = await getFreeBusy(provider, { timeMin, timeMax });
 

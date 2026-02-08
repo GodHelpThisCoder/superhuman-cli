@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { parseCalendarDate } from "../cli";
+import { parseCalendarDate, parseEventTime } from "../cli";
 
 describe("parseCalendarDate", () => {
   test("YYYY-MM-DD string returns local midnight, not UTC midnight", () => {
@@ -64,5 +64,78 @@ describe("parseCalendarDate", () => {
 
   test("invalid date throws Error", () => {
     expect(() => parseCalendarDate("not-a-date")).toThrow("Invalid date: not-a-date");
+  });
+});
+
+describe("parseEventTime", () => {
+  test("ISO datetime without timezone parses as local time", () => {
+    const result = parseEventTime("2026-02-10T00:00:00");
+    expect(result.getFullYear()).toBe(2026);
+    expect(result.getMonth()).toBe(1);
+    expect(result.getDate()).toBe(10);
+    expect(result.getHours()).toBe(0);
+  });
+
+  test("ISO datetime with specific time parses correctly", () => {
+    const result = parseEventTime("2026-02-10T14:30:00");
+    expect(result.getFullYear()).toBe(2026);
+    expect(result.getMonth()).toBe(1);
+    expect(result.getDate()).toBe(10);
+    expect(result.getHours()).toBe(14);
+    expect(result.getMinutes()).toBe(30);
+  });
+
+  test("simple time like '2pm' parses to today at 2pm", () => {
+    const result = parseEventTime("2pm");
+    const now = new Date();
+    expect(result.getDate()).toBe(now.getDate());
+    expect(result.getHours()).toBe(14);
+    expect(result.getMinutes()).toBe(0);
+  });
+
+  test("'tomorrow 3pm' parses to tomorrow at 3pm", () => {
+    const result = parseEventTime("tomorrow 3pm");
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    expect(result.getDate()).toBe(tomorrow.getDate());
+    expect(result.getHours()).toBe(15);
+    expect(result.getMinutes()).toBe(0);
+  });
+
+  test("invalid time throws Error", () => {
+    expect(() => parseEventTime("not-a-time")).toThrow("Invalid time: not-a-time");
+  });
+});
+
+describe("calendar list --start/--end CLI flags", () => {
+  test("calendar list accepts --start and --end flags without error", async () => {
+    const proc = Bun.spawn(
+      [process.execPath, "src/cli.ts", "calendar", "list", "--start", "2026-02-10T00:00:00", "--end", "2026-02-10T23:59:59"],
+      {
+        cwd: import.meta.dir + "/../..",
+        stdout: "pipe",
+        stderr: "pipe",
+      }
+    );
+
+    const stderr = await new Response(proc.stderr).text();
+    // The flags should be accepted by the parser (no "unknown" flag errors).
+    // The command may fail with credential errors, but that's expected --
+    // we only verify the flags are recognized and not rejected.
+    expect(stderr.toLowerCase()).not.toContain("unknown");
+  });
+
+  test("calendar list accepts --start without --end", async () => {
+    const proc = Bun.spawn(
+      [process.execPath, "src/cli.ts", "calendar", "list", "--start", "2026-02-10T00:00:00"],
+      {
+        cwd: import.meta.dir + "/../..",
+        stdout: "pipe",
+        stderr: "pipe",
+      }
+    );
+
+    const stderr = await new Response(proc.stderr).text();
+    expect(stderr.toLowerCase()).not.toContain("unknown");
   });
 });
