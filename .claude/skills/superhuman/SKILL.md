@@ -1,6 +1,6 @@
 ---
 name: superhuman
-description: This skill should be used when the user asks to "check email", "read inbox", "send email", "reply to email", "search emails", "archive email", "snooze email", "star email", "add label", "forward email", "download attachment", "switch email account", "check calendar", "list events", "create event", "schedule meeting", "check availability", "free busy", "use snippet", "search contacts", or needs to interact with Superhuman email client or calendar.
+description: This skill should be used when the user asks to "check email", "read inbox", "send email", "reply to email", "search emails", "archive email", "snooze email", "star email", "add label", "forward email", "download attachment", "switch email account", "check calendar", "list events", "create event", "schedule meeting", "check availability", "free busy", "use snippet", "search contacts", "ask ai about email", "find email about", "what did someone say about", or needs to interact with Superhuman email client or calendar.
 ---
 
 # Superhuman Email & Calendar Automation
@@ -167,12 +167,14 @@ superhuman calendar free                              # Today's availability
 superhuman calendar free --date tomorrow --range 7
 ```
 
-### AI
+### AI (Search, Q&A, Compose)
 
 ```bash
-superhuman ai <thread-id> "summarize this thread"
+superhuman ai "find emails about the Stanford cover letter"    # Natural language search
+superhuman ai "what did John say about the deadline?"          # Email Q&A
+superhuman ai "Write an email inviting the team to a meeting"  # AI compose
+superhuman ai <thread-id> "summarize this thread"              # Thread-specific
 superhuman ai <thread-id> "what are the action items?"
-superhuman ai "draft an email about project status"   # Compose mode (no thread)
 ```
 
 ## MCP Server Usage
@@ -233,6 +235,7 @@ Configure in Claude Code settings:
 | `superhuman_calendar_free_busy` | Check availability |
 | `superhuman_snippets` | List all snippets |
 | `superhuman_snippet` | Use a snippet to compose/send |
+| `superhuman_ask_ai` | Ask AI to search emails, answer questions, or compose |
 
 ## Common Workflows
 

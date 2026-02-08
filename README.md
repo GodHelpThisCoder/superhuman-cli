@@ -50,21 +50,23 @@ superhuman read <thread-id> --account user@gmail.com --json
 
 ### Ask AI
 
-Query Superhuman's AI about email threads:
+Use Superhuman's AI to search emails, answer questions, or ask about specific threads:
 
 ```bash
-# Summarize a thread
+# Search emails with natural language
+superhuman ai "find emails about the Stanford cover letter"
+superhuman ai "what did John say about the deadline?"
+
+# Compose with AI
+superhuman ai "Write an email inviting the team to a planning meeting"
+
+# Ask about a specific thread
 superhuman ai <thread-id> "summarize this thread"
-
-# Get action items
 superhuman ai <thread-id> "what are the action items?"
-
-# Draft a reply
 superhuman ai <thread-id> "draft a professional reply"
-
-# Ask specific questions
-superhuman ai <thread-id> "what dates were mentioned?"
 ```
+
+The AI automatically determines whether to search, compose, or answer based on your prompt.
 
 ### Contacts
 
@@ -327,6 +329,7 @@ bun src/index.ts --mcp
 | `superhuman_calendar_update` | Update calendar event |
 | `superhuman_calendar_delete` | Delete calendar event |
 | `superhuman_calendar_free_busy` | Check free/busy availability |
+| `superhuman_ask_ai` | Ask AI to search emails, answer questions, or compose |
 
 ### Claude Desktop Configuration
 
@@ -369,7 +372,7 @@ OAuth tokens (including refresh tokens) are extracted from Superhuman and cached
 
 Chrome DevTools Protocol is only needed for:
 
-- `account auth` — One-time token extraction from `window.GoogleAccount`
+- `account auth` — One-time token extraction from `window.GoogleAccount` (also stores AI user prefix)
 - `status` — Check Superhuman connection
 - `compose` — Open Superhuman's compose UI
 - `search` / `inbox` (when no cached tokens) — Fallback via Superhuman's portal API
