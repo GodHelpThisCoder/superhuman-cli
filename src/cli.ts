@@ -59,7 +59,7 @@ import {
 import type { ConnectionProvider } from "./connection-provider";
 import { CachedTokenProvider, CDPConnectionProvider, resolveProvider } from "./connection-provider";
 
-const VERSION = "0.12.1";
+const VERSION = "0.12.2";
 const CDP_PORT = 9333;
 
 // ANSI colors
@@ -2426,7 +2426,7 @@ async function cmdAccount(options: CliOptions) {
  * Parse a date string into a Date object
  * Supports: "today", "tomorrow", ISO date (YYYY-MM-DD), or any Date.parse-able string
  */
-function parseCalendarDate(dateStr: string): Date {
+export function parseCalendarDate(dateStr: string): Date {
   const now = new Date();
   const lowerDate = dateStr.toLowerCase();
 
@@ -2436,7 +2436,15 @@ function parseCalendarDate(dateStr: string): Date {
     return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
   }
 
-  // Try parsing as-is
+  // Parse YYYY-MM-DD as local midnight (not UTC)
+  // new Date("2026-02-10") per ECMAScript spec parses as UTC midnight,
+  // which becomes the previous day in timezones west of UTC (e.g. EST).
+  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
+  }
+
+  // Try parsing as-is (for other formats like full ISO datetime with timezone)
   const parsed = new Date(dateStr);
   if (!isNaN(parsed.getTime())) {
     return parsed;

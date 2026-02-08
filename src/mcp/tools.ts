@@ -1253,7 +1253,15 @@ export async function calendarListHandler(args: z.infer<typeof CalendarListSchem
         timeMin.setDate(timeMin.getDate() + 1);
         timeMin.setHours(0, 0, 0, 0);
       } else {
-        timeMin = new Date(args.date);
+        // Parse YYYY-MM-DD as local midnight (not UTC)
+        // new Date("YYYY-MM-DD") per ECMAScript spec parses as UTC midnight,
+        // which becomes the previous day in timezones west of UTC.
+        const dateMatch = args.date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (dateMatch) {
+          timeMin = new Date(parseInt(dateMatch[1]), parseInt(dateMatch[2]) - 1, parseInt(dateMatch[3]));
+        } else {
+          timeMin = new Date(args.date);
+        }
       }
     } else {
       timeMin = new Date();
