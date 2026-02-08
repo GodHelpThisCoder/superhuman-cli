@@ -1221,6 +1221,9 @@ async function cmdListDrafts(options: CliOptions) {
   const limit = options.limit || 50;
   const offset = options.offset || 0;
 
+  // Load cached tokens from disk
+  await loadTokensFromDisk();
+
   // Determine email to use
   let email = account;
   if (!email) {
