@@ -1224,20 +1224,14 @@ async function cmdListDrafts(options: CliOptions) {
   // Load cached tokens from disk
   await loadTokensFromDisk();
 
-  // Determine email to use
+  // Determine which account to use
   let email = account;
   if (!email) {
-    // Try to get the current account
-    try {
-      const cached = getCachedAccounts();
-      if (cached && cached.length > 0) {
-        email = cached[0];
-        info(`Using account: ${email}`);
-      } else {
-        error("No account specified. Use --account <email> or set a default account.");
-        process.exit(1);
-      }
-    } catch (e) {
+    const accounts = getCachedAccounts();
+    if (accounts.length > 0) {
+      email = accounts[0];
+      info(`Using account: ${email}`);
+    } else {
       error("No account specified. Use --account <email>");
       process.exit(1);
     }
@@ -1249,15 +1243,16 @@ async function cmdListDrafts(options: CliOptions) {
     // Get token for the account
     const token = await getCachedToken(email);
     if (!token) {
-      error(`No cached token for ${email}. Please run 'superhuman login' first.`);
+      error(`No cached token for ${email}. Run 'superhuman account auth' to authenticate.`);
       process.exit(1);
     }
 
-    // Fetch drafts
+    // Fetch drafts from Gmail or Outlook (where Superhuman stores them)
+    // This lists all drafts synced to the provider's drafts folder
     const drafts = await listDraftsDirect(token, limit, offset);
 
     if (drafts.length === 0) {
-      log(`${colors.dim}No drafts found.${colors.reset}`);
+      log(`${colors.dim}No drafts found in ${email}.${colors.reset}`);
       return;
     }
 
@@ -1265,17 +1260,17 @@ async function cmdListDrafts(options: CliOptions) {
 
     // Display drafts
     for (const draft of drafts) {
-      const dateStr = new Date(draft.timestamp).toLocaleString();
       log(`${colors.blue}${draft.id}${colors.reset}`);
       log(`  Subject: ${draft.subject || "(no subject)"}`);
-      log(`  From: ${draft.from}`);
-      if (draft.to.length > 0) {
-        log(`  To: ${draft.to.join(", ")}`);
+      log(`  To: ${draft.to.join(", ") || "(no recipients)"}`);
+      if (draft.from) {
+        log(`  From: ${draft.from}`);
       }
       if (draft.preview) {
         const preview = draft.preview.substring(0, 100).replace(/\n/g, " ");
         log(`  Preview: ${preview}${draft.preview.length > 100 ? "..." : ""}`);
       }
+      const dateStr = new Date(draft.timestamp).toLocaleString();
       log(`  Date: ${dateStr}`);
       log("");
     }
