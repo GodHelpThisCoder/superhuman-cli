@@ -59,6 +59,9 @@ import {
 } from "./token-api";
 import type { ConnectionProvider } from "./connection-provider";
 import { CachedTokenProvider, CDPConnectionProvider, resolveProvider } from "./connection-provider";
+import { DraftService, type Draft } from "./services/draft-service";
+import { GmailDraftProvider } from "./providers/gmail-draft-provider";
+import { OutlookDraftProvider } from "./providers/outlook-draft-provider";
 
 const VERSION = "0.12.4";
 const CDP_PORT = 9333;
@@ -1247,9 +1250,14 @@ async function cmdListDrafts(options: CliOptions) {
       process.exit(1);
     }
 
-    // Fetch drafts from Gmail or Outlook (where Superhuman stores them)
-    // This lists all drafts synced to the provider's drafts folder
-    const drafts = await listDraftsDirect(token, limit, offset);
+    // Create appropriate provider based on account type
+    const provider = token.isMicrosoft
+      ? new OutlookDraftProvider(token)
+      : new GmailDraftProvider(token);
+
+    // Use DraftService to fetch drafts
+    const service = new DraftService([provider]);
+    const drafts = await service.listDrafts(limit, offset);
 
     if (drafts.length === 0) {
       log(`${colors.dim}No drafts found in ${email}.${colors.reset}`);
@@ -1258,10 +1266,11 @@ async function cmdListDrafts(options: CliOptions) {
 
     log(`\n${colors.cyan}${drafts.length} draft(s):${colors.reset}\n`);
 
-    // Display drafts
+    // Display drafts with source column
     for (const draft of drafts) {
       log(`${colors.blue}${draft.id}${colors.reset}`);
       log(`  Subject: ${draft.subject || "(no subject)"}`);
+      log(`  Source: ${draft.source}`);
       log(`  To: ${draft.to.join(", ") || "(no recipients)"}`);
       if (draft.from) {
         log(`  From: ${draft.from}`);
@@ -1274,8 +1283,8 @@ async function cmdListDrafts(options: CliOptions) {
       log(`  Date: ${dateStr}`);
       log("");
     }
-  } catch (error) {
-    error(`Failed to fetch drafts: ${error instanceof Error ? error.message : String(error)}`);
+  } catch (err) {
+    error(`Failed to fetch drafts: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
 }
