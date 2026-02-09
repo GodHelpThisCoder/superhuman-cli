@@ -23,6 +23,11 @@ export interface TokenInfo {
   idTokenExpires?: number;
   // 4-char user prefix for generating event IDs (e.g., "4sKP")
   userPrefix?: string;
+  // Superhuman backend API token (for userdata.getThreads, etc.)
+  superhumanToken?: {
+    token: string;
+    expires: number;
+  };
 }
 
 /**
@@ -329,6 +334,7 @@ export async function loadTokensFromDisk(): Promise<boolean> {
         idToken: account.superhumanToken?.token,
         idTokenExpires: account.superhumanToken?.expires,
         userPrefix: account.userPrefix,
+        superhumanToken: account.superhumanToken, // Preserve full superhuman token
       });
     }
 

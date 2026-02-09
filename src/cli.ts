@@ -62,6 +62,7 @@ import { CachedTokenProvider, CDPConnectionProvider, resolveProvider } from "./c
 import { DraftService, type Draft } from "./services/draft-service";
 import { GmailDraftProvider } from "./providers/gmail-draft-provider";
 import { OutlookDraftProvider } from "./providers/outlook-draft-provider";
+import { SuperhumanDraftProvider } from "./providers/superhuman-draft-provider";
 
 const VERSION = "0.12.4";
 const CDP_PORT = 9333;
@@ -1250,13 +1251,15 @@ async function cmdListDrafts(options: CliOptions) {
       process.exit(1);
     }
 
-    // Create appropriate provider based on account type
-    const provider = token.isMicrosoft
+    // Create providers based on account type
+    // Include both email provider (Gmail/Outlook) and Superhuman native draft provider
+    const emailProvider = token.isMicrosoft
       ? new OutlookDraftProvider(token)
       : new GmailDraftProvider(token);
+    const nativeProvider = new SuperhumanDraftProvider(token);
 
-    // Use DraftService to fetch drafts
-    const service = new DraftService([provider]);
+    // Use DraftService to fetch drafts from all providers
+    const service = new DraftService([emailProvider, nativeProvider]);
     const drafts = await service.listDrafts(limit, offset);
 
     if (drafts.length === 0) {
