@@ -1315,6 +1315,14 @@ async function cmdSendDraft(options: CliOptions) {
       log(`  ${colors.dim}Scheduled for: ${sendTime.toLocaleString()}${colors.reset}`);
     }
     log(`  ${colors.dim}Account: ${options.account}${colors.reset}`);
+
+    // Auto-delete the native draft after successful send (matches Superhuman app behavior)
+    try {
+      const threadId = options.sendDraftThreadId || draftId;
+      await deleteDraftWithUserInfo(userInfo, threadId, draftId);
+    } catch {
+      // Non-fatal: draft was sent successfully, cleanup failure is just cosmetic
+    }
   } else {
     error(`Failed to send draft: ${result.error}`);
     process.exit(1);
