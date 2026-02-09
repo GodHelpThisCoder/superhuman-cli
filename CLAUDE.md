@@ -9,6 +9,43 @@ Default to using Bun instead of Node.js.
 - Use `bunx <package> <command>` instead of `npx <package> <command>`
 - Bun automatically loads .env, so don't use dotenv.
 
+## Chrome DevTools Protocol (CDP)
+
+When connecting to Superhuman via CDP, **always monitor BOTH the background page AND the main UI page** to capture all API calls:
+
+```typescript
+import CDP from "chrome-remote-interface";
+
+// 1. List all available pages
+const targets = await CDP.List({ port: 9333 });
+
+// 2. Find the background page (where API calls happen)
+const backgroundPage = targets.find(t => 
+  t.url.includes("background_page.html")
+);
+
+// 3. Find the main UI page (optional, for UI interactions)
+const mainPage = targets.find(t => 
+  t.url.includes("mail.superhuman.com") && t.type === "page"
+);
+
+// 4. Connect to background page for network monitoring
+const bgClient = await CDP({ port: 9333, target: backgroundPage.id });
+const { Network } = bgClient;
+await Network.enable();
+
+// Network events will now capture backend API calls
+```
+
+**Why both pages matter:**
+- **Background page** (`background_page.html`): All API calls to Superhuman backend (`userdata.*`, `messages.*`, etc.)
+- **Main UI page** (`mail.superhuman.com`): User interactions, UI state changes
+
+**Always check page list first:**
+```bash
+bun src/api-investigation/list-cdp-pages.ts
+```
+
 ## APIs
 
 - `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
