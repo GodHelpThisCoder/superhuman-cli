@@ -23,28 +23,37 @@ export interface Snippet {
   lastSentAt: string | null;
 }
 
-interface GetThreadsResponse {
-  threads: Array<{
+interface DraftEntry {
+  draft: {
     id: string;
-    messages: Array<{
-      id: string;
-      draft?: {
-        id: string;
-        threadId: string;
-        action: string;
-        name: string | null;
-        body: string;
-        subject: string;
-        snippet: string;
-        to: string[];
-        cc: string[];
-        bcc: string[];
-        snippetAnalytics?: {
-          sends?: number;
-          lastSentAt?: string | null;
-        };
-      };
-    }>;
+    threadId?: string;
+    action: string;
+    name: string | null;
+    body: string;
+    subject?: string;
+    snippet?: string;
+    to?: string[];
+    cc?: string[];
+    bcc?: string[];
+  };
+  snippetAnalytics?: {
+    sends?: number;
+    lastSentAt?: string | null;
+  };
+}
+
+interface GetThreadsResponse {
+  // v3 format: threadList with messages as an object keyed by draft ID
+  threadList?: Array<{
+    thread: {
+      historyId?: number;
+      messages: Record<string, DraftEntry>;
+    };
+  }>;
+  // Legacy format: threads with messages as an array
+  threads?: Array<{
+    id: string;
+    messages: Array<DraftEntry>;
   }>;
 }
 
@@ -78,24 +87,42 @@ export async function listSnippets(
   const data = (await response.json()) as GetThreadsResponse;
 
   const snippets: Snippet[] = [];
-  for (const thread of data.threads ?? []) {
-    for (const msg of thread.messages ?? []) {
-      const draft = msg.draft;
-      if (draft?.action === "snippet") {
-        snippets.push({
-          id: draft.id,
-          threadId: draft.threadId,
-          name: draft.name || "(untitled)",
-          body: draft.body,
-          subject: draft.subject || "",
-          snippet: draft.snippet || "",
-          to: draft.to || [],
-          cc: draft.cc || [],
-          bcc: draft.bcc || [],
-          sends: draft.snippetAnalytics?.sends ?? 0,
-          lastSentAt: draft.snippetAnalytics?.lastSentAt ?? null,
-        });
+
+  // Collect all draft entries from either response format
+  const entries: DraftEntry[] = [];
+
+  if (data.threadList) {
+    // v3 format: threadList[].thread.messages is an object keyed by draft ID
+    for (const item of data.threadList) {
+      for (const entry of Object.values(item.thread.messages)) {
+        entries.push(entry);
       }
+    }
+  } else if (data.threads) {
+    // Legacy format: threads[].messages is an array
+    for (const thread of data.threads) {
+      for (const entry of thread.messages) {
+        entries.push(entry);
+      }
+    }
+  }
+
+  for (const entry of entries) {
+    const draft = entry.draft;
+    if (draft?.action === "snippet") {
+      snippets.push({
+        id: draft.id,
+        threadId: draft.threadId || "",
+        name: draft.name || "(untitled)",
+        body: draft.body,
+        subject: draft.subject || "",
+        snippet: draft.snippet || "",
+        to: draft.to || [],
+        cc: draft.cc || [],
+        bcc: draft.bcc || [],
+        sends: entry.snippetAnalytics?.sends ?? 0,
+        lastSentAt: entry.snippetAnalytics?.lastSentAt ?? null,
+      });
     }
   }
 

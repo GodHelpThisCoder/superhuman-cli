@@ -13,12 +13,14 @@
 import {
   connectToSuperhuman,
   disconnect,
+  disconnectChrome,
+  connectToSuperhumanChrome,
   textToHtml,
   unescapeString,
   type SuperhumanConnection,
 } from "./superhuman-api";
 import { listInbox, searchInbox } from "./inbox";
-import { listAccounts, switchAccount, type Account } from "./accounts";
+import { listAccounts, listAccountsChrome, switchAccount, type Account } from "./accounts";
 import { replyToThread, replyAllToThread, forwardThread } from "./reply";
 import { archiveThread, deleteThread } from "./archive";
 import { markAsRead, markAsUnread } from "./read-status";
@@ -55,6 +57,7 @@ import {
   sendEmailDirect,
   getThreadMessages,
   listDraftsDirect,
+  extractTokenChrome,
   type TokenInfo,
 } from "./token-api";
 import type { ConnectionProvider } from "./connection-provider";
@@ -64,7 +67,7 @@ import { GmailDraftProvider } from "./providers/gmail-draft-provider";
 import { OutlookDraftProvider } from "./providers/outlook-draft-provider";
 import { SuperhumanDraftProvider } from "./providers/superhuman-draft-provider";
 
-const VERSION = "0.12.4";
+const VERSION = "0.13.0";
 const CDP_PORT = parseInt(process.env.CDP_PORT || "9400", 10);
 
 // ANSI colors
@@ -2505,30 +2508,63 @@ async function cmdDownload(options: CliOptions) {
 async function cmdAuth(options: CliOptions) {
   log("Connecting to Superhuman...");
   const conn = await checkConnection(options.port);
-  if (!conn) {
-    error("Cannot connect to Superhuman. Make sure it is running with:");
-    log(`  /Applications/Superhuman.app/Contents/MacOS/Superhuman --remote-debugging-port=${options.port}`);
+
+  if (conn) {
+    try {
+      const accounts = await listAccounts(conn);
+
+      if (accounts.length > 0) {
+        // Electron app path
+        log(`Found ${accounts.length} account(s) (Electron app)`);
+        for (const account of accounts) {
+          log(`Extracting token for ${account.email}...`);
+          await getToken(conn, account.email);
+        }
+        await saveTokensToDisk();
+        success(`Tokens saved to ${getTokensFilePath()}`);
+        log("");
+        info("You can now use superhuman-cli without Superhuman running.");
+        info("Tokens are valid for ~1 hour. Run 'superhuman auth' again to refresh.");
+        return;
+      }
+      // 0 accounts from Electron path — try Chrome extension
+      await disconnect(conn);
+    } catch {
+      await disconnect(conn);
+    }
+  }
+
+  // Chrome extension path
+  log("Trying Chrome extension path...");
+  const chromeConn = await connectToSuperhumanChrome(options.port);
+  if (!chromeConn) {
+    error("Cannot connect to Superhuman. Make sure it is running with CDP enabled.");
+    log(`  Chrome: launch with --remote-debugging-port=${options.port}`);
+    log(`  Electron: /Applications/Superhuman.app/Contents/MacOS/Superhuman --remote-debugging-port=${options.port}`);
     process.exit(1);
   }
 
   try {
-    const accounts = await listAccounts(conn);
-    log(`Found ${accounts.length} account(s)`);
+    const accounts = await listAccountsChrome(chromeConn);
+    log(`Found ${accounts.length} account(s) (Chrome extension)`);
 
-    // Extract tokens for all accounts
     for (const account of accounts) {
       log(`Extracting token for ${account.email}...`);
-      await getToken(conn, account.email);
+      try {
+        await extractTokenChrome(chromeConn, account.email);
+        success(`  ${account.email} OK`);
+      } catch (e) {
+        error(`  ${account.email} failed: ${(e as Error).message}`);
+      }
     }
 
-    // Save to disk
     await saveTokensToDisk();
     success(`Tokens saved to ${getTokensFilePath()}`);
     log("");
     info("You can now use superhuman-cli without Superhuman running.");
     info("Tokens are valid for ~1 hour. Run 'superhuman auth' again to refresh.");
   } finally {
-    await disconnect(conn);
+    await disconnectChrome(chromeConn);
   }
 }
 

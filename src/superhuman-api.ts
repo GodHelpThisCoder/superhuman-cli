@@ -18,7 +18,7 @@ export interface SuperhumanConnection {
 /**
  * Get CDP host from environment or default to localhost
  */
-function getCDPHost(): string {
+export function getCDPHost(): string {
   return process.env.CDP_HOST || process.env.HOST_IP || "localhost";
 }
 
@@ -142,6 +142,79 @@ export async function connectToSuperhuman(
  */
 export async function disconnect(conn: SuperhumanConnection): Promise<void> {
   await conn.client.close();
+}
+
+// ============================================================================
+// Chrome Extension Support
+// ============================================================================
+
+const SUPERHUMAN_EXTENSION_ID = "dcgcnpooblobhncpnddnhoendgbnglpn";
+
+export interface ChromeExtConnection {
+  swClient: CDP.Client;
+  mainClient: CDP.Client;
+}
+
+/**
+ * Find the Superhuman Chrome extension service worker target.
+ */
+export async function findChromeExtension(port: number): Promise<any | null> {
+  try {
+    const host = getCDPHost();
+    const targets = await CDP.List({ host, port });
+    return (
+      targets.find(
+        (t: any) =>
+          t.url.includes(SUPERHUMAN_EXTENSION_ID) &&
+          t.type === "service_worker"
+      ) ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Connect to Superhuman running as a Chrome extension.
+ * Requires both the service worker (for account data) and main page (for navigation).
+ */
+export async function connectToSuperhumanChrome(
+  port: number
+): Promise<ChromeExtConnection | null> {
+  try {
+    const host = getCDPHost();
+    const targets = await CDP.List({ host, port });
+
+    const sw = targets.find(
+      (t: any) =>
+        t.url.includes(SUPERHUMAN_EXTENSION_ID) &&
+        t.type === "service_worker"
+    );
+    const mainPage = targets.find(
+      (t: any) =>
+        t.url.includes("mail.superhuman.com") && t.type === "page"
+    );
+
+    if (!sw || !mainPage) return null;
+
+    const swClient = await CDP({ target: sw.id, host, port });
+    const mainClient = await CDP({ target: mainPage.id, host, port });
+    await mainClient.Page.enable();
+
+    return { swClient, mainClient };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Disconnect from Chrome extension CDP clients.
+ */
+export async function disconnectChrome(
+  conn: ChromeExtConnection
+): Promise<void> {
+  await conn.swClient.close();
+  await conn.mainClient.close();
 }
 
 /**

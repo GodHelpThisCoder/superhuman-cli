@@ -5,7 +5,7 @@
  * Bypasses Superhuman's DI container for multi-account support.
  */
 
-import type { SuperhumanConnection } from "./superhuman-api";
+import type { SuperhumanConnection, ChromeExtConnection } from "./superhuman-api";
 import { listAccounts, switchAccount } from "./accounts";
 import type { Contact } from "./contacts";
 import type { InboxThread } from "./inbox";
@@ -118,6 +118,204 @@ export async function extractToken(
 
 // In-memory token cache
 const tokenCache = new Map<string, TokenInfo>();
+
+// ============================================================================
+// Chrome Extension Token Extraction
+// ============================================================================
+
+interface CapturedToken {
+  url: string;
+  token: string;
+  email: string; // from x-superhuman-user-email header
+}
+
+/**
+ * Pick the Superhuman backend (Firebase) token from a list of captured JWTs.
+ * Prefers tokens from /~backend/ endpoints, then Firebase issuer, then first available.
+ */
+export function selectBestToken(
+  tokens: CapturedToken[],
+  email: string
+): string | null {
+  // Filter to tokens for the target account
+  const forAccount = tokens.filter((t) => t.email === email || !t.email);
+
+  // Prefer token used on /~backend/ endpoints
+  const backendToken = forAccount.find((t) => t.url.includes("/~backend/"));
+  if (backendToken) return backendToken.token;
+
+  // Fallback: find Firebase token by JWT issuer
+  for (const t of forAccount) {
+    try {
+      const payload = JSON.parse(
+        Buffer.from(t.token.split(".")[1], "base64url").toString()
+      );
+      if (payload.iss?.includes("securetoken.googleapis.com")) {
+        return t.token;
+      }
+    } catch {}
+  }
+
+  // Last resort: return first token with auth
+  return forAccount[0]?.token ?? null;
+}
+
+/**
+ * Extract tokens for an account via Chrome extension CDP interception.
+ *
+ * Intercepts network requests from the service worker to capture:
+ * 1. Superhuman backend token (Firebase JWT used for /~backend/ calls)
+ * 2. Provider access token (Google/Microsoft OAuth token)
+ */
+export async function extractTokenChrome(
+  conn: ChromeExtConnection,
+  email: string
+): Promise<TokenInfo> {
+  const { swClient, mainClient } = conn;
+
+  // 1. Read account metadata from service worker
+  const meta = await swClient.Runtime.evaluate({
+    expression: `(() => {
+      const bg = backgrounds[${JSON.stringify(email)}]?._accountBackground;
+      if (!bg) return null;
+      let userPrefix = null;
+      try {
+        const uid = bg.settings?._cache?.userId;
+        if (uid) {
+          const s = uid.replace("user_", "");
+          if (s.length >= 11) userPrefix = s.substring(7, 11);
+        }
+      } catch {}
+      return {
+        userId: bg.labels?._user?._id || null,
+        provider: bg.provider || "google",
+        userPrefix,
+      };
+    })()`,
+    returnByValue: true,
+  });
+
+  const metadata = meta.result.value as {
+    userId: string | null;
+    provider: string;
+    userPrefix: string | null;
+  } | null;
+
+  if (!metadata)
+    throw new Error(`Account not found in Chrome extension: ${email}`);
+
+  const isMicrosoft = metadata.provider === "microsoft";
+
+  // 2. Set up CDP Fetch interception on service worker to capture backend tokens
+  const captured: CapturedToken[] = [];
+  const { Fetch } = swClient;
+  await Fetch.enable({
+    patterns: [{ urlPattern: "*superhuman.com/~backend*" }],
+  });
+
+  const handler = async ({ requestId, request }: any) => {
+    const auth = request.headers["Authorization"] || "";
+    if (auth.startsWith("Bearer ")) {
+      captured.push({
+        url: request.url,
+        token: auth.slice(7),
+        email: request.headers["x-superhuman-user-email"] || "",
+      });
+    }
+    await Fetch.continueRequest({ requestId });
+  };
+  Fetch.requestPaused(handler);
+
+  // 3. Navigate to account and reload to trigger API calls
+  await mainClient.Page.navigate({
+    url: `https://mail.superhuman.com/${email}`,
+  });
+  await new Promise((r) => setTimeout(r, 3000));
+  await mainClient.Page.reload();
+
+  // 4. Wait for backend tokens (up to 20 seconds)
+  const deadline = Date.now() + 20_000;
+  while (captured.length === 0 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  await Fetch.disable();
+
+  // 5. Select best backend token
+  const bestToken = selectBestToken(captured, email);
+
+  // 6. Capture OAuth access token (provider token) via a second interception pass
+  let accessToken = "";
+  let accessTokenExpires = Date.now() + 3600_000;
+  const providerCapture: CapturedToken[] = [];
+
+  await Fetch.enable({
+    patterns: [
+      {
+        urlPattern: isMicrosoft
+          ? "*graph.microsoft.com*"
+          : "*googleapis.com*",
+      },
+    ],
+  });
+  const providerHandler = async ({ requestId, request }: any) => {
+    const auth = request.headers["Authorization"] || "";
+    if (auth.startsWith("Bearer ")) {
+      providerCapture.push({
+        url: request.url,
+        token: auth.slice(7),
+        email: "",
+      });
+    }
+    await Fetch.continueRequest({ requestId });
+  };
+  Fetch.requestPaused(providerHandler);
+
+  // Trigger a lightweight API call via reload
+  await mainClient.Page.reload();
+  const providerDeadline = Date.now() + 15_000;
+  while (providerCapture.length === 0 && Date.now() < providerDeadline) {
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  await Fetch.disable();
+
+  if (providerCapture.length > 0) {
+    accessToken = providerCapture[0].token;
+    try {
+      const payload = JSON.parse(
+        Buffer.from(accessToken.split(".")[1], "base64url").toString()
+      );
+      if (payload.exp) accessTokenExpires = payload.exp * 1000;
+    } catch {}
+  }
+
+  // 7. Build TokenInfo
+  const tokenInfo: TokenInfo = {
+    accessToken,
+    email,
+    expires: accessTokenExpires,
+    isMicrosoft,
+    userId: metadata.userId ?? undefined,
+    idToken: bestToken ?? undefined,
+    idTokenExpires: bestToken
+      ? (() => {
+          try {
+            const p = JSON.parse(
+              Buffer.from(bestToken.split(".")[1], "base64url").toString()
+            );
+            return p.exp ? p.exp * 1000 : undefined;
+          } catch {
+            return undefined;
+          }
+        })()
+      : undefined,
+    userPrefix: metadata.userPrefix ?? undefined,
+  };
+
+  // Cache it
+  tokenCache.set(email, tokenInfo);
+  return tokenInfo;
+}
 
 /**
  * Get OAuth token for an account, using cache if available.

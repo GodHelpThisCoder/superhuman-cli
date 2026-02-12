@@ -4,7 +4,7 @@
  * Functions for listing and managing linked accounts in Superhuman.
  */
 
-import type { SuperhumanConnection } from "./superhuman-api";
+import type { SuperhumanConnection, ChromeExtConnection } from "./superhuman-api";
 
 export interface Account {
   email: string;
@@ -163,4 +163,44 @@ export async function switchAccount(
   } catch {
     return { success: false, email: "" };
   }
+}
+
+// ============================================================================
+// Chrome Extension Account Discovery
+// ============================================================================
+
+/**
+ * Get the current account email from the Chrome extension main page URL.
+ * URL format: mail.superhuman.com/{email}/...
+ */
+export async function getCurrentAccountChrome(
+  conn: ChromeExtConnection
+): Promise<string | null> {
+  const result = await conn.mainClient.Runtime.evaluate({
+    expression: `location.pathname.slice(1).split('/')[0]`,
+    returnByValue: true,
+  });
+  const email = result.result.value as string;
+  return email?.includes("@") ? email : null;
+}
+
+/**
+ * List all accounts available in the Chrome extension's service worker.
+ * Reads from the `backgrounds` object which maps email -> account background.
+ */
+export async function listAccountsChrome(
+  conn: ChromeExtConnection
+): Promise<Account[]> {
+  const currentEmail = await getCurrentAccountChrome(conn);
+
+  const result = await conn.swClient.Runtime.evaluate({
+    expression: `Object.keys(backgrounds)`,
+    returnByValue: true,
+  });
+
+  const emails = (result.result.value as string[]) || [];
+  return emails.map((email) => ({
+    email,
+    isCurrent: email === currentEmail,
+  }));
 }
