@@ -135,10 +135,13 @@ export async function refreshAccessToken(
     });
 
     if (!response.ok) {
-      const errorBody = await response.text().catch(() => "<unreadable>");
+      const { error, error_description } = await response
+        .json()
+        .catch(() => ({}) as Record<string, unknown>);
       console.error(
         `[token-refresh] Refresh failed for ${token.email}: ` +
-          `HTTP ${response.status} ${response.statusText} — ${errorBody}`
+          `HTTP ${response.status} ${response.statusText}` +
+          (error ? ` — ${error}: ${error_description || ""}` : "")
       );
       return null;
     }
