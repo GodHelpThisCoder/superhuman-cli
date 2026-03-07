@@ -47,6 +47,12 @@ export interface SuperhumanTokenInfo {
   expires?: number;
 }
 
+/** Minimal CDP connection interface used by token-store to call extractToken. */
+export interface CDPConnection {
+  Runtime: { evaluate: (params: any) => Promise<any> };
+  [key: string]: any;
+}
+
 /** Captured JWT from CDP Fetch interception */
 export interface CapturedToken {
   url: string;

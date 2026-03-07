@@ -8,7 +8,7 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypto";
 import { hostname, userInfo } from "os";
 import { chmodSync } from "node:fs";
-import type { TokenInfo, PersistedTokens } from "./types";
+import type { TokenInfo, PersistedTokens, CDPConnection } from "./types";
 
 // ---------------------------------------------------------------------------
 // AES-256-GCM encryption — key is derived from machine identity
@@ -95,11 +95,11 @@ function getTokensFile(): string {
  * @returns TokenInfo from cache or freshly extracted
  */
 export async function getToken(
-  conn: any, // SuperhumanConnection — kept as `any` to avoid circular import
+  conn: CDPConnection,
   email: string,
 ): Promise<TokenInfo> {
-  // Lazy-import extractToken to avoid circular dependency
-  const { extractToken } = await import("../token-api");
+  // Lazy-import to avoid circular dependency (token-extract imports tokenCache from this module)
+  const { extractToken } = await import("./token-extract");
 
   // Check cache first
   const cached = tokenCache.get(email);
