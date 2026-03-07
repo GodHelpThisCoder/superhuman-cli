@@ -540,7 +540,8 @@ export async function getThread(
 } | null> {
   if (token.isMicrosoft) {
     // MS Graph: Get conversation messages
-    const path = `/me/messages?$filter=conversationId eq '${threadId}'&$select=id,hasAttachments&$expand=attachments`;
+    const safeThreadId = threadId.replace(/'/g, "''");
+    const path = `/me/messages?$filter=conversationId eq '${safeThreadId}'&$select=id,hasAttachments&$expand=attachments`;
     const result = await msgraphFetch(token.accessToken, path);
 
     if (!result || !result.value) {
@@ -652,7 +653,8 @@ export async function getConversationMessageIds(
     throw new Error("getConversationMessageIds is MS Graph-only");
   }
 
-  const path = `/me/messages?$filter=conversationId eq '${conversationId}'&$select=id`;
+  const safeConversationId = conversationId.replace(/'/g, "''");
+  const path = `/me/messages?$filter=conversationId eq '${safeConversationId}'&$select=id`;
   const result = await msgraphFetch(token.accessToken, path);
 
   if (!result || !result.value) {
@@ -1439,7 +1441,8 @@ export async function createReplyDraft(
   if (token.isMicrosoft) {
     // MS Graph: Use createReply/createReplyAll endpoint
     // First, get the last message ID in the conversation
-    const messagesPath = `/me/messages?$filter=conversationId eq '${threadId}'&$select=id&$orderby=receivedDateTime desc&$top=1`;
+    const safeReplyThreadId = threadId.replace(/'/g, "''");
+    const messagesPath = `/me/messages?$filter=conversationId eq '${safeReplyThreadId}'&$select=id&$orderby=receivedDateTime desc&$top=1`;
     const messagesResult = await msgraphFetch(token.accessToken, messagesPath);
 
     if (!messagesResult || !messagesResult.value || messagesResult.value.length === 0) {
