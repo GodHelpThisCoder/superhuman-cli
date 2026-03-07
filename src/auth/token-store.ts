@@ -12,6 +12,13 @@ import type { TokenInfo, PersistedTokens, CDPConnection } from "./types";
 
 // ---------------------------------------------------------------------------
 // AES-256-GCM encryption — key is derived from machine identity
+//
+// Design note: The key is derived from hostname + username, both guessable.
+// This is defense-in-depth against accidental file exposure (backups, sharing,
+// dotfile repos) — not protection against same-user processes. File permissions
+// (0o600) are the primary access control. The deterministic derivation ensures
+// the same user on the same machine can always decrypt without storing a
+// separate key.
 // ---------------------------------------------------------------------------
 
 const SALT = "superhuman-cli-v1";
