@@ -42,8 +42,8 @@ export async function authFetch(
     },
   });
 
-  // Return null on unauthorized so the caller can refresh the token
-  if (response.status === 401) {
+  // Return null on auth failure so the caller can refresh the token
+  if (response.status === 401 || response.status === 403) {
     return null;
   }
 
