@@ -316,63 +316,6 @@ export async function extractTokenChrome(
 }
 
 // ============================================================================
-// Cache-aware Token Getter
-// ============================================================================
-
-/**
- * Get OAuth token for an account, using cache if available.
- *
- * Proactively refreshes tokens that are expired or expiring soon
- * (within 5 minutes) to avoid API failures.
- *
- * @param conn - Superhuman connection
- * @param email - Account email to get token for
- * @returns TokenInfo from cache or freshly extracted
- */
-export async function getToken(
-  conn: SuperhumanConnection,
-  email: string
-): Promise<TokenInfo> {
-  // Check cache first
-  const cached = tokenCache.get(email);
-
-  if (cached) {
-    // Check if token is expired or expiring soon (within 5 minutes)
-    const bufferMs = 5 * 60 * 1000; // 5 minutes
-    const isExpiredOrExpiring = cached.expires < Date.now() + bufferMs;
-
-    if (!isExpiredOrExpiring) {
-      return cached;
-    }
-    // Token expired or expiring soon, fall through to extract fresh
-  }
-
-  // Extract fresh token
-  const token = await extractToken(conn, email);
-
-  // Cache it
-  tokenCache.set(email, token);
-
-  return token;
-}
-
-/**
- * Clear the token cache.
- * Useful for testing or forcing token refresh.
- */
-export function clearTokenCache(): void {
-  tokenCache.clear();
-}
-
-/**
- * Test helper: Set token in cache directly.
- * Only use in tests to simulate expiry scenarios.
- */
-export function setTokenCacheForTest(email: string, token: TokenInfo): void {
-  tokenCache.set(email, token);
-}
-
-// ============================================================================
 // Superhuman Backend Token Extraction
 // ============================================================================
 
