@@ -119,6 +119,10 @@ function formatMessageForAIProxy(m: FullThreadMessage): Record<string, unknown> 
  * The response is parsed from an SSE stream where each `data:` line contains
  * a JSON chunk with `choices[0].delta.content`.
  *
+ * Note: Uses raw fetch() instead of superhumanFetch/authFetch because SSE
+ * streaming requires direct body handling. Throws on 401/403 rather than
+ * returning null — callers should use try-catch for auth errors.
+ *
  * @param superhumanToken - Superhuman backend token (idToken JWT)
  * @param oauthToken      - OAuth token for the account
  * @param threadId        - Gmail thread ID for reply mode, or undefined for compose
@@ -247,6 +251,10 @@ export async function askAI(
  *
  * This is the full Ask AI feature -- supports search, summarization, drafting, etc.
  * The AI decides what to do based on the query and available skills.
+ *
+ * Note: Uses raw fetch() instead of superhumanFetch/authFetch because SSE
+ * streaming requires direct body handling. Throws on 401/403 rather than
+ * returning null — callers should use try-catch for auth errors.
  *
  * @param superhumanToken - Superhuman backend token (idToken JWT)
  * @param oauthToken      - OAuth token for the account
