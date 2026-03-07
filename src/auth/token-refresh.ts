@@ -1,16 +1,12 @@
 /**
  * OAuth token refresh with client_id extraction and concurrent-refresh protection.
  *
- * The original refreshAccessToken in token-api.ts is broken because it sends
- * no `client_id` in the refresh request body.  Google (and Microsoft) require
- * the client_id for public-client OAuth flows; without it the refresh silently
- * fails with a 401.
+ * 1. Extracts `client_id` from the JWT access-token (`aud` or `azp` claim).
+ * 2. Includes it in the token-refresh POST body (required for public-client OAuth).
+ * 3. Provides a per-email mutex (`refreshWithLock`) so concurrent callers
+ *    don't fire duplicate refresh requests.
  *
- * This module:
- *  1. Extracts `client_id` from the JWT access-token (`aud` or `azp` claim).
- *  2. Includes it in the token-refresh POST body.
- *  3. Provides a per-email mutex (`refreshWithLock`) so concurrent callers
- *     don't fire duplicate refresh requests.
+ * // Previously lived in token-api.ts
  */
 
 import type { TokenInfo } from "./types";
@@ -87,9 +83,9 @@ export function extractClientId(accessToken: string): string | null {
  * Refresh an OAuth access token using the refresh token.
  *
  * Calls the appropriate OAuth endpoint (Google or Microsoft) to exchange
- * the refresh token for a new access token.  Unlike the original
- * implementation in token-api.ts this version includes the required
- * `client_id` parameter extracted from the JWT.
+ * the refresh token for a new access token. Includes the `client_id`
+ * parameter extracted from the JWT, which is required for public-client
+ * OAuth flows.
  *
  * @param token - Current TokenInfo (must contain a refreshToken)
  * @returns Updated TokenInfo with a fresh access token, or null on failure
