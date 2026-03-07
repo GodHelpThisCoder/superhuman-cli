@@ -41,10 +41,6 @@ export type {
 // ---- Token store (cache + disk persistence) --------------------------------
 
 export {
-  tokenCache,
-  getTokenFromCache,
-  setTokenInCache,
-  deleteTokenFromCache,
   getToken,
   clearTokenCache,
   setTokenCacheForTest,
