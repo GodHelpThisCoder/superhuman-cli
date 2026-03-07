@@ -143,8 +143,8 @@ async function readThreadMSGraph(
       if (msg) {
         messages = [msg];
       }
-    } catch {
-      // Not a message ID either
+    } catch (error) {
+      console.error(`[MS Graph message ID fallback]: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

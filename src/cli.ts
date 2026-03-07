@@ -1325,8 +1325,8 @@ async function cmdSendDraft(options: CliOptions) {
     try {
       const threadId = options.sendDraftThreadId || draftId;
       await deleteDraftWithUserInfo(userInfo, threadId, draftId);
-    } catch {
-      // Non-fatal: draft was sent successfully, cleanup failure is just cosmetic
+    } catch (error) {
+      console.error(`[draft cleanup after send]: ${error instanceof Error ? error.message : String(error)}`);
     }
   } else {
     error(`Failed to send draft: ${result.error}`);
@@ -2552,7 +2552,8 @@ async function cmdAuth(options: CliOptions) {
       }
       // 0 accounts from Electron path — try Chrome extension
       await disconnect(conn);
-    } catch {
+    } catch (error) {
+      console.error(`[auth token extraction]: ${error instanceof Error ? error.message : String(error)}`);
       await disconnect(conn);
     }
   }
