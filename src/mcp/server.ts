@@ -37,9 +37,9 @@ function createMcpServer(): McpServer {
 
 WORKFLOW: Use superhuman_accounts first to see available accounts. Use superhuman_inbox or superhuman_search to find emails — these return thread IDs needed by all action tools.
 
-READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_calendar_list, superhuman_calendar_free_busy, superhuman_ask_ai.
+READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_calendar_list, superhuman_calendar_free_busy.
 
-WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_add_label, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze.
+WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_add_label, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai.
 
 DESTRUCTIVE TOOLS (irreversible): superhuman_archive, superhuman_delete, superhuman_calendar_delete.
 
@@ -400,7 +400,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Ask Superhuman AI to search emails, answer questions, or compose drafts. Supports natural language queries like 'find emails about the project deadline' or 'what did John say about the budget?'. Optionally provide a thread ID to ask about a specific email thread.",
       inputSchema: AskAISchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     askAIHandler
   );
