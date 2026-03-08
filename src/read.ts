@@ -30,8 +30,8 @@ function parseRecipient(str: string): { email: string; name: string } {
   const match = trimmed.match(/^(.+?)\s*<([^>]+)>$/);
   if (match) {
     return {
-      name: match[1].trim().replace(/^["']|["']$/g, ""),
-      email: match[2],
+      name: match[1]!.trim().replace(/^["']|["']$/g, ""),
+      email: match[2]!,
     };
   }
   return { email: trimmed, name: "" };

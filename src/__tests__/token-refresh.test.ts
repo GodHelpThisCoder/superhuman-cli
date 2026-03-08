@@ -128,12 +128,12 @@ describe("getCachedToken auto-refresh", () => {
   test("refreshes expiring token automatically", async () => {
     const originalFetch = globalThis.fetch;
 
-    globalThis.fetch = async () => {
+    globalThis.fetch = Object.assign(async () => {
       return new Response(JSON.stringify({
         access_token: "refreshed-access-token",
         expires_in: 3600,
       }), { status: 200 });
-    };
+    }, { preconnect: () => {} }) as typeof fetch;
 
     try {
       const token: TokenInfo = {
@@ -173,12 +173,12 @@ describe("getCachedToken auto-refresh", () => {
   test("persists refreshed token to disk", async () => {
     const originalFetch = globalThis.fetch;
 
-    globalThis.fetch = async () => {
+    globalThis.fetch = Object.assign(async () => {
       return new Response(JSON.stringify({
         access_token: "persisted-access-token",
         expires_in: 3600,
       }), { status: 200 });
-    };
+    }, { preconnect: () => {} }) as typeof fetch;
 
     try {
       const token: TokenInfo = {
@@ -226,7 +226,7 @@ describe("refreshAccessToken", () => {
     let capturedUrl = "";
     let capturedBody = "";
 
-    globalThis.fetch = async (url: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = Object.assign(async (url: string | URL | Request, init?: RequestInit) => {
       capturedUrl = url.toString();
       capturedBody = init?.body?.toString() || "";
       return new Response(JSON.stringify({
@@ -234,7 +234,7 @@ describe("refreshAccessToken", () => {
         expires_in: 3600,
         refresh_token: "new-refresh-token",
       }), { status: 200 });
-    };
+    }, { preconnect: () => {} }) as typeof fetch;
 
     try {
       const token: TokenInfo = {
@@ -261,13 +261,13 @@ describe("refreshAccessToken", () => {
     const originalFetch = globalThis.fetch;
     let capturedUrl = "";
 
-    globalThis.fetch = async (url: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = Object.assign(async (url: string | URL | Request, init?: RequestInit) => {
       capturedUrl = url.toString();
       return new Response(JSON.stringify({
         access_token: "ms-new-access",
         expires_in: 3600,
       }), { status: 200 });
-    };
+    }, { preconnect: () => {} }) as typeof fetch;
 
     try {
       const token: TokenInfo = {
@@ -290,9 +290,9 @@ describe("refreshAccessToken", () => {
   test("returns null on HTTP error", async () => {
     const originalFetch = globalThis.fetch;
 
-    globalThis.fetch = async () => {
+    globalThis.fetch = Object.assign(async () => {
       return new Response("Unauthorized", { status: 401 });
-    };
+    }, { preconnect: () => {} }) as typeof fetch;
 
     try {
       const token: TokenInfo = {

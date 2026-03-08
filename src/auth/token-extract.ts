@@ -136,8 +136,8 @@ export function selectBestToken(
       if (payload.iss?.includes("securetoken.googleapis.com")) {
         return t.token;
       }
-    } catch (error) {
-      console.error("Failed to parse JWT payload for token selection:", error);
+    } catch {
+      // Token is not a valid JWT — skip silently
     }
   }
 

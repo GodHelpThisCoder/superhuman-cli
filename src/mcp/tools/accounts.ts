@@ -9,7 +9,8 @@ import {
   type SuperhumanConnection,
 } from "../../superhuman-api";
 import { listAccounts, switchAccount } from "../../accounts";
-import { successResult, errorResult, actionableError, CDP_PORT, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, guardMutation, auditMutation, CDP_PORT, type ToolResult } from "./shared";
+import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -19,6 +20,7 @@ export const AccountsSchema = z.object({});
 
 export const SwitchAccountSchema = z.object({
   account: z.string().describe("Account to switch to: either an email address or 1-based index number"),
+  dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 });
 
 // ---------------------------------------------------------------------------
@@ -57,6 +59,22 @@ export async function accountsHandler(_args: z.infer<typeof AccountsSchema>): Pr
 }
 
 export async function switchAccountHandler(args: z.infer<typeof SwitchAccountSchema>): Promise<ToolResult> {
+  if (args.dryRun) {
+    return successResult(`[DRY RUN] Would switch to account ${args.account}`);
+  }
+
+  const killed = guardMutation("superhuman_switch_account", args as Record<string, unknown>);
+  if (killed) return killed;
+
+  // Two-phase: stage unless this is a confirmed execution
+  if (!isConfirmedExecution()) {
+    const preview = `Would switch to account ${args.account}`;
+    const token = stageOperation("superhuman_switch_account", args as Record<string, unknown>, preview, args.account);
+    auditMutation("superhuman_switch_account", args as Record<string, unknown>, args.account, successResult(preview), { action: "staged" });
+    return successResult(buildStagedResponse(preview, token));
+  }
+
+  const account = args.account;
   let conn: SuperhumanConnection | null = null;
 
   try {
@@ -68,7 +86,9 @@ export async function switchAccountHandler(args: z.infer<typeof SwitchAccountSch
     const accounts = await listAccounts(conn);
 
     if (accounts.length === 0) {
-      return errorResult("No linked accounts found");
+      const toolResult = errorResult("No linked accounts found");
+      auditMutation("superhuman_switch_account", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     }
 
     let targetEmail: string | undefined;
@@ -77,26 +97,36 @@ export async function switchAccountHandler(args: z.infer<typeof SwitchAccountSch
     if (indexMatch) {
       const index = parseInt(indexMatch[1]!, 10);
       if (index < 1 || index > accounts.length) {
-        return errorResult(`Account index ${index} not found. Valid range: 1-${accounts.length}`);
+        const toolResult = errorResult(`Account index ${index} not found. Valid range: 1-${accounts.length}`);
+        auditMutation("superhuman_switch_account", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
       }
       targetEmail = accounts[index - 1]!.email;
     } else {
-      const account = accounts.find((a) => a.email === args.account);
-      if (!account) {
-        return errorResult(`Account "${args.account}" not found`);
+      const acct = accounts.find((a) => a.email === args.account);
+      if (!acct) {
+        const toolResult = errorResult(`Account "${args.account}" not found`);
+        auditMutation("superhuman_switch_account", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
       }
-      targetEmail = account.email;
+      targetEmail = acct.email;
     }
 
     const result = await switchAccount(conn, targetEmail);
 
     if (result.success) {
-      return successResult(`Switched to ${result.email}`);
+      const toolResult = successResult(`Switched to ${result.email}`);
+      auditMutation("superhuman_switch_account", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     } else {
-      return errorResult(`Failed to switch to ${targetEmail}. Current account: ${result.email}`);
+      const toolResult = errorResult(`Failed to switch to ${targetEmail}. Current account: ${result.email}`);
+      auditMutation("superhuman_switch_account", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     }
   } catch (error) {
-    return actionableError("Failed to switch account", error);
+    const toolResult = actionableError("Failed to switch account", error);
+    auditMutation("superhuman_switch_account", args as Record<string, unknown>, "unknown", toolResult);
+    return toolResult;
   } finally {
     if (conn) await disconnect(conn);
   }

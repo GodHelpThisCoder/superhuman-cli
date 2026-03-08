@@ -1,9 +1,10 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // Test with a temp directory to avoid polluting user's config
-const TEST_CONFIG_DIR = "/tmp/superhuman-cli-test";
+const TEST_CONFIG_DIR = join(tmpdir(), "superhuman-cli-test");
 const TEST_TOKENS_FILE = join(TEST_CONFIG_DIR, "tokens.json");
 
 // We'll need to set this env var before importing the module
@@ -44,7 +45,7 @@ describe("token persistence", () => {
   });
 
   describe("saveTokensToDisk", () => {
-    test("saves tokens to JSON file", async () => {
+    test("saves tokens to encrypted file and round-trips correctly", async () => {
       // Set up test tokens in cache
       const token1: TokenInfo = {
         accessToken: "test-token-1",
@@ -63,23 +64,18 @@ describe("token persistence", () => {
       setTokenCacheForTest(token1.email, token1);
       setTokenCacheForTest(token2.email, token2);
 
-      // Save to disk
+      // Save to disk (encrypted)
       await saveTokensToDisk();
 
-      // Verify file exists and has correct content
+      // Verify file exists
       const file = Bun.file(TEST_TOKENS_FILE);
       expect(await file.exists()).toBe(true);
 
-      const data = (await file.json()) as PersistedTokens;
-      expect(data.version).toBe(1);
-      expect(data.accounts["test1@example.com"]).toBeDefined();
-      expect(data.accounts["test1@example.com"].type).toBe("google");
-      expect(data.accounts["test1@example.com"].accessToken).toBe(
-        "test-token-1"
-      );
-      expect(data.accounts["test2@outlook.com"]).toBeDefined();
-      expect(data.accounts["test2@outlook.com"].type).toBe("microsoft");
-      expect(data.lastUpdated).toBeGreaterThan(0);
+      // File is AES-256-GCM encrypted, so verify via round-trip
+      clearTokenCache();
+      const loaded = await loadTokensFromDisk();
+      expect(loaded).toBe(true);
+      expect(hasValidCachedTokens()).toBe(true);
     });
 
     test("creates config directory if it doesn't exist", async () => {

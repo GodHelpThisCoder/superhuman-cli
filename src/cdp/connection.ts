@@ -38,17 +38,39 @@ export function getCDPHost(): string {
 }
 
 // ---------------------------------------------------------------------------
+// Platform-specific paths
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the platform-specific path to the Superhuman executable.
+ */
+export function getSuperhumanPath(): string {
+  switch (process.platform) {
+    case "win32": {
+      const localAppData =
+        process.env.LOCALAPPDATA ||
+        `${process.env.USERPROFILE}\\AppData\\Local`;
+      return `${localAppData}\\Programs\\Superhuman\\Superhuman.exe`;
+    }
+    case "darwin":
+      return "/Applications/Superhuman.app/Contents/MacOS/Superhuman";
+    default:
+      return "superhuman";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Electron app connection
 // ---------------------------------------------------------------------------
 
 /**
  * Check if Superhuman is running with CDP enabled.
  */
-export async function isSuperhmanRunning(port = 9333): Promise<boolean> {
+export async function isSuperhumanRunning(port = 9333): Promise<boolean> {
   try {
     const host = getCDPHost();
     const targets = await CDP.List({ host, port });
-    return targets.some(t => t.url.includes("mail.superhuman.com"));
+    return targets.some((t: any) => t.url.includes("mail.superhuman.com"));
   } catch (error) {
     console.error(`[CDP Superhuman check]: ${error instanceof Error ? error.message : String(error)}`);
     return false;
@@ -60,7 +82,7 @@ export async function isSuperhmanRunning(port = 9333): Promise<boolean> {
  * Skips launch when CDP_HOST is set (remote/container environment).
  */
 export async function launchSuperhuman(port = 9333): Promise<boolean> {
-  if (await isSuperhmanRunning(port)) {
+  if (await isSuperhumanRunning(port)) {
     return true;
   }
 
@@ -70,9 +92,9 @@ export async function launchSuperhuman(port = 9333): Promise<boolean> {
     return false;
   }
 
-  const appPath = "/Applications/Superhuman.app/Contents/MacOS/Superhuman";
+  const appPath = getSuperhumanPath();
 
-  console.log("Launching Superhuman with remote debugging...");
+  console.error("Launching Superhuman with remote debugging...");
   try {
     Bun.spawn([appPath, `--remote-debugging-port=${port}`], {
       stdout: "ignore",
@@ -81,8 +103,8 @@ export async function launchSuperhuman(port = 9333): Promise<boolean> {
 
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 1000));
-      if (await isSuperhmanRunning(port)) {
-        console.log("Superhuman is ready");
+      if (await isSuperhumanRunning(port)) {
+        console.error("Superhuman is ready");
         await new Promise(r => setTimeout(r, 2000));
         return true;
       }
@@ -99,7 +121,7 @@ export async function launchSuperhuman(port = 9333): Promise<boolean> {
  * Ensure Superhuman is running, launching it if necessary.
  */
 export async function ensureSuperhuman(port = 9333): Promise<boolean> {
-  if (await isSuperhmanRunning(port)) {
+  if (await isSuperhumanRunning(port)) {
     return true;
   }
   return launchSuperhuman(port);
@@ -114,7 +136,7 @@ export async function connectToSuperhuman(
 ): Promise<SuperhumanConnection | null> {
   const host = getCDPHost();
 
-  if (autoLaunch && !(await isSuperhmanRunning(port))) {
+  if (autoLaunch && !(await isSuperhumanRunning(port))) {
     const launched = await launchSuperhuman(port);
     if (!launched) {
       return null;
@@ -124,7 +146,7 @@ export async function connectToSuperhuman(
   const targets = await CDP.List({ host, port });
 
   const mainPage = targets.find(
-    (t) =>
+    (t: any) =>
       t.url.includes("mail.superhuman.com") &&
       !t.url.includes("background") &&
       !t.url.includes("serviceworker") &&

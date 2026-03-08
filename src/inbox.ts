@@ -118,7 +118,7 @@ export async function searchInbox(
         messages.sort((a, b) =>
           new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime()
         );
-        const latest = messages[0];
+        const latest = messages[0]!;
 
         threads.push({
           id: convId,

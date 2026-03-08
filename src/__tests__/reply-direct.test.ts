@@ -39,16 +39,16 @@ describe("reply.ts with ConnectionProvider", () => {
   // Helper: mock multiple sequential fetch calls
   function mockFetchSequence(responses: Array<{ ok: boolean; data: unknown }>) {
     let callIndex = 0;
-    globalThis.fetch = mock((() => {
+    globalThis.fetch = Object.assign(mock(() => {
       const resp = responses[callIndex] || responses[responses.length - 1];
       callIndex++;
       return Promise.resolve({
-        ok: resp.ok,
-        status: resp.ok ? 200 : 500,
-        json: () => Promise.resolve(resp.data),
-        text: () => Promise.resolve(JSON.stringify(resp.data)),
+        ok: resp!.ok,
+        status: resp!.ok ? 200 : 500,
+        json: () => Promise.resolve(resp!.data),
+        text: () => Promise.resolve(JSON.stringify(resp!.data)),
       } as Response);
-    }) as typeof fetch) as unknown as typeof fetch;
+    }), { preconnect: () => {} }) as typeof fetch;
   }
 
   test("replyToThread accepts ConnectionProvider and sends via API", async () => {

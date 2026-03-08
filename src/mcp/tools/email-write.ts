@@ -1,13 +1,83 @@
 /**
  * MCP tool handlers for composing emails: draft, send, reply, reply-all, forward.
+ * Supports optional file attachments via a two-step flow (create draft → add attachments).
  */
 
 import { z } from "zod";
 import { textToHtml } from "../../superhuman-api";
 import { replyToThread, replyAllToThread, forwardThread } from "../../reply";
-import { sendEmailViaProvider, createDraftViaProvider } from "../../send-api";
+import {
+  sendEmailViaProvider,
+  createDraftViaProvider,
+  sendDraftByIdViaProvider,
+} from "../../send-api";
+import { addAttachmentToDraft } from "../../token-api";
 import type { ConnectionProvider } from "../../connection-provider";
-import { successResult, errorResult, actionableError, getMcpProvider, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, type ToolResult } from "./shared";
+import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
+
+// ---------------------------------------------------------------------------
+// Attachment helpers
+// ---------------------------------------------------------------------------
+
+const AttachmentInput = z.object({
+  filename: z.string().describe("Filename of the attachment (e.g. 'report.pdf')"),
+  content: z.string().describe("Base64-encoded file content"),
+  mimeType: z.string().optional().describe("MIME type (e.g. 'application/pdf'). Auto-detected from extension if omitted."),
+});
+
+type AttachmentArg = z.infer<typeof AttachmentInput>;
+
+const MIME_MAP: Record<string, string> = {
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  svg: "image/svg+xml",
+  webp: "image/webp",
+  txt: "text/plain",
+  csv: "text/csv",
+  html: "text/html",
+  json: "application/json",
+  xml: "application/xml",
+  zip: "application/zip",
+  gz: "application/gzip",
+  tar: "application/x-tar",
+  mp3: "audio/mpeg",
+  mp4: "video/mp4",
+  wav: "audio/wav",
+};
+
+function guessMimeType(filename: string): string {
+  const ext = filename.split(".").pop()?.toLowerCase() || "";
+  return MIME_MAP[ext] || "application/octet-stream";
+}
+
+/**
+ * Add attachments to a draft. Returns an error message on failure, or null on success.
+ */
+async function addAttachments(
+  provider: ConnectionProvider,
+  draftId: string,
+  attachments: AttachmentArg[],
+): Promise<string | null> {
+  const token = await provider.getToken();
+  for (const att of attachments) {
+    const mimeType = att.mimeType || guessMimeType(att.filename);
+    const ok = await addAttachmentToDraft(token, draftId, att.filename, mimeType, att.content);
+    if (!ok) {
+      return `Failed to add attachment: ${att.filename}`;
+    }
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -19,6 +89,8 @@ export const EmailSchema = z.object({
   body: z.string().describe("Email body content (plain text or HTML)"),
   cc: z.string().optional().describe("CC recipient email address(es). Comma-separated for multiple (optional)"),
   bcc: z.string().optional().describe("BCC recipient email address(es). Comma-separated for multiple (optional)"),
+  attachments: z.array(AttachmentInput).optional().describe("File attachments. Each has filename, base64 content, and optional mimeType."),
+  dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 });
 
 /** Split a comma-separated email string into an array of trimmed addresses. */
@@ -40,12 +112,16 @@ export const ReplySchema = z.object({
   threadId: z.string().describe("Thread ID to reply to"),
   body: z.string().describe("Reply message body"),
   send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
+  attachments: z.array(AttachmentInput).optional().describe("File attachments. Each has filename, base64 content, and optional mimeType."),
+  dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 });
 
 export const ReplyAllSchema = z.object({
   threadId: z.string().describe("Thread ID to reply-all to"),
   body: z.string().describe("Reply message body"),
   send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
+  attachments: z.array(AttachmentInput).optional().describe("File attachments. Each has filename, base64 content, and optional mimeType."),
+  dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 });
 
 export const ForwardSchema = z.object({
@@ -53,6 +129,8 @@ export const ForwardSchema = z.object({
   toEmail: z.string().describe("Email address to forward to"),
   body: z.string().describe("Message body to include before the forwarded content"),
   send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
+  attachments: z.array(AttachmentInput).optional().describe("File attachments. Each has filename, base64 content, and optional mimeType."),
+  dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 });
 
 // ---------------------------------------------------------------------------
@@ -60,9 +138,17 @@ export const ForwardSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<ToolResult> {
+  if (args.dryRun) {
+    return successResult(`[DRY RUN] Would create draft to ${args.to} with subject "${args.subject}"`);
+  }
+
+  const killed = guardMutation("superhuman_draft", args as Record<string, unknown>);
+  if (killed) return killed;
+
   try {
     const provider = await getMcpProvider();
     try {
+      const account = await provider.getCurrentEmail();
       const htmlBody = textToHtml(args.body);
       const result = await createDraftViaProvider(provider, {
         to: splitEmails(args.to),
@@ -72,24 +158,94 @@ export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<T
         bcc: splitEmailsOpt(args.bcc),
       });
 
-      if (result.success) {
-        return successResult(`Draft created successfully${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
-      } else {
-        return errorResult(`Failed to create draft: ${result.error}`);
+      if (!result.success || !result.draftId) {
+        const toolResult = errorResult(`Failed to create draft: ${result.error || "no draft ID returned"}`);
+        auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
       }
+
+      // Add attachments if provided
+      if (args.attachments && args.attachments.length > 0) {
+        const attError = await addAttachments(provider, result.draftId, args.attachments);
+        if (attError) {
+          const toolResult = errorResult(`Draft created (${result.draftId}) but ${attError}`);
+          auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult);
+          return toolResult;
+        }
+      }
+
+      const attSuffix = args.attachments?.length ? `\nAttachments: ${args.attachments.length}` : "";
+      const toolResult = successResult(`Draft created successfully\nDraft ID: ${result.draftId}${attSuffix}`);
+      auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     } finally {
       await provider.disconnect();
     }
   } catch (error) {
-    return actionableError("Failed to create draft", error);
+    const toolResult = actionableError("Failed to create draft", error);
+    auditMutation("superhuman_draft", args as Record<string, unknown>, "unknown", toolResult);
+    return toolResult;
   }
 }
 
 export async function sendHandler(args: z.infer<typeof SendSchema>): Promise<ToolResult> {
+  if (args.dryRun) {
+    return successResult(`[DRY RUN] Would send email to ${args.to} with subject "${args.subject}"`);
+  }
+
+  const killed = guardMutation("superhuman_send", args as Record<string, unknown>);
+  if (killed) return killed;
+
   try {
     const provider = await getMcpProvider();
     try {
+      const account = await provider.getCurrentEmail();
+
+      // Two-phase: stage unless this is a confirmed execution
+      if (!isConfirmedExecution()) {
+        const preview = `Would send email to ${args.to} with subject "${args.subject}"`;
+        const token = stageOperation("superhuman_send", args as Record<string, unknown>, preview, account);
+        auditMutation("superhuman_send", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+        return successResult(buildStagedResponse(preview, token));
+      }
+
       const htmlBody = textToHtml(args.body);
+
+      if (args.attachments && args.attachments.length > 0) {
+        // Two-step: create draft → add attachments → send draft
+        const draftResult = await createDraftViaProvider(provider, {
+          to: splitEmails(args.to),
+          subject: args.subject,
+          body: htmlBody,
+          cc: splitEmailsOpt(args.cc),
+          bcc: splitEmailsOpt(args.bcc),
+        });
+
+        if (!draftResult.success || !draftResult.draftId) {
+          const toolResult = errorResult(`Failed to create draft for send: ${draftResult.error || "no draft ID"}`);
+          auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+          return toolResult;
+        }
+
+        const attError = await addAttachments(provider, draftResult.draftId, args.attachments);
+        if (attError) {
+          const toolResult = errorResult(`Draft created but ${attError}. Draft ID: ${draftResult.draftId}`);
+          auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+          return toolResult;
+        }
+
+        const sendResult = await sendDraftByIdViaProvider(provider, draftResult.draftId);
+        if (sendResult.success) {
+          const toolResult = successResult(`Email sent successfully to ${args.to} with ${args.attachments.length} attachment(s)`);
+          auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+          return toolResult;
+        }
+        const toolResult = errorResult(`Attachments added but send failed: ${sendResult.error}. Draft ID: ${draftResult.draftId}`);
+        auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
+      }
+
+      // No attachments — direct send (existing path)
       const result = await sendEmailViaProvider(provider, {
         to: splitEmails(args.to),
         subject: args.subject,
@@ -99,85 +255,259 @@ export async function sendHandler(args: z.infer<typeof SendSchema>): Promise<Too
       });
 
       if (result.success) {
-        return successResult(`Email sent successfully to ${args.to}`);
-      } else {
-        return errorResult(`Failed to send email: ${result.error}`);
+        const toolResult = successResult(`Email sent successfully to ${args.to}`);
+        auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
       }
+      const toolResult = errorResult(`Failed to send email: ${result.error}`);
+      auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     } finally {
       await provider.disconnect();
     }
   } catch (error) {
-    return actionableError("Failed to send email", error);
+    const toolResult = actionableError("Failed to send email", error);
+    auditMutation("superhuman_send", args as Record<string, unknown>, "unknown", toolResult);
+    return toolResult;
   }
 }
 
 export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<ToolResult> {
+  if (args.dryRun) {
+    return successResult(`[DRY RUN] Would ${args.send ? "send" : "draft"} reply to thread ${args.threadId}`);
+  }
+
+  const killed = guardMutation("superhuman_reply", args as Record<string, unknown>);
+  if (killed) return killed;
+
   let provider: ConnectionProvider | null = null;
 
   try {
     provider = await getMcpProvider();
-    const send = args.send ?? false;
-    const result = await replyToThread(provider, args.threadId, args.body, send);
+    const account = await provider.getCurrentEmail();
 
+    // Two-phase: stage when sending (not drafting)
+    if (!isConfirmedExecution() && (args.send ?? false)) {
+      const preview = `Would send reply to thread ${args.threadId}`;
+      const token = stageOperation("superhuman_reply", args as Record<string, unknown>, preview, account);
+      auditMutation("superhuman_reply", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+      return successResult(buildStagedResponse(preview, token));
+    }
+
+    const hasAttachments = args.attachments && args.attachments.length > 0;
+    const wantSend = args.send ?? false;
+
+    if (hasAttachments) {
+      // Two-step: create reply draft → add attachments → optionally send
+      const result = await replyToThread(provider, args.threadId, args.body, false);
+      if (!result.success || !result.draftId) {
+        const toolResult = errorResult(`Failed to create reply draft: ${result.error || "no draft ID"}`);
+        auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
+      }
+
+      const attError = await addAttachments(provider, result.draftId, args.attachments!);
+      if (attError) {
+        const toolResult = errorResult(`Reply draft created but ${attError}. Draft ID: ${result.draftId}`);
+        auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
+      }
+
+      if (wantSend) {
+        const sendResult = await sendDraftByIdViaProvider(provider, result.draftId);
+        if (sendResult.success) {
+          const toolResult = successResult(`Reply sent to thread ${args.threadId} with ${args.attachments!.length} attachment(s)`);
+          auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+          return toolResult;
+        }
+        const toolResult = errorResult(`Reply with attachments created but send failed: ${sendResult.error}. Draft ID: ${result.draftId}`);
+        auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
+      }
+
+      const toolResult = successResult(`Reply draft created for thread ${args.threadId}\nDraft ID: ${result.draftId}\nAttachments: ${args.attachments!.length}`);
+      auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
+    }
+
+    // No attachments — existing path
+    const result = await replyToThread(provider, args.threadId, args.body, wantSend);
     if (!result.success) {
       throw new Error(result.error || "Failed to create reply");
     }
 
-    if (send) {
-      return successResult(`Reply sent successfully to thread ${args.threadId}`);
-    } else {
-      return successResult(`Reply draft created for thread ${args.threadId}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
+    if (wantSend) {
+      const toolResult = successResult(`Reply sent successfully to thread ${args.threadId}`);
+      auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     }
+    const toolResult = successResult(`Reply draft created for thread ${args.threadId}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
+    auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+    return toolResult;
   } catch (error) {
-    return actionableError("Failed to reply", error);
+    const toolResult = actionableError("Failed to reply", error);
+    auditMutation("superhuman_reply", args as Record<string, unknown>, "unknown", toolResult);
+    return toolResult;
   } finally {
     if (provider) await provider.disconnect();
   }
 }
 
 export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Promise<ToolResult> {
+  if (args.dryRun) {
+    return successResult(`[DRY RUN] Would ${args.send ? "send" : "draft"} reply-all to thread ${args.threadId}`);
+  }
+
+  const killed = guardMutation("superhuman_reply_all", args as Record<string, unknown>);
+  if (killed) return killed;
+
   let provider: ConnectionProvider | null = null;
 
   try {
     provider = await getMcpProvider();
-    const send = args.send ?? false;
-    const result = await replyAllToThread(provider, args.threadId, args.body, send);
+    const account = await provider.getCurrentEmail();
 
+    // Two-phase: stage when sending (not drafting)
+    if (!isConfirmedExecution() && (args.send ?? false)) {
+      const preview = `Would send reply-all to thread ${args.threadId}`;
+      const token = stageOperation("superhuman_reply_all", args as Record<string, unknown>, preview, account);
+      auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+      return successResult(buildStagedResponse(preview, token));
+    }
+
+    const hasAttachments = args.attachments && args.attachments.length > 0;
+    const wantSend = args.send ?? false;
+
+    if (hasAttachments) {
+      const result = await replyAllToThread(provider, args.threadId, args.body, false);
+      if (!result.success || !result.draftId) {
+        const toolResult = errorResult(`Failed to create reply-all draft: ${result.error || "no draft ID"}`);
+        auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
+      }
+
+      const attError = await addAttachments(provider, result.draftId, args.attachments!);
+      if (attError) {
+        const toolResult = errorResult(`Reply-all draft created but ${attError}. Draft ID: ${result.draftId}`);
+        auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
+      }
+
+      if (wantSend) {
+        const sendResult = await sendDraftByIdViaProvider(provider, result.draftId);
+        if (sendResult.success) {
+          const toolResult = successResult(`Reply-all sent to thread ${args.threadId} with ${args.attachments!.length} attachment(s)`);
+          auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+          return toolResult;
+        }
+        const toolResult = errorResult(`Reply-all with attachments created but send failed: ${sendResult.error}. Draft ID: ${result.draftId}`);
+        auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
+      }
+
+      const toolResult = successResult(`Reply-all draft created for thread ${args.threadId}\nDraft ID: ${result.draftId}\nAttachments: ${args.attachments!.length}`);
+      auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
+    }
+
+    // No attachments — existing path
+    const result = await replyAllToThread(provider, args.threadId, args.body, wantSend);
     if (!result.success) {
       throw new Error(result.error || "Failed to create reply-all");
     }
 
-    if (send) {
-      return successResult(`Reply-all sent successfully to thread ${args.threadId}`);
-    } else {
-      return successResult(`Reply-all draft created for thread ${args.threadId}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
+    if (wantSend) {
+      const toolResult = successResult(`Reply-all sent successfully to thread ${args.threadId}`);
+      auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     }
+    const toolResult = successResult(`Reply-all draft created for thread ${args.threadId}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
+    auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+    return toolResult;
   } catch (error) {
-    return actionableError("Failed to reply-all", error);
+    const toolResult = actionableError("Failed to reply-all", error);
+    auditMutation("superhuman_reply_all", args as Record<string, unknown>, "unknown", toolResult);
+    return toolResult;
   } finally {
     if (provider) await provider.disconnect();
   }
 }
 
 export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promise<ToolResult> {
+  if (args.dryRun) {
+    return successResult(`[DRY RUN] Would ${args.send ? "send" : "draft"} forward of thread ${args.threadId} to ${args.toEmail}`);
+  }
+
+  const killed = guardMutation("superhuman_forward", args as Record<string, unknown>);
+  if (killed) return killed;
+
   let provider: ConnectionProvider | null = null;
 
   try {
     provider = await getMcpProvider();
-    const send = args.send ?? false;
-    const result = await forwardThread(provider, args.threadId, args.toEmail, args.body, send);
+    const account = await provider.getCurrentEmail();
 
+    // Two-phase: stage when sending (not drafting)
+    if (!isConfirmedExecution() && (args.send ?? false)) {
+      const preview = `Would forward thread ${args.threadId} to ${args.toEmail}`;
+      const token = stageOperation("superhuman_forward", args as Record<string, unknown>, preview, account);
+      auditMutation("superhuman_forward", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+      return successResult(buildStagedResponse(preview, token));
+    }
+
+    const hasAttachments = args.attachments && args.attachments.length > 0;
+    const wantSend = args.send ?? false;
+
+    if (hasAttachments) {
+      const result = await forwardThread(provider, args.threadId, args.toEmail, args.body, false);
+      if (!result.success || !result.draftId) {
+        const toolResult = errorResult(`Failed to create forward draft: ${result.error || "no draft ID"}`);
+        auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
+      }
+
+      const attError = await addAttachments(provider, result.draftId, args.attachments!);
+      if (attError) {
+        const toolResult = errorResult(`Forward draft created but ${attError}. Draft ID: ${result.draftId}`);
+        auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
+      }
+
+      if (wantSend) {
+        const sendResult = await sendDraftByIdViaProvider(provider, result.draftId);
+        if (sendResult.success) {
+          const toolResult = successResult(`Email forwarded to ${args.toEmail} with ${args.attachments!.length} attachment(s)`);
+          auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+          return toolResult;
+        }
+        const toolResult = errorResult(`Forward with attachments created but send failed: ${sendResult.error}. Draft ID: ${result.draftId}`);
+        auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
+      }
+
+      const toolResult = successResult(`Forward draft created for ${args.toEmail}\nDraft ID: ${result.draftId}\nAttachments: ${args.attachments!.length}`);
+      auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
+    }
+
+    // No attachments — existing path
+    const result = await forwardThread(provider, args.threadId, args.toEmail, args.body, wantSend);
     if (!result.success) {
       throw new Error(result.error || "Failed to create forward");
     }
 
-    if (send) {
-      return successResult(`Email forwarded successfully to ${args.toEmail}`);
-    } else {
-      return successResult(`Forward draft created for ${args.toEmail}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
+    if (wantSend) {
+      const toolResult = successResult(`Email forwarded successfully to ${args.toEmail}`);
+      auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     }
+    const toolResult = successResult(`Forward draft created for ${args.toEmail}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
+    auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+    return toolResult;
   } catch (error) {
-    return actionableError("Failed to forward", error);
+    const toolResult = actionableError("Failed to forward", error);
+    auditMutation("superhuman_forward", args as Record<string, unknown>, "unknown", toolResult);
+    return toolResult;
   } finally {
     if (provider) await provider.disconnect();
   }
