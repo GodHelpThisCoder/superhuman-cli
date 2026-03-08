@@ -112,7 +112,7 @@ export class SuperhumanDraftProvider implements IDraftProvider {
     }
 
     const userInfo = getUserInfoFromCache(
-      this.token.userId,
+      this.token.userId!,
       this.token.email,
       authToken,
       this.token.email.split("@")[0] // Use email prefix as display name
@@ -164,7 +164,7 @@ export class SuperhumanDraftProvider implements IDraftProvider {
     }
 
     const userInfo = getUserInfoFromCache(
-      this.token.userId,
+      this.token.userId!,
       this.token.email,
       authToken,
       this.token.email.split("@")[0]
