@@ -19,7 +19,7 @@ describe("OutlookDraftProvider", () => {
       accessToken: "mock-access-token",
       idToken: "mock-id-token",
       refreshToken: "mock-refresh-token",
-      expiresAt: Date.now() + 3600000,
+      expires: Date.now() + 3600000,
       email: "test@outlook.com",
       userId: "user123",
       isMicrosoft: true,
@@ -40,30 +40,30 @@ describe("OutlookDraftProvider", () => {
       ],
     };
 
-    globalThis.fetch = mock(async (url: string) => {
+    globalThis.fetch = Object.assign(mock(async (url: string) => {
       if (url.includes("/mailFolders('Drafts')")) {
         return new Response(JSON.stringify(mockDraftsResponse));
       }
       return new Response("{}", { status: 404 });
-    });
+    }), { preconnect: () => {} }) as typeof fetch;
 
     const provider = new OutlookDraftProvider(mockToken);
     const drafts = await provider.listDrafts();
 
     expect(drafts).toHaveLength(1);
-    expect(drafts[0].source).toBe("outlook");
-    expect(drafts[0].id).toBe("outlook-draft-1");
-    expect(drafts[0].subject).toBe("Outlook Draft 1");
-    expect(drafts[0].from).toBe("test@outlook.com");
-    expect(drafts[0].to).toEqual(["recipient@example.com"]);
+    expect(drafts[0]!.source).toBe("outlook");
+    expect(drafts[0]!.id).toBe("outlook-draft-1");
+    expect(drafts[0]!.subject).toBe("Outlook Draft 1");
+    expect(drafts[0]!.from).toBe("test@outlook.com");
+    expect(drafts[0]!.to).toEqual(["recipient@example.com"]);
 
     globalThis.fetch = originalFetch;
   });
 
   it("should return empty array when no drafts exist", async () => {
-    globalThis.fetch = mock(async () => {
+    globalThis.fetch = Object.assign(mock(async () => {
       return new Response(JSON.stringify({ value: [] }));
-    });
+    }), { preconnect: () => {} }) as typeof fetch;
 
     const provider = new OutlookDraftProvider(mockToken);
     const drafts = await provider.listDrafts();

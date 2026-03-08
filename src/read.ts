@@ -30,8 +30,8 @@ function parseRecipient(str: string): { email: string; name: string } {
   const match = trimmed.match(/^(.+?)\s*<([^>]+)>$/);
   if (match) {
     return {
-      name: match[1].trim().replace(/^["']|["']$/g, ""),
-      email: match[2],
+      name: match[1]!.trim().replace(/^["']|["']$/g, ""),
+      email: match[2]!,
     };
   }
   return { email: trimmed, name: "" };
@@ -143,8 +143,8 @@ async function readThreadMSGraph(
       if (msg) {
         messages = [msg];
       }
-    } catch {
-      // Not a message ID either
+    } catch (error) {
+      console.error(`[MS Graph message ID fallback]: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

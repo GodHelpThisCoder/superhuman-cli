@@ -15,6 +15,7 @@ import {
   disconnect,
   disconnectChrome,
   connectToSuperhumanChrome,
+  getSuperhumanPath,
   textToHtml,
   unescapeString,
   type SuperhumanConnection,
@@ -63,12 +64,19 @@ import {
 import type { ConnectionProvider } from "./connection-provider";
 import { CachedTokenProvider, CDPConnectionProvider, resolveProvider } from "./connection-provider";
 import { DraftService, type Draft } from "./services/draft-service";
+import { activate as killActivate, deactivate as killDeactivate, isKilled } from "./kill-switch";
 import { GmailDraftProvider } from "./providers/gmail-draft-provider";
 import { OutlookDraftProvider } from "./providers/outlook-draft-provider";
 import { SuperhumanDraftProvider } from "./providers/superhuman-draft-provider";
 
-const VERSION = "0.13.3";
-const CDP_PORT = parseInt(process.env.CDP_PORT || "9400", 10);
+const VERSION = "0.14.0";
+const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
+
+/** Format the Superhuman path for display (quotes paths with spaces). */
+function getSuperhumanCommand(): string {
+  const p = getSuperhumanPath();
+  return p.includes(" ") ? `"${p}"` : p;
+}
 
 // ANSI colors
 const colors = {
@@ -144,6 +152,8 @@ ${colors.bold}COMMANDS${colors.reset}
   ${colors.cyan}send${colors.reset}                Compose and send, or send an existing draft
   ${colors.cyan}ai${colors.reset} <query>          Ask AI to search, compose, or answer questions
   ${colors.cyan}ai${colors.reset} <id> <query>     Ask AI about a specific email thread
+  ${colors.cyan}kill${colors.reset} [reason]        Activate kill switch — suspend all mutations
+  ${colors.cyan}unkill${colors.reset}              Deactivate kill switch — resume mutations
   ${colors.cyan}status${colors.reset}              Check Superhuman connection status
   ${colors.cyan}help${colors.reset}                Show this help message
 
@@ -308,7 +318,7 @@ ${colors.bold}EXAMPLES${colors.reset}
 
 ${colors.bold}REQUIREMENTS${colors.reset}
   Superhuman must be running with remote debugging enabled:
-  ${colors.dim}/Applications/Superhuman.app/Contents/MacOS/Superhuman --remote-debugging-port=${CDP_PORT}${colors.reset}
+  ${colors.dim}${getSuperhumanCommand()} --remote-debugging-port=${CDP_PORT}${colors.reset}
 `);
 }
 
@@ -383,6 +393,8 @@ interface CliOptions {
   provider: "superhuman" | "gmail" | "outlook"; // which API to use for drafts (default: superhuman)
   // native draft flag
   native: boolean; // use native Superhuman draft operations (for update/delete)
+  // dry-run flag
+  dryRun: boolean; // preview without executing
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -433,11 +445,12 @@ function parseArgs(args: string[]): CliOptions {
     context: 0,
     provider: "superhuman",
     native: false,
+    dryRun: false,
   };
 
   let i = 0;
   while (i < args.length) {
-    const arg = args[i];
+    const arg = args[i]!;
 
     if (arg.startsWith("--")) {
       // Support both --key value and --key=value formats
@@ -458,31 +471,31 @@ function parseArgs(args: string[]): CliOptions {
 
       switch (key) {
         case "to":
-          options.to.push(unescapeString(value));
+          options.to.push(unescapeString(value!));
           i += inc;
           break;
         case "cc":
-          options.cc.push(unescapeString(value));
+          options.cc.push(unescapeString(value!));
           i += inc;
           break;
         case "bcc":
-          options.bcc.push(unescapeString(value));
+          options.bcc.push(unescapeString(value!));
           i += inc;
           break;
         case "subject":
-          options.subject = unescapeString(value);
+          options.subject = unescapeString(value!);
           i += inc;
           break;
         case "body":
-          options.body = unescapeString(value);
+          options.body = unescapeString(value!);
           i += inc;
           break;
         case "html":
-          options.html = unescapeString(value);
+          options.html = unescapeString(value!);
           i += inc;
           break;
         case "port":
-          options.port = parseInt(value, 10);
+          options.port = parseInt(value!, 10);
           i += inc;
           break;
         case "help":
@@ -490,19 +503,19 @@ function parseArgs(args: string[]): CliOptions {
           i += 1;
           break;
         case "limit":
-          options.limit = parseInt(value, 10);
+          options.limit = parseInt(value!, 10);
           i += inc;
           break;
         case "offset":
-          options.offset = parseInt(value, 10);
+          options.offset = parseInt(value!, 10);
           i += inc;
           break;
         case "query":
-          options.query = unescapeString(value);
+          options.query = unescapeString(value!);
           i += inc;
           break;
         case "thread":
-          options.threadId = unescapeString(value);
+          options.threadId = unescapeString(value!);
           i += inc;
           break;
         case "json":
@@ -514,47 +527,47 @@ function parseArgs(args: string[]): CliOptions {
           i += 1;
           break;
         case "update":
-          options.updateDraftId = unescapeString(value);
+          options.updateDraftId = unescapeString(value!);
           i += inc;
           break;
         case "draft":
-          options.sendDraftId = unescapeString(value);
+          options.sendDraftId = unescapeString(value!);
           i += inc;
           break;
         case "label":
-          options.labelId = unescapeString(value);
+          options.labelId = unescapeString(value!);
           i += inc;
           break;
         case "until":
-          options.snoozeUntil = unescapeString(value);
+          options.snoozeUntil = unescapeString(value!);
           i += inc;
           break;
         case "output":
-          options.outputPath = unescapeString(value);
+          options.outputPath = unescapeString(value!);
           i += inc;
           break;
         case "attachment":
-          options.attachmentId = unescapeString(value);
+          options.attachmentId = unescapeString(value!);
           i += inc;
           break;
         case "message":
-          options.messageId = unescapeString(value);
+          options.messageId = unescapeString(value!);
           i += inc;
           break;
         case "calendar":
-          options.calendarArg = unescapeString(value);
+          options.calendarArg = unescapeString(value!);
           i += inc;
           break;
         case "date":
-          options.calendarDate = unescapeString(value);
+          options.calendarDate = unescapeString(value!);
           i += inc;
           break;
         case "range":
-          options.calendarRange = parseInt(value, 10);
+          options.calendarRange = parseInt(value!, 10);
           i += inc;
           break;
         case "context":
-          options.context = parseInt(value, 10);
+          options.context = parseInt(value!, 10);
           i += inc;
           break;
         case "all-accounts":
@@ -562,27 +575,27 @@ function parseArgs(args: string[]): CliOptions {
           i++;
           break;
         case "start":
-          options.eventStart = unescapeString(value);
+          options.eventStart = unescapeString(value!);
           i += inc;
           break;
         case "end":
-          options.eventEnd = unescapeString(value);
+          options.eventEnd = unescapeString(value!);
           i += inc;
           break;
         case "duration":
-          options.eventDuration = parseInt(value, 10);
+          options.eventDuration = parseInt(value!, 10);
           i += inc;
           break;
         case "title":
-          options.eventTitle = unescapeString(value);
+          options.eventTitle = unescapeString(value!);
           i += inc;
           break;
         case "event":
-          options.eventId = unescapeString(value);
+          options.eventId = unescapeString(value!);
           i += inc;
           break;
         case "account":
-          options.account = unescapeString(value);
+          options.account = unescapeString(value!);
           i += inc;
           break;
         case "include-done":
@@ -590,28 +603,32 @@ function parseArgs(args: string[]): CliOptions {
           i += 1;
           break;
         case "vars":
-          options.vars = unescapeString(value);
+          options.vars = unescapeString(value!);
           i += inc;
           break;
         case "provider":
           if (value === "superhuman" || value === "gmail" || value === "outlook") {
             options.provider = value;
           } else {
-            error(`Invalid provider: ${value}. Use 'superhuman', 'gmail', or 'outlook'`);
+            error(`Invalid provider: ${value!}. Use 'superhuman', 'gmail', or 'outlook'`);
             process.exit(1);
           }
           i += inc;
           break;
         case "delay":
-          options.sendDraftDelay = parseInt(value, 10);
+          options.sendDraftDelay = parseInt(value!, 10);
           i += inc;
           break;
         case "thread":
-          options.sendDraftThreadId = unescapeString(value);
+          options.sendDraftThreadId = unescapeString(value!);
           i += inc;
           break;
         case "native":
           options.native = true;
+          i += 1;
+          break;
+        case "dry-run":
+          options.dryRun = true;
           i += 1;
           break;
         default:
@@ -652,6 +669,10 @@ function parseArgs(args: string[]): CliOptions {
       } else {
         options.aiQuery = unescapeString(arg);
       }
+      i += 1;
+    } else if (options.command === "kill" && !options.aiQuery) {
+      // kill <reason> — reason is optional positional arg; reuse aiQuery as killReason
+      options.aiQuery = unescapeString(arg);
       i += 1;
     } else if (options.command === "archive" || options.command === "delete") {
       // Collect multiple thread IDs for bulk top-level operations
@@ -733,7 +754,7 @@ async function checkConnection(port: number): Promise<SuperhumanConnection | nul
     return conn;
   } catch (e) {
     error(`Connection failed: ${(e as Error).message}`);
-    info("Superhuman may not be installed at /Applications/Superhuman.app");
+    info(`Superhuman may not be installed at ${getSuperhumanCommand()}`);
     return null;
   }
 }
@@ -752,7 +773,7 @@ async function getProvider(options: CliOptions): Promise<ConnectionProvider> {
   if (!conn) {
     error("No cached tokens and could not connect to Superhuman");
     info("Run 'superhuman account auth' to authenticate, or start Superhuman with:");
-    info(`  /Applications/Superhuman.app/Contents/MacOS/Superhuman --remote-debugging-port=${options.port}`);
+    info(`  ${getSuperhumanCommand()} --remote-debugging-port=${options.port}`);
     process.exit(1);
   }
   return new CDPConnectionProvider(conn);
@@ -1013,7 +1034,7 @@ async function cmdDraft(options: CliOptions) {
         process.exit(1);
       }
 
-      const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
+      const userInfo = getUserInfoFromCache(token.userId!, token.email, token.idToken!);
 
       // Use DraftService to get draft details for threadId
       const nativeProvider = new SuperhumanDraftProvider(token);
@@ -1030,7 +1051,7 @@ async function cmdDraft(options: CliOptions) {
       const bodyContent = options.html || (options.body ? textToHtml(options.body) : undefined);
 
       info(`Updating native draft ${draftId}...`);
-      const success = await updateDraftWithUserInfo(userInfo, draft.threadId, draftId, {
+      const success = await updateDraftWithUserInfo(userInfo, draft.threadId!, draftId, {
         to: options.to.length > 0 ? options.to : undefined,
         cc: options.cc.length > 0 ? options.cc : undefined,
         bcc: options.bcc.length > 0 ? options.bcc : undefined,
@@ -1093,9 +1114,9 @@ async function cmdDraft(options: CliOptions) {
       info("Creating draft via Superhuman API...");
 
       const userInfo = getUserInfoFromCache(
-        token.userId,
+        token.userId!,
         token.email,
-        token.idToken
+        token.idToken!
       );
 
       const bodyContent = options.html || textToHtml(options.body);
@@ -1195,7 +1216,7 @@ async function cmdDeleteDraft(options: CliOptions) {
       process.exit(1);
     }
 
-    const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
+    const userInfo = getUserInfoFromCache(token.userId!, token.email, token.idToken!);
 
     // Use DraftService to get draft details for threadId
     const nativeProvider = new SuperhumanDraftProvider(token);
@@ -1212,7 +1233,7 @@ async function cmdDeleteDraft(options: CliOptions) {
 
       info(`Deleting native draft ${draftId.slice(-15)}...`);
       try {
-        await deleteDraftWithUserInfo(userInfo, draft.threadId, draftId);
+        await deleteDraftWithUserInfo(userInfo, draft.threadId!, draftId);
         success(`Deleted native draft ${draftId.slice(-15)}`);
       } catch (err) {
         error(`Failed to delete native draft: ${err instanceof Error ? err.message : String(err)}`);
@@ -1288,7 +1309,7 @@ async function cmdSendDraft(options: CliOptions) {
   }
 
   // Build userInfo
-  const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
+  const userInfo = getUserInfoFromCache(token.userId!, token.email, token.idToken!);
 
   // Build recipients
   const toRecipients: Recipient[] = options.to.map((email) => ({ email }));
@@ -1325,8 +1346,8 @@ async function cmdSendDraft(options: CliOptions) {
     try {
       const threadId = options.sendDraftThreadId || draftId;
       await deleteDraftWithUserInfo(userInfo, threadId, draftId);
-    } catch {
-      // Non-fatal: draft was sent successfully, cleanup failure is just cosmetic
+    } catch (error) {
+      console.error(`[draft cleanup after send]: ${error instanceof Error ? error.message : String(error)}`);
     }
   } else {
     error(`Failed to send draft: ${result.error}`);
@@ -1338,7 +1359,7 @@ async function cmdListDrafts(options: CliOptions) {
   const account = options.account;
   const limit = options.limit || 50;
   const offset = options.offset || 0;
-  const filterTo = options.to.length > 0 ? options.to[0].toLowerCase() : "";
+  const filterTo = options.to.length > 0 ? options.to[0]!.toLowerCase() : "";
   const filterSubject = options.subject ? options.subject.toLowerCase() : "";
 
   // Load cached tokens from disk
@@ -1349,7 +1370,7 @@ async function cmdListDrafts(options: CliOptions) {
   if (!email) {
     const accounts = getCachedAccounts();
     if (accounts.length > 0) {
-      email = accounts[0];
+      email = accounts[0]!;
       info(`Using account: ${email}`);
     } else {
       error("No account specified. Use --account <email>");
@@ -1609,7 +1630,7 @@ async function cmdRead(options: CliOptions) {
   const separator = "\n" + colors.dim + "─".repeat(60) + colors.reset + "\n";
 
   for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
+    const msg = messages[i]!;
     if (i > 0) {
       console.log(separator);
     }
@@ -1687,9 +1708,9 @@ async function cmdReply(options: CliOptions) {
         }
 
         const userInfo = getUserInfoFromCache(
-          token.userId,
+          token.userId!,
           token.email,
-          token.idToken
+          token.idToken!
         );
 
         const subject = threadInfo.subject.startsWith("Re:")
@@ -1805,9 +1826,9 @@ async function cmdReplyAll(options: CliOptions) {
         }
 
         const userInfo = getUserInfoFromCache(
-          token.userId,
+          token.userId!,
           token.email,
-          token.idToken
+          token.idToken!
         );
 
         const subject = threadInfo.subject.startsWith("Re:")
@@ -1927,9 +1948,9 @@ async function cmdForward(options: CliOptions) {
         }
 
         const userInfo = getUserInfoFromCache(
-          token.userId,
+          token.userId!,
           token.email,
-          token.idToken
+          token.idToken!
         );
 
         const subject = threadInfo.subject.startsWith("Fwd:")
@@ -1962,7 +1983,7 @@ async function cmdForward(options: CliOptions) {
 
   // Resolve name to email
   const resolvedTo = await resolveAllRecipientsViaProvider(provider, options.to);
-  const toEmail = resolvedTo[0]; // Use first recipient for forward
+  const toEmail = resolvedTo[0]!; // Use first recipient for forward
 
   const body = options.body || "";
   const action = options.send ? "Sending" : "Creating draft for";
@@ -2338,8 +2359,8 @@ async function cmdSnooze(options: CliOptions) {
 
   const results = await snoozeThreadViaProvider(provider, options.threadIds, snoozeTime);
   for (let i = 0; i < options.threadIds.length; i++) {
-    const threadId = options.threadIds[i];
-    const result = results[i];
+    const threadId = options.threadIds[i]!;
+    const result = results[i]!;
     if (result.success) {
       success(`Snoozed thread: ${threadId} until ${snoozeTime.toLocaleString()}`);
       successCount++;
@@ -2370,8 +2391,8 @@ async function cmdUnsnooze(options: CliOptions) {
 
   const results = await unsnoozeThreadViaProvider(provider, options.threadIds);
   for (let i = 0; i < options.threadIds.length; i++) {
-    const threadId = options.threadIds[i];
-    const result = results[i];
+    const threadId = options.threadIds[i]!;
+    const result = results[i]!;
     if (result.success) {
       success(`Unsnoozed thread: ${threadId}`);
       successCount++;
@@ -2552,7 +2573,8 @@ async function cmdAuth(options: CliOptions) {
       }
       // 0 accounts from Electron path — try Chrome extension
       await disconnect(conn);
-    } catch {
+    } catch (error) {
+      console.error(`[auth token extraction]: ${error instanceof Error ? error.message : String(error)}`);
       await disconnect(conn);
     }
   }
@@ -2563,7 +2585,7 @@ async function cmdAuth(options: CliOptions) {
   if (!chromeConn) {
     error("Cannot connect to Superhuman. Make sure it is running with CDP enabled.");
     log(`  Chrome: launch with --remote-debugging-port=${options.port}`);
-    log(`  Electron: /Applications/Superhuman.app/Contents/MacOS/Superhuman --remote-debugging-port=${options.port}`);
+    log(`  Electron: ${getSuperhumanCommand()} --remote-debugging-port=${options.port}`);
     process.exit(1);
   }
 
@@ -2637,7 +2659,7 @@ async function cmdAccount(options: CliOptions) {
       await disconnect(conn);
       process.exit(1);
     }
-    targetEmail = accounts[index - 1].email;
+    targetEmail = accounts[index - 1]!.email;
   } else {
     // Treat as email
     const found = accounts.find(
@@ -2695,7 +2717,7 @@ export function parseCalendarDate(dateStr: string): Date {
   // which becomes the previous day in timezones west of UTC (e.g. EST).
   const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (match) {
-    return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
+    return new Date(parseInt(match[1]!), parseInt(match[2]!) - 1, parseInt(match[3]!));
   }
 
   // Try parsing as-is (for other formats like full ISO datetime with timezone)
@@ -2719,7 +2741,7 @@ export function parseEventTime(timeStr: string): Date {
   // which becomes the previous day in timezones west of UTC (e.g. EST).
   const dateMatch = timeStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (dateMatch) {
-    return new Date(parseInt(dateMatch[1]), parseInt(dateMatch[2]) - 1, parseInt(dateMatch[3]));
+    return new Date(parseInt(dateMatch[1]!), parseInt(dateMatch[2]!) - 1, parseInt(dateMatch[3]!));
   }
 
   // Try ISO format (datetime strings with time component)
@@ -2742,7 +2764,7 @@ export function parseEventTime(timeStr: string): Date {
   // Parse time like "2pm", "14:00", "3:30pm"
   const timeMatch = timePart.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
   if (timeMatch) {
-    let hours = parseInt(timeMatch[1], 10);
+    let hours = parseInt(timeMatch[1]!, 10);
     const minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
     const meridiem = timeMatch[3]?.toLowerCase();
 
@@ -2783,7 +2805,7 @@ function formatCalendarEvent(event: CalendarEvent & { account?: string }, showAc
   // Account indicator (shortened)
   let accountTag = "";
   if (showAccount && event.account) {
-    const shortAccount = event.account.split("@")[0].slice(0, 8);
+    const shortAccount = event.account.split("@")[0]!.slice(0, 8);
     accountTag = ` ${colors.magenta}[${shortAccount}]${colors.reset}`;
   }
 
@@ -3547,6 +3569,25 @@ async function main() {
     case "send":
       await cmdSend(options);
       break;
+
+    case "kill": {
+      const reason = options.aiQuery || undefined;
+      killActivate(reason);
+      const msg = reason ? `Kill switch activated: ${reason}` : "Kill switch activated";
+      success(msg);
+      break;
+    }
+
+    case "unkill": {
+      const status = isKilled();
+      if (!status.killed) {
+        info("Kill switch is not active");
+      } else {
+        killDeactivate();
+        success("Kill switch deactivated — mutations resumed");
+      }
+      break;
+    }
 
     default:
       error(`Unknown command: ${options.command}`);

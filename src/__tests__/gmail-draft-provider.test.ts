@@ -19,7 +19,7 @@ describe("GmailDraftProvider", () => {
       accessToken: "mock-access-token",
       idToken: "mock-id-token",
       refreshToken: "mock-refresh-token",
-      expiresAt: Date.now() + 3600000,
+      expires: Date.now() + 3600000,
       email: "test@gmail.com",
       userId: "user123",
       isMicrosoft: false,
@@ -68,7 +68,7 @@ describe("GmailDraftProvider", () => {
     };
 
     let callCount = 0;
-    globalThis.fetch = mock(async (url: string) => {
+    globalThis.fetch = Object.assign(mock(async (url: string) => {
       callCount++;
       if (url.includes("/drafts?")) {
         return new Response(JSON.stringify(mockDraftsList));
@@ -78,27 +78,27 @@ describe("GmailDraftProvider", () => {
         return new Response(JSON.stringify(mockDraftDetails2));
       }
       return new Response("{}", { status: 404 });
-    });
+    }), { preconnect: () => {} }) as typeof fetch;
 
     const provider = new GmailDraftProvider(mockToken);
     const drafts = await provider.listDrafts();
 
     expect(drafts).toHaveLength(2);
-    expect(drafts[0].source).toBe("gmail");
-    expect(drafts[1].source).toBe("gmail");
-    expect(drafts[0].id).toBe("draft1");
-    expect(drafts[0].subject).toBe("Test Draft 1");
-    expect(drafts[1].id).toBe("draft2");
-    expect(drafts[1].subject).toBe("Test Draft 2");
+    expect(drafts[0]!.source).toBe("gmail");
+    expect(drafts[1]!.source).toBe("gmail");
+    expect(drafts[0]!.id).toBe("draft1");
+    expect(drafts[0]!.subject).toBe("Test Draft 1");
+    expect(drafts[1]!.id).toBe("draft2");
+    expect(drafts[1]!.subject).toBe("Test Draft 2");
 
     // Restore original fetch
     globalThis.fetch = originalFetch;
   });
 
   it("should return empty array when no drafts exist", async () => {
-    globalThis.fetch = mock(async () => {
+    globalThis.fetch = Object.assign(mock(async () => {
       return new Response(JSON.stringify({ messages: [] }));
-    });
+    }), { preconnect: () => {} }) as typeof fetch;
 
     const provider = new GmailDraftProvider(mockToken);
     const drafts = await provider.listDrafts();

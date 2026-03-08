@@ -143,8 +143,8 @@ export async function switchAccount(
       if (result.ready && result.email === targetEmail) {
         return { success: true, email: result.email };
       }
-    } catch {
-      // CDP call failed - page might still be loading, continue polling
+    } catch (error) {
+      console.error(`[account switch poll]: ${error instanceof Error ? error.message : String(error)}`);
     }
 
     // Wait before next poll
@@ -160,7 +160,8 @@ export async function switchAccount(
 
     const finalEmail = finalResult.result.value as string;
     return { success: finalEmail === targetEmail, email: finalEmail };
-  } catch {
+  } catch (error) {
+    console.error(`[account switch final check]: ${error instanceof Error ? error.message : String(error)}`);
     return { success: false, email: "" };
   }
 }
