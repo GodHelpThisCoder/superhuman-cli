@@ -135,9 +135,9 @@ export async function refreshAccessToken(
     });
 
     if (!response.ok) {
-      const { error, error_description } = await response
+      const { error, error_description } = (await response
         .json()
-        .catch(() => ({}) as Record<string, unknown>);
+        .catch(() => ({}) as Record<string, unknown>)) as any;
       console.error(
         `[token-refresh] Refresh failed for ${token.email}: ` +
           `HTTP ${response.status} ${response.statusText}` +

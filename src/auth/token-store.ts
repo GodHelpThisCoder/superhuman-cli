@@ -9,6 +9,7 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypt
 import { hostname, userInfo } from "os";
 import { chmodSync } from "node:fs";
 import type { TokenInfo, PersistedTokens, CDPConnection } from "./types";
+import { getConfigDir } from "../config";
 
 // ---------------------------------------------------------------------------
 // AES-256-GCM encryption — key is derived from machine identity
@@ -74,13 +75,6 @@ export function deleteTokenFromCache(email: string): boolean {
 // Config paths — evaluated at call time for testability
 // ---------------------------------------------------------------------------
 
-function getConfigDir(): string {
-  return (
-    process.env.SUPERHUMAN_CLI_CONFIG_DIR ||
-    `${process.env.HOME}/.config/superhuman-cli`
-  );
-}
-
 function getTokensFile(): string {
   return `${getConfigDir()}/tokens.json`;
 }
@@ -123,7 +117,7 @@ export async function getToken(
   }
 
   // Extract fresh token
-  const token = await extractToken(conn, email);
+  const token = await extractToken(conn as any, email);
 
   // Cache it
   tokenCache.set(email, token);

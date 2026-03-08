@@ -4,6 +4,7 @@
 
 import {
   connectToSuperhuman,
+  ensureSuperhuman,
   type SuperhumanConnection,
 } from "../../superhuman-api";
 import { CDPConnectionProvider, resolveProvider, type ConnectionProvider } from "../../connection-provider";
@@ -14,6 +15,8 @@ import {
   hasCachedSuperhumanCredentials,
   type TokenInfo,
 } from "../../token-api";
+import { isKilled } from "../../kill-switch";
+import { logAudit } from "../../audit";
 
 export const CDP_PORT = 9333;
 
@@ -28,19 +31,59 @@ export function errorResult(message: string): ToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
 }
 
+// Cached CDP provider — reused across tool calls, invalidated on error.
+let _cachedCdpProvider: CDPConnectionProvider | null = null;
+
 /**
  * Get a ConnectionProvider for MCP tools.
- * Prefers cached tokens; falls back to CDP.
+ * Prefers cached tokens; falls back to CDP with auto-reconnect.
+ *
+ * If the CDP connection is stale (Superhuman restarted), the cached provider
+ * is invalidated and a fresh connection is established. If Superhuman is not
+ * running, `ensureSuperhuman()` will attempt to launch it.
  */
 export async function getMcpProvider(): Promise<ConnectionProvider> {
-  const provider = await resolveProvider({ port: CDP_PORT });
-  if (provider) return provider;
+  // Cached tokens don't need CDP — always prefer them
+  const tokenProvider = await resolveProvider({ port: CDP_PORT });
+  if (tokenProvider) return tokenProvider;
 
-  const conn = await connectToSuperhuman(CDP_PORT);
-  if (!conn) {
-    throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+  // Return cached CDP provider if still valid
+  if (_cachedCdpProvider) {
+    try {
+      // Quick liveness check — will throw if connection is dead
+      await _cachedCdpProvider.getCurrentEmail();
+      return _cachedCdpProvider;
+    } catch {
+      // Connection stale — invalidate and reconnect below
+      try { await _cachedCdpProvider.disconnect(); } catch { /* ignore */ }
+      _cachedCdpProvider = null;
+    }
   }
-  return new CDPConnectionProvider(conn);
+
+  // Attempt connection (with auto-launch)
+  let conn = await connectToSuperhuman(CDP_PORT);
+  if (!conn) {
+    // Superhuman may be starting — wait and retry once
+    console.error("[mcp] Superhuman not available, attempting launch...");
+    await ensureSuperhuman(CDP_PORT);
+    await new Promise(r => setTimeout(r, 3000));
+    conn = await connectToSuperhuman(CDP_PORT, false);
+  }
+  if (!conn) {
+    throw new Error(
+      "Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333"
+    );
+  }
+  _cachedCdpProvider = new CDPConnectionProvider(conn);
+  return _cachedCdpProvider;
+}
+
+/** Invalidate the cached CDP provider (called on connection errors). */
+export function invalidateCdpProvider(): void {
+  if (_cachedCdpProvider) {
+    _cachedCdpProvider.disconnect().catch(() => {});
+    _cachedCdpProvider = null;
+  }
 }
 
 /**
@@ -78,6 +121,45 @@ export function actionableError(context: string, error: unknown): ToolResult {
     );
   }
   return errorResult(`${context}: ${msg}. Verify Superhuman is running and the account is authenticated.`);
+}
+
+/**
+ * Guard for mutating handlers — returns an error if the kill switch is active.
+ * Must be called synchronously at the top of every mutating handler.
+ */
+export function guardMutation(tool?: string, args?: Record<string, unknown>): ToolResult | null {
+  const { killed, reason } = isKilled();
+  if (killed) {
+    if (tool) {
+      logAudit({ tool, account: "unknown", action: "killed", args: args || {}, result: "error", dryRun: false });
+    }
+    return errorResult(
+      `KILLED — ${reason || "All mutations suspended."}\nRemove kill-switch file to resume.`
+    );
+  }
+  return null;
+}
+
+/**
+ * Log an audit entry for a completed mutation. Fire-and-forget.
+ */
+export function auditMutation(
+  tool: string,
+  args: Record<string, unknown>,
+  account: string,
+  result: ToolResult,
+  options?: { batchSize?: number; action?: "executed" | "staged" | "confirmed" },
+): void {
+  logAudit({
+    tool,
+    account,
+    action: options?.action || "executed",
+    args,
+    result: result.isError ? "error" : "success",
+    error: result.isError ? result.content[0]?.text : undefined,
+    batchSize: options?.batchSize,
+    dryRun: false,
+  });
 }
 
 // Re-export types used by handlers

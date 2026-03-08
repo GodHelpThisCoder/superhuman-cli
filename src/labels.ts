@@ -74,7 +74,7 @@ export async function getThreadLabels(
 
     const msg = await response.json() as { parentFolderId?: string };
     const folderId = msg.parentFolderId;
-    const folder = labelMap.get(folderId);
+    const folder = labelMap.get(folderId!);
 
     return folder ? [folder] : [];
   } else {

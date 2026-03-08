@@ -13,7 +13,8 @@ import {
   type UpdateEventInput,
 } from "../../calendar";
 import type { ConnectionProvider } from "../../connection-provider";
-import { successResult, errorResult, actionableError, getMcpProvider, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, type ToolResult } from "./shared";
+import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -37,6 +38,7 @@ export const CalendarCreateSchema = z.object({
   description: z.string().optional().describe("Event description"),
   attendees: z.array(z.string()).optional().describe("List of attendee email addresses"),
   allDay: z.boolean().optional().describe("Whether this is an all-day event (if true, use date format YYYY-MM-DD for startTime)"),
+  dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 });
 
 export const CalendarUpdateSchema = z.object({
@@ -46,10 +48,12 @@ export const CalendarUpdateSchema = z.object({
   endTime: z.string().optional().describe("New end time as ISO datetime"),
   description: z.string().optional().describe("New event description"),
   attendees: z.array(z.string()).optional().describe("New list of attendee email addresses"),
+  dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 });
 
 export const CalendarDeleteSchema = z.object({
   eventId: z.string().describe("The event ID to delete"),
+  dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 });
 
 export const CalendarFreeBusySchema = z.object({
@@ -131,10 +135,26 @@ export async function calendarListHandler(args: z.infer<typeof CalendarListSchem
 }
 
 export async function calendarCreateHandler(args: z.infer<typeof CalendarCreateSchema>): Promise<ToolResult> {
+  if (args.dryRun) {
+    return successResult(`[DRY RUN] Would create calendar event "${args.title}" at ${args.startTime}`);
+  }
+
+  const killed = guardMutation("superhuman_calendar_create", args as Record<string, unknown>);
+  if (killed) return killed;
+
   let provider: ConnectionProvider | null = null;
 
   try {
     provider = await getMcpProvider();
+    const account = await provider.getCurrentEmail();
+
+      // Two-phase: stage unless this is a confirmed execution
+      if (!isConfirmedExecution()) {
+        const preview = `Would create calendar event "${args.title}" at ${args.startTime}`;
+        const token = stageOperation("superhuman_calendar_create", args as Record<string, unknown>, preview, account);
+        auditMutation("superhuman_calendar_create", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+        return successResult(buildStagedResponse(preview, token));
+      }
 
     const startTime = new Date(args.startTime);
     let endTime: Date;
@@ -159,26 +179,49 @@ export async function calendarCreateHandler(args: z.infer<typeof CalendarCreateS
     const result = await createEvent(provider, eventInput);
 
     if (result.success) {
-      return successResult(JSON.stringify({
+      const toolResult = successResult(JSON.stringify({
         success: true,
         eventId: result.eventId,
         message: "Event created successfully",
       }));
+      auditMutation("superhuman_calendar_create", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     } else {
-      return errorResult(`Failed to create event: ${result.error}`);
+      const toolResult = errorResult(`Failed to create event: ${result.error}`);
+      auditMutation("superhuman_calendar_create", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     }
   } catch (error) {
-    return actionableError("Failed to create calendar event", error);
+    const toolResult = actionableError("Failed to create calendar event", error);
+    auditMutation("superhuman_calendar_create", args as Record<string, unknown>, "unknown", toolResult);
+    return toolResult;
   } finally {
     if (provider) await provider.disconnect();
   }
 }
 
 export async function calendarUpdateHandler(args: z.infer<typeof CalendarUpdateSchema>): Promise<ToolResult> {
+  if (args.dryRun) {
+    return successResult(`[DRY RUN] Would update calendar event ${args.eventId}`);
+  }
+
+  const killed = guardMutation("superhuman_calendar_update", args as Record<string, unknown>);
+  if (killed) return killed;
+
   let provider: ConnectionProvider | null = null;
 
   try {
     provider = await getMcpProvider();
+    const account = await provider.getCurrentEmail();
+
+      // Two-phase: stage unless this is a confirmed execution
+      if (!isConfirmedExecution()) {
+        const changes = [args.title && "title", args.startTime && "time", args.description && "description", args.attendees && "attendees"].filter(Boolean).join(", ");
+        const preview = `Would update calendar event ${args.eventId}${changes ? ` (${changes})` : ""}`;
+        const token = stageOperation("superhuman_calendar_update", args as Record<string, unknown>, preview, account);
+        auditMutation("superhuman_calendar_update", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+        return successResult(buildStagedResponse(preview, token));
+      }
 
     const updates: UpdateEventInput = {};
     if (args.title) updates.summary = args.title;
@@ -190,38 +233,67 @@ export async function calendarUpdateHandler(args: z.infer<typeof CalendarUpdateS
     const result = await updateEvent(provider, args.eventId, updates);
 
     if (result.success) {
-      return successResult(JSON.stringify({
+      const toolResult = successResult(JSON.stringify({
         success: true,
         eventId: result.eventId,
         message: "Event updated successfully",
       }));
+      auditMutation("superhuman_calendar_update", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     } else {
-      return errorResult(`Failed to update event: ${result.error}`);
+      const toolResult = errorResult(`Failed to update event: ${result.error}`);
+      auditMutation("superhuman_calendar_update", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     }
   } catch (error) {
-    return actionableError("Failed to update calendar event", error);
+    const toolResult = actionableError("Failed to update calendar event", error);
+    auditMutation("superhuman_calendar_update", args as Record<string, unknown>, "unknown", toolResult);
+    return toolResult;
   } finally {
     if (provider) await provider.disconnect();
   }
 }
 
 export async function calendarDeleteHandler(args: z.infer<typeof CalendarDeleteSchema>): Promise<ToolResult> {
+  if (args.dryRun) {
+    return successResult(`[DRY RUN] Would delete calendar event ${args.eventId}`);
+  }
+
+  const killed = guardMutation("superhuman_calendar_delete", args as Record<string, unknown>);
+  if (killed) return killed;
+
   let provider: ConnectionProvider | null = null;
 
   try {
     provider = await getMcpProvider();
+    const account = await provider.getCurrentEmail();
+
+      // Two-phase: stage unless this is a confirmed execution
+      if (!isConfirmedExecution()) {
+        const preview = `Would delete calendar event ${args.eventId}`;
+        const token = stageOperation("superhuman_calendar_delete", args as Record<string, unknown>, preview, account);
+        auditMutation("superhuman_calendar_delete", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+        return successResult(buildStagedResponse(preview, token));
+      }
+
     const result = await deleteCalendarEvent(provider, args.eventId);
 
     if (result.success) {
-      return successResult(JSON.stringify({
+      const toolResult = successResult(JSON.stringify({
         success: true,
         message: `Event ${args.eventId} deleted successfully`,
       }));
+      auditMutation("superhuman_calendar_delete", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     } else {
-      return errorResult(`Failed to delete event: ${result.error}`);
+      const toolResult = errorResult(`Failed to delete event: ${result.error}`);
+      auditMutation("superhuman_calendar_delete", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     }
   } catch (error) {
-    return actionableError("Failed to delete calendar event", error);
+    const toolResult = actionableError("Failed to delete calendar event", error);
+    auditMutation("superhuman_calendar_delete", args as Record<string, unknown>, "unknown", toolResult);
+    return toolResult;
   } finally {
     if (provider) await provider.disconnect();
   }

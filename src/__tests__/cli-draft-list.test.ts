@@ -140,7 +140,7 @@ describe("superhuman draft list", () => {
     );
 
     expect(filtered).toHaveLength(1);
-    expect(filtered[0].id).toBe("draft-1");
+    expect(filtered[0]!.id).toBe("draft-1");
   });
 
   it("should filter drafts by --subject substring", () => {
@@ -171,8 +171,8 @@ describe("superhuman draft list", () => {
     );
 
     expect(filtered).toHaveLength(1);
-    expect(filtered[0].id).toBe("draft-1");
-    expect(filtered[0].subject).toBe("Meeting Follow-up");
+    expect(filtered[0]!.id).toBe("draft-1");
+    expect(filtered[0]!.subject).toBe("Meeting Follow-up");
   });
 
   it("should return empty array when no drafts match --to filter", () => {
@@ -254,10 +254,10 @@ describe("superhuman draft list", () => {
 
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(1);
-    expect(parsed[0].id).toBe("draft-abc123");
-    expect(parsed[0].subject).toBe("Meeting Follow-up");
-    expect(parsed[0].to).toEqual(["jon@example.com"]);
-    expect(parsed[0].source).toBe("gmail");
+    expect(parsed[0]!.id).toBe("draft-abc123");
+    expect(parsed[0]!.subject).toBe("Meeting Follow-up");
+    expect(parsed[0]!.to).toEqual(["jon@example.com"]);
+    expect(parsed[0]!.source).toBe("gmail");
   });
 
   it("should match --to filter case-insensitively", () => {

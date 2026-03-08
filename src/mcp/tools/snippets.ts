@@ -10,7 +10,8 @@ import {
   disconnect,
 } from "../../superhuman-api";
 import type { ConnectionProvider } from "../../connection-provider";
-import { successResult, errorResult, actionableError, getMcpProvider, CDP_PORT, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, CDP_PORT, type ToolResult } from "./shared";
+import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -25,6 +26,7 @@ export const UseSnippetSchema = z.object({
   bcc: z.string().optional().describe("BCC recipient email (overrides snippet default)"),
   vars: z.string().optional().describe("Template variables as 'key1=val1,key2=val2'"),
   send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
+  dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 });
 
 // ---------------------------------------------------------------------------
@@ -83,17 +85,36 @@ export async function snippetsHandler(_args: z.infer<typeof SnippetsSchema>): Pr
 }
 
 export async function useSnippetHandler(args: z.infer<typeof UseSnippetSchema>): Promise<ToolResult> {
+  if (args.dryRun) {
+    return successResult(`[DRY RUN] Would ${args.send ? "send" : "draft"} email using snippet "${args.name}"`);
+  }
+
+  const killed = guardMutation("superhuman_snippet", args as Record<string, unknown>);
+  if (killed) return killed;
+
   let provider: ConnectionProvider | null = null;
 
   try {
     provider = await getMcpProvider();
+    const account = await provider.getCurrentEmail();
+
+    // Two-phase: stage when sending (not drafting)
+    if (!isConfirmedExecution() && (args.send ?? false)) {
+      const preview = `Would send email using snippet "${args.name}" to ${args.to || "default recipient"}`;
+      const token = stageOperation("superhuman_snippet", args as Record<string, unknown>, preview, account);
+      auditMutation("superhuman_snippet", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+      return successResult(buildStagedResponse(preview, token));
+    }
+
     const userInfo = await getUserInfoFromProvider(provider);
     const snippets = await listSnippets(userInfo);
     const snippet = findSnippet(snippets, args.name);
 
     if (!snippet) {
       const available = snippets.map((s) => s.name).join(", ");
-      return errorResult(`No snippet matching "${args.name}". Available: ${available}`);
+      const toolResult = errorResult(`No snippet matching "${args.name}". Available: ${available}`);
+      auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
     }
 
     // Apply template variables
@@ -112,12 +133,16 @@ export async function useSnippetHandler(args: z.infer<typeof UseSnippetSchema>):
 
     if (args.send) {
       if (to.length === 0) {
-        return errorResult("At least one recipient is required (provide 'to' or snippet must have default recipients)");
+        const toolResult = errorResult("At least one recipient is required (provide 'to' or snippet must have default recipients)");
+        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
       }
 
       const draftResult = await createDraftWithUserInfo(userInfo, { to, cc, bcc, subject, body });
       if (!draftResult.success || !draftResult.draftId || !draftResult.threadId) {
-        return errorResult(`Failed to create draft: ${draftResult.error}`);
+        const toolResult = errorResult(`Failed to create draft: ${draftResult.error}`);
+        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
       }
 
       const sendResult = await sendDraftSuperhuman(userInfo, {
@@ -132,22 +157,32 @@ export async function useSnippetHandler(args: z.infer<typeof UseSnippetSchema>):
       });
 
       if (sendResult.success) {
-        return successResult(`Sent using snippet "${snippet.name}" to ${to.join(", ")}`);
+        const toolResult = successResult(`Sent using snippet "${snippet.name}" to ${to.join(", ")}`);
+        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
       } else {
-        return errorResult(`Failed to send: ${sendResult.error}`);
+        const toolResult = errorResult(`Failed to send: ${sendResult.error}`);
+        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
       }
     } else {
       const result = await createDraftWithUserInfo(userInfo, { to, cc, bcc, subject, body });
       if (result.success) {
-        return successResult(
+        const toolResult = successResult(
           `Draft created from snippet "${snippet.name}"\nDraft ID: ${result.draftId}\nTo: ${to.join(", ")}\nSubject: ${subject || "(none)"}`
         );
+        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
       } else {
-        return errorResult(`Failed to create draft: ${result.error}`);
+        const toolResult = errorResult(`Failed to create draft: ${result.error}`);
+        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
       }
     }
   } catch (error) {
-    return actionableError("Failed to use snippet", error);
+    const toolResult = actionableError("Failed to use snippet", error);
+    auditMutation("superhuman_snippet", args as Record<string, unknown>, "unknown", toolResult);
+    return toolResult;
   } finally {
     if (provider) await provider.disconnect();
   }

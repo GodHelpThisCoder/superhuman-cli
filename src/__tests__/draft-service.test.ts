@@ -109,7 +109,7 @@ describe("DraftService", () => {
 
       // Should still return drafts from the working provider
       expect(drafts).toHaveLength(1);
-      expect(drafts[0].source).toBe("outlook");
+      expect(drafts[0]!.source).toBe("outlook");
     });
   });
 

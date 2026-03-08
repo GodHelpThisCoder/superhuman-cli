@@ -202,16 +202,33 @@ export async function listSnoozedDirect(
       }),
     });
 
+    if (process.env.SUPERHUMAN_DEBUG) {
+      console.error("[DEBUG listSnoozedDirect] result:", result === null ? "null" : JSON.stringify(Object.keys(result)));
+    }
     if (result === null || !result.threadList) {
       return [];
     }
 
+    if (process.env.SUPERHUMAN_DEBUG) {
+      for (const item of result.threadList.slice(0, 3)) {
+        console.error("[DEBUG snooze] raw item:", JSON.stringify({
+          "reminder.threadId": item.thread?.reminder?.threadId,
+          "reminder.reminderId": item.thread?.reminder?.reminderId,
+          "thread.id": item.thread?.id,
+          "item.id": item.id,
+        }));
+      }
+    }
+
     return result.threadList.map((item: any) => ({
-      id: item.thread?.reminder?.threadId || "",
+      id: item.thread?.reminder?.threadId || item.thread?.id || item.id || "",
       snoozeUntil: item.thread?.reminder?.triggerAt,
       reminderId: item.thread?.reminder?.reminderId,
     }));
   } catch (_e) {
+    if (process.env.SUPERHUMAN_DEBUG) {
+      console.error("[DEBUG listSnoozedDirect] error:", _e);
+    }
     return [];
   }
 }
@@ -305,15 +322,24 @@ export async function unsnoozeThreadViaProvider(
   };
 
   // Fetch all snoozed threads to find reminder IDs
-  const snoozedThreads = await listSnoozedDirect(superhumanToken, 200);
+  if (process.env.SUPERHUMAN_DEBUG) {
+    console.error(`[DEBUG unsnooze] token present: ${!!token.idToken}, email: ${token.email}`);
+  }
+  const snoozedThreads = await listSnoozedDirect(superhumanToken, 50);
   const results: SnoozeResult[] = [];
 
   for (const threadId of threadIds) {
-    const snoozed = snoozedThreads.find((t) => t.id === threadId);
+    const snoozed = snoozedThreads.find((t) =>
+      t.id === threadId || t.id.endsWith(threadId) || threadId.endsWith(t.id)
+    );
     if (!snoozed?.reminderId) {
+      if (process.env.SUPERHUMAN_DEBUG) {
+        console.error(`[DEBUG unsnooze] No match for threadId="${threadId}" in ${snoozedThreads.length} snoozed threads:`,
+          snoozedThreads.map(t => t.id).join(", "));
+      }
       results.push({
         success: false,
-        error: "Could not find reminder ID for thread",
+        error: `Could not find reminder ID for thread ${threadId}`,
       });
       continue;
     }

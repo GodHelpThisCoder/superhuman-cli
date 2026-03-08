@@ -68,3 +68,6 @@ export { snippetsHandler, useSnippetHandler } from "./snippets";
 // AI
 export { AskAISchema } from "./ai";
 export { askAIHandler } from "./ai";
+
+// Audit — re-exported directly in server.ts due to barrel resolution quirk
+// export { AuditLogSchema, auditLogHandler } from "./audit";

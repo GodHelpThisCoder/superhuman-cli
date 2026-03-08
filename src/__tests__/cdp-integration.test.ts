@@ -41,7 +41,7 @@ describe("accounts (CDP integration)", () => {
     expect(Array.isArray(accounts)).toBe(true);
     expect(accounts.length).toBeGreaterThan(0);
 
-    const account = accounts[0];
+    const account = accounts[0]!;
     expect(account).toHaveProperty("email");
     expect(account).toHaveProperty("isCurrent");
     expect(typeof account.email).toBe("string");
@@ -105,10 +105,10 @@ describe("MCP account handlers (CDP integration)", () => {
       expect(result).toHaveProperty("content");
       expect(Array.isArray(result.content)).toBe(true);
       expect(result.content.length).toBeGreaterThan(0);
-      expect(result.content[0]).toHaveProperty("type", "text");
+      expect(result.content[0]!).toHaveProperty("type", "text");
       expect(result.isError).toBeUndefined();
 
-      const text = result.content[0].text;
+      const text = result.content[0]!.text;
       expect(text).toContain("@");
     });
 
@@ -116,7 +116,7 @@ describe("MCP account handlers (CDP integration)", () => {
       if (skip) return;
 
       const result = await accountsHandler({});
-      const text = result.content[0].text;
+      const text = result.content[0]!.text;
       expect(text).toContain("(current)");
     });
   });
@@ -133,8 +133,8 @@ describe("MCP account handlers (CDP integration)", () => {
 
       const result = await switchAccountHandler({ account: targetAccount.email });
       expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toContain("Switched to");
-      expect(result.content[0].text).toContain(targetAccount.email);
+      expect(result.content[0]!.text).toContain("Switched to");
+      expect(result.content[0]!.text).toContain(targetAccount.email);
     });
 
     test("switches account by index (1-based)", async () => {
@@ -145,12 +145,12 @@ describe("MCP account handlers (CDP integration)", () => {
 
       const currentIndex = accounts.findIndex((a) => a.isCurrent);
       const targetIndex = currentIndex === 0 ? 2 : 1;
-      const targetEmail = accounts[targetIndex - 1].email;
+      const targetEmail = accounts[targetIndex - 1]!.email;
 
       const result = await switchAccountHandler({ account: String(targetIndex) });
       expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toContain("Switched to");
-      expect(result.content[0].text).toContain(targetEmail);
+      expect(result.content[0]!.text).toContain("Switched to");
+      expect(result.content[0]!.text).toContain(targetEmail);
     });
 
     test("returns error for invalid account identifier", async () => {
@@ -158,7 +158,7 @@ describe("MCP account handlers (CDP integration)", () => {
 
       const result = await switchAccountHandler({ account: "nonexistent@example.com" });
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("not found");
+      expect(result.content[0]!.text).toContain("not found");
     });
 
     test("returns error for out-of-range index", async () => {
@@ -166,7 +166,7 @@ describe("MCP account handlers (CDP integration)", () => {
 
       const result = await switchAccountHandler({ account: "999" });
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("not found");
+      expect(result.content[0]!.text).toContain("not found");
     });
   });
 });

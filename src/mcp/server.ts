@@ -27,6 +27,8 @@ import {
   snippetsHandler, useSnippetHandler,
   AskAISchema, askAIHandler,
 } from "./tools";
+import { AuditLogSchema, auditLogHandler } from "./tools/audit";
+import { ConfirmSchema, confirmHandler } from "./tools/confirm";
 
 function createMcpServer(): McpServer {
   const server = new McpServer(
@@ -84,7 +86,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_draft",
     {
-      description: "Create an email draft via Gmail/Outlook API using cached OAuth tokens.",
+      description: "Create an email draft via Gmail/Outlook API using cached OAuth tokens. Supports file attachments (base64-encoded).",
       inputSchema: DraftSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -94,9 +96,9 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_send",
     {
-      description: "Send an email via Gmail/Outlook API using cached OAuth tokens.",
+      description: "Send an email via Gmail/Outlook API using cached OAuth tokens. Supports file attachments (base64-encoded).",
       inputSchema: SendSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     sendHandler
   );
@@ -104,9 +106,9 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_reply",
     {
-      description: "Reply to an email thread. Creates a draft by default, or sends immediately with send=true. The reply is addressed to the sender of the last message in the thread.",
+      description: "Reply to an email thread. Creates a draft by default, or sends immediately with send=true. The reply is addressed to the sender of the last message in the thread. Supports file attachments.",
       inputSchema: ReplySchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     replyHandler
   );
@@ -114,9 +116,9 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_reply_all",
     {
-      description: "Reply-all to an email thread. Creates a draft by default, or sends immediately with send=true. The reply is addressed to all recipients of the last message (excluding yourself).",
+      description: "Reply-all to an email thread. Creates a draft by default, or sends immediately with send=true. The reply is addressed to all recipients of the last message (excluding yourself). Supports file attachments.",
       inputSchema: ReplyAllSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     replyAllHandler
   );
@@ -124,9 +126,9 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_forward",
     {
-      description: "Forward an email thread to a new recipient. Creates a draft by default, or sends immediately with send=true. Includes the original message with forwarding headers.",
+      description: "Forward an email thread to a new recipient. Creates a draft by default, or sends immediately with send=true. Includes the original message with forwarding headers. Supports file attachments.",
       inputSchema: ForwardSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     forwardHandler
   );
@@ -314,7 +316,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Create a new calendar event in Superhuman. Supports timed events and all-day events with optional attendees.",
       inputSchema: CalendarCreateSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     calendarCreateHandler
   );
@@ -324,7 +326,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Update an existing calendar event in Superhuman. Can modify title, times, description, or attendees.",
       inputSchema: CalendarUpdateSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     calendarUpdateHandler
   );
@@ -366,7 +368,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Switch to a different linked email account in Superhuman. Accepts either an email address or a 1-based index number.",
       inputSchema: SwitchAccountSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     switchAccountHandler
   );
@@ -388,7 +390,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Use a snippet to compose or send an email. Fuzzy-matches snippet by name, applies template variables, and creates a draft or sends immediately.",
       inputSchema: UseSnippetSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     useSnippetHandler
   );
@@ -400,9 +402,33 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Ask Superhuman AI to search emails, answer questions, or compose drafts. Supports natural language queries like 'find emails about the project deadline' or 'what did John say about the budget?'. Optionally provide a thread ID to ask about a specific email thread.",
       inputSchema: AskAISchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     askAIHandler
+  );
+
+  // ---- Confirm (two-phase commit) ----
+
+  server.registerTool(
+    "superhuman_confirm",
+    {
+      description: "Confirm a staged operation. Tier 1/2 mutating tools return a confirmation token instead of executing immediately. Pass the token here to execute. For batches >50 items, set force: true.",
+      inputSchema: ConfirmSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    },
+    confirmHandler
+  );
+
+  // ---- Audit ----
+
+  server.registerTool(
+    "superhuman_audit_log",
+    {
+      description: "View the mutation audit log. Returns recent entries showing all mutating tool calls with timestamps, actions, and results.",
+      inputSchema: AuditLogSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    auditLogHandler
   );
 
   return server;
