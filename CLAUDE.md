@@ -1,5 +1,5 @@
 
-Default to using Bun instead of Node.js.
+Default to using Bun instead of Node.js. Minimum version: Bun 1.3.5.
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`
 - Use `bun test` instead of `jest` or `vitest`
@@ -40,11 +40,6 @@ await Network.enable();
 **Why both pages matter:**
 - **Background page** (`background_page.html`): All API calls to Superhuman backend (`userdata.*`, `messages.*`, etc.)
 - **Main UI page** (`mail.superhuman.com`): User interactions, UI state changes
-
-**Always check page list first:**
-```bash
-bun src/api-investigation/list-cdp-pages.ts
-```
 
 ## APIs
 
