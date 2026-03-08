@@ -5,7 +5,7 @@ CLI and MCP server to control [Superhuman](https://superhuman.com) email client 
 ## Requirements
 
 - [Bun](https://bun.sh) runtime
-- Superhuman.app running with remote debugging enabled
+- Superhuman desktop app running with remote debugging enabled
 
 ## Setup
 
@@ -14,7 +14,11 @@ CLI and MCP server to control [Superhuman](https://superhuman.com) email client 
 bun install
 
 # Start Superhuman with CDP enabled
+# macOS:
 /Applications/Superhuman.app/Contents/MacOS/Superhuman --remote-debugging-port=9333
+
+# Windows:
+"%LOCALAPPDATA%\Programs\Superhuman\Superhuman.exe" --remote-debugging-port=9333
 ```
 
 ## CLI Usage
@@ -107,7 +111,7 @@ Tokens are stored in `~/.config/superhuman-cli/tokens.json` and automatically re
 
 ### Composing Email
 
-Recipients can be specified as email addresses or contact names. Names are automatically resolved to email addresses via contact search.
+Recipients can be specified as email addresses or contact names. Names are automatically resolved to email addresses via contact search. All compose tools (draft, send, reply, reply-all, forward) support file attachments via MCP.
 
 ```bash
 # Create a draft (using email or name)
@@ -151,6 +155,18 @@ superhuman send --draft <draft-id>
 # Send a Superhuman draft with content
 superhuman draft send <draft-id> --account=user@example.com --to=recipient@example.com --subject="Subject" --body="Body"
 ```
+
+#### Attachments on Compose (MCP)
+
+When using MCP tools, all compose operations accept an optional `attachments` array. Each attachment requires:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `filename` | Yes | Filename (e.g., `"report.pdf"`) |
+| `content` | Yes | Base64-encoded file content |
+| `mimeType` | No | MIME type (auto-detected from extension if omitted) |
+
+The two-step flow is handled internally: draft is created, attachments are added via Gmail/MS Graph API, then optionally sent. Auto-detected MIME types include: pdf, docx, xlsx, pptx, png, jpg, gif, csv, json, zip, mp3, mp4, and more.
 
 #### Draft Sources
 
@@ -252,6 +268,8 @@ superhuman attachment download --attachment <attachment-id> --message <message-i
 
 ### Calendar
 
+> **Note:** For Claude Code workflows, use the `morgen` CLI for calendar operations instead — it supports proper calendar filtering. See the `/morgen` skill.
+
 ```bash
 # List events
 superhuman calendar list
@@ -318,11 +336,11 @@ bun src/index.ts --mcp
 | `superhuman_inbox` | List recent emails from inbox |
 | `superhuman_search` | Search emails |
 | `superhuman_read` | Read a thread |
-| `superhuman_draft` | Create an email draft |
-| `superhuman_send` | Send an email |
-| `superhuman_reply` | Reply to a thread |
-| `superhuman_reply_all` | Reply-all to a thread |
-| `superhuman_forward` | Forward a thread |
+| `superhuman_draft` | Create an email draft (supports attachments) |
+| `superhuman_send` | Send an email (supports attachments) |
+| `superhuman_reply` | Reply to a thread (supports attachments) |
+| `superhuman_reply_all` | Reply-all to a thread (supports attachments) |
+| `superhuman_forward` | Forward a thread (supports attachments) |
 | `superhuman_archive` | Archive thread(s) |
 | `superhuman_delete` | Delete thread(s) |
 | `superhuman_mark_read` | Mark thread(s) as read |
@@ -352,7 +370,9 @@ bun src/index.ts --mcp
 
 ### Claude Desktop Configuration
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Add to your Claude Desktop config:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
@@ -379,7 +399,8 @@ Most operations use **direct Gmail API and Microsoft Graph API** calls with cach
 | Read status | Add/remove UNREAD label | `PATCH /messages/{id}` with `isRead` |
 | Archive | Remove INBOX label | `POST /messages/{id}/move` |
 | Star | Add STARRED label | `PATCH /messages/{id}` with `flag` |
-| Attachments | `GET /messages/{id}/attachments/{id}` | `GET /messages/{id}/attachments/{id}` |
+| Attachments (read) | `GET /messages/{id}/attachments/{id}` | `GET /messages/{id}/attachments/{id}` |
+| Attachments (write) | MIME rebuild on draft | `POST /messages/{id}/attachments` |
 | Contacts | Google People API | MS Graph People API |
 | Calendar events | Google Calendar API | MS Graph Calendar API |
 | Free/busy | `POST /freeBusy` | `POST /me/calendar/getSchedule` |
