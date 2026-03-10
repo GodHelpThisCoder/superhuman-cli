@@ -183,7 +183,8 @@ function buildForwardBody(opts: {
   parts.push(`<div>To: ${escapeHtml(opts.to)}</div>`);
   parts.push("<br>");
 
-  // If originalBody already contains HTML, use it as-is; otherwise wrap in div
+  // Intentionally preserve original HTML when forwarding so formatting/quoted
+  // blocks survive round-trip exactly as they appeared in the source thread.
   if (opts.originalBody.includes("<")) {
     parts.push(`<div>${opts.originalBody}</div>`);
   } else {

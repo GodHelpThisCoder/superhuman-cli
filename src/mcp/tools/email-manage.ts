@@ -10,7 +10,7 @@ import { starThread, unstarThread, listStarred } from "../../labels";
 import { parseSnoozeTime, snoozeThreadViaProvider, unsnoozeThreadViaProvider, listSnoozedViaProvider } from "../../snooze";
 import type { ConnectionProvider } from "../../connection-provider";
 import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, type ToolResult } from "./shared";
-import { isConfirmedExecution, stageOperation, buildStagedResponse, buildBatchPreview } from "../confirmation";
+import { isConfirmedExecution, stageOperation, buildStagedResponse, buildBatchPreview, buildManifest } from "../confirmation";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -90,13 +90,14 @@ export async function archiveHandler(args: z.infer<typeof ArchiveSchema>): Promi
     provider = await getMcpProvider();
     const account = await provider.getCurrentEmail();
 
-      // Two-phase: stage unless this is a confirmed execution
-      if (!isConfirmedExecution()) {
-        const preview = buildBatchPreview("archive", args.threadIds);
-        const token = stageOperation("superhuman_archive", args as Record<string, unknown>, preview, account);
-        auditMutation("superhuman_archive", args as Record<string, unknown>, account, successResult(preview), { action: "staged", batchSize: args.threadIds.length });
-        return successResult(buildStagedResponse(preview, token));
-      }
+    // Two-phase: stage unless this is a confirmed execution
+    if (!isConfirmedExecution()) {
+      const manifest = await buildManifest(provider, args.threadIds);
+      const preview = buildBatchPreview("archive", args.threadIds, manifest);
+      const token = stageOperation("superhuman_archive", args as Record<string, unknown>, preview, account);
+      auditMutation("superhuman_archive", args as Record<string, unknown>, account, successResult(preview), { action: "staged", batchSize: args.threadIds.length });
+      return successResult(buildStagedResponse(preview, token));
+    }
 
     const results: { threadId: string; success: boolean }[] = [];
 
@@ -149,13 +150,14 @@ export async function deleteHandler(args: z.infer<typeof DeleteSchema>): Promise
     provider = await getMcpProvider();
     const account = await provider.getCurrentEmail();
 
-      // Two-phase: stage unless this is a confirmed execution
-      if (!isConfirmedExecution()) {
-        const preview = buildBatchPreview("delete", args.threadIds);
-        const token = stageOperation("superhuman_delete", args as Record<string, unknown>, preview, account);
-        auditMutation("superhuman_delete", args as Record<string, unknown>, account, successResult(preview), { action: "staged", batchSize: args.threadIds.length });
-        return successResult(buildStagedResponse(preview, token));
-      }
+    // Two-phase: stage unless this is a confirmed execution
+    if (!isConfirmedExecution()) {
+      const manifest = await buildManifest(provider, args.threadIds);
+      const preview = buildBatchPreview("delete", args.threadIds, manifest);
+      const token = stageOperation("superhuman_delete", args as Record<string, unknown>, preview, account);
+      auditMutation("superhuman_delete", args as Record<string, unknown>, account, successResult(preview), { action: "staged", batchSize: args.threadIds.length });
+      return successResult(buildStagedResponse(preview, token));
+    }
 
     const results: { threadId: string; success: boolean }[] = [];
 

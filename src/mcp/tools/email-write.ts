@@ -147,40 +147,36 @@ export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<T
 
   try {
     const provider = await getMcpProvider();
-    try {
-      const account = await provider.getCurrentEmail();
-      const htmlBody = textToHtml(args.body);
-      const result = await createDraftViaProvider(provider, {
-        to: splitEmails(args.to),
-        subject: args.subject,
-        body: htmlBody,
-        cc: splitEmailsOpt(args.cc),
-        bcc: splitEmailsOpt(args.bcc),
-      });
+    const account = await provider.getCurrentEmail();
+    const htmlBody = textToHtml(args.body);
+    const result = await createDraftViaProvider(provider, {
+      to: splitEmails(args.to),
+      subject: args.subject,
+      body: htmlBody,
+      cc: splitEmailsOpt(args.cc),
+      bcc: splitEmailsOpt(args.bcc),
+    });
 
-      if (!result.success || !result.draftId) {
-        const toolResult = errorResult(`Failed to create draft: ${result.error || "no draft ID returned"}`);
+    if (!result.success || !result.draftId) {
+      const toolResult = errorResult(`Failed to create draft: ${result.error || "no draft ID returned"}`);
+      auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
+    }
+
+    // Add attachments if provided
+    if (args.attachments && args.attachments.length > 0) {
+      const attError = await addAttachments(provider, result.draftId, args.attachments);
+      if (attError) {
+        const toolResult = errorResult(`Draft created (${result.draftId}) but ${attError}`);
         auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult);
         return toolResult;
       }
-
-      // Add attachments if provided
-      if (args.attachments && args.attachments.length > 0) {
-        const attError = await addAttachments(provider, result.draftId, args.attachments);
-        if (attError) {
-          const toolResult = errorResult(`Draft created (${result.draftId}) but ${attError}`);
-          auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult);
-          return toolResult;
-        }
-      }
-
-      const attSuffix = args.attachments?.length ? `\nAttachments: ${args.attachments.length}` : "";
-      const toolResult = successResult(`Draft created successfully\nDraft ID: ${result.draftId}${attSuffix}`);
-      auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult);
-      return toolResult;
-    } finally {
-      await provider.disconnect();
     }
+
+    const attSuffix = args.attachments?.length ? `\nAttachments: ${args.attachments.length}` : "";
+    const toolResult = successResult(`Draft created successfully\nDraft ID: ${result.draftId}${attSuffix}`);
+    auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult);
+    return toolResult;
   } catch (error) {
     const toolResult = actionableError("Failed to create draft", error);
     auditMutation("superhuman_draft", args as Record<string, unknown>, "unknown", toolResult);
@@ -198,55 +194,21 @@ export async function sendHandler(args: z.infer<typeof SendSchema>): Promise<Too
 
   try {
     const provider = await getMcpProvider();
-    try {
-      const account = await provider.getCurrentEmail();
+    const account = await provider.getCurrentEmail();
 
-      // Two-phase: stage unless this is a confirmed execution
-      if (!isConfirmedExecution()) {
-        const preview = `Would send email to ${args.to} with subject "${args.subject}"`;
-        const token = stageOperation("superhuman_send", args as Record<string, unknown>, preview, account);
-        auditMutation("superhuman_send", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
-        return successResult(buildStagedResponse(preview, token));
-      }
+    // Two-phase: stage unless this is a confirmed execution
+    if (!isConfirmedExecution()) {
+      const preview = `Would send email to ${args.to} with subject "${args.subject}"`;
+      const token = stageOperation("superhuman_send", args as Record<string, unknown>, preview, account);
+      auditMutation("superhuman_send", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+      return successResult(buildStagedResponse(preview, token));
+    }
 
-      const htmlBody = textToHtml(args.body);
+    const htmlBody = textToHtml(args.body);
 
-      if (args.attachments && args.attachments.length > 0) {
-        // Two-step: create draft → add attachments → send draft
-        const draftResult = await createDraftViaProvider(provider, {
-          to: splitEmails(args.to),
-          subject: args.subject,
-          body: htmlBody,
-          cc: splitEmailsOpt(args.cc),
-          bcc: splitEmailsOpt(args.bcc),
-        });
-
-        if (!draftResult.success || !draftResult.draftId) {
-          const toolResult = errorResult(`Failed to create draft for send: ${draftResult.error || "no draft ID"}`);
-          auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
-          return toolResult;
-        }
-
-        const attError = await addAttachments(provider, draftResult.draftId, args.attachments);
-        if (attError) {
-          const toolResult = errorResult(`Draft created but ${attError}. Draft ID: ${draftResult.draftId}`);
-          auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
-          return toolResult;
-        }
-
-        const sendResult = await sendDraftByIdViaProvider(provider, draftResult.draftId);
-        if (sendResult.success) {
-          const toolResult = successResult(`Email sent successfully to ${args.to} with ${args.attachments.length} attachment(s)`);
-          auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
-          return toolResult;
-        }
-        const toolResult = errorResult(`Attachments added but send failed: ${sendResult.error}. Draft ID: ${draftResult.draftId}`);
-        auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
-        return toolResult;
-      }
-
-      // No attachments — direct send (existing path)
-      const result = await sendEmailViaProvider(provider, {
+    if (args.attachments && args.attachments.length > 0) {
+      // Two-step: create draft → add attachments → send draft
+      const draftResult = await createDraftViaProvider(provider, {
         to: splitEmails(args.to),
         subject: args.subject,
         body: htmlBody,
@@ -254,17 +216,47 @@ export async function sendHandler(args: z.infer<typeof SendSchema>): Promise<Too
         bcc: splitEmailsOpt(args.bcc),
       });
 
-      if (result.success) {
-        const toolResult = successResult(`Email sent successfully to ${args.to}`);
+      if (!draftResult.success || !draftResult.draftId) {
+        const toolResult = errorResult(`Failed to create draft for send: ${draftResult.error || "no draft ID"}`);
         auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
         return toolResult;
       }
-      const toolResult = errorResult(`Failed to send email: ${result.error}`);
+
+      const attError = await addAttachments(provider, draftResult.draftId, args.attachments);
+      if (attError) {
+        const toolResult = errorResult(`Draft created but ${attError}. Draft ID: ${draftResult.draftId}`);
+        auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
+      }
+
+      const sendResult = await sendDraftByIdViaProvider(provider, draftResult.draftId);
+      if (sendResult.success) {
+        const toolResult = successResult(`Email sent successfully to ${args.to} with ${args.attachments.length} attachment(s)`);
+        auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+        return toolResult;
+      }
+      const toolResult = errorResult(`Attachments added but send failed: ${sendResult.error}. Draft ID: ${draftResult.draftId}`);
       auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
       return toolResult;
-    } finally {
-      await provider.disconnect();
     }
+
+    // No attachments — direct send (existing path)
+    const result = await sendEmailViaProvider(provider, {
+      to: splitEmails(args.to),
+      subject: args.subject,
+      body: htmlBody,
+      cc: splitEmailsOpt(args.cc),
+      bcc: splitEmailsOpt(args.bcc),
+    });
+
+    if (result.success) {
+      const toolResult = successResult(`Email sent successfully to ${args.to}`);
+      auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+      return toolResult;
+    }
+    const toolResult = errorResult(`Failed to send email: ${result.error}`);
+    auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+    return toolResult;
   } catch (error) {
     const toolResult = actionableError("Failed to send email", error);
     auditMutation("superhuman_send", args as Record<string, unknown>, "unknown", toolResult);

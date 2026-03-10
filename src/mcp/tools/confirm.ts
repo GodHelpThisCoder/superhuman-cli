@@ -63,17 +63,18 @@ export async function confirmHandler(args: z.infer<typeof ConfirmSchema>): Promi
     // Resolve current account for binding check
     let currentAccount = "unknown";
     try {
-      const provider = await getMcpProvider();
-      try {
-        currentAccount = await provider.getCurrentEmail();
-      } finally {
-        await provider.disconnect();
+      const token = await resolveSuperhumanToken();
+      if (token?.email) {
+        currentAccount = token.email;
       }
     } catch {
-      // If we can't get account, try token-based
+      // Fall through to CDP lookup below.
+    }
+
+    if (currentAccount === "unknown") {
       try {
-        const token = await resolveSuperhumanToken();
-        if (token?.email) currentAccount = token.email;
+        const provider = await getMcpProvider();
+        currentAccount = await provider.getCurrentEmail();
       } catch {
         // Fall back to "unknown" — account binding check will be lenient
       }

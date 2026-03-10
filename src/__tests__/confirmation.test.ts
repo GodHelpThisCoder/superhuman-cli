@@ -167,6 +167,23 @@ describe("isConfirmedExecution", () => {
     }
     expect(isConfirmedExecution()).toBe(false);
   });
+
+  it("isolates concurrent confirmations", async () => {
+    let stillConfirmedInSecond = false;
+
+    await Promise.all([
+      withConfirmation("shm_first", async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }),
+      withConfirmation("shm_second", async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        stillConfirmedInSecond = isConfirmedExecution();
+      }),
+    ]);
+
+    expect(stillConfirmedInSecond).toBe(true);
+    expect(isConfirmedExecution()).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -216,5 +233,22 @@ describe("buildBatchPreview", () => {
     const preview = buildBatchPreview("delete", ids);
     expect(preview).toContain("60 threads");
     expect(preview).toContain("force: true");
+  });
+
+  it("includes sender digest anomalies when manifest is provided", () => {
+    const ids = Array.from({ length: 20 }, (_, i) => `t${i}`);
+    const preview = buildBatchPreview("delete", ids, {
+      threads: ids.map((id, i) => ({
+        threadId: id,
+        subject: `Subject ${i}`,
+        from: i < 19 ? "bulk@example.com" : "ceo@example.com",
+        date: "2026-03-01T00:00:00.000Z",
+      })),
+      digest: "Digest: 20 threads | oldest: Mar 1 | newest: Mar 6\n  19 from bulk@example.com\n  1 from ceo@example.com <-- ANOMALY (<5%)",
+      anomalies: ["ceo@example.com"],
+    });
+
+    expect(preview).toContain("Digest: 20 threads");
+    expect(preview).toContain("ANOMALY");
   });
 });

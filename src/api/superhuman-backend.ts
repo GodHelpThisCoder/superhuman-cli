@@ -12,6 +12,7 @@ import type {
   AIQueryOptions,
   AIQueryResult,
 } from "../auth/types";
+import { randomInt, randomUUID } from "node:crypto";
 import { SUPERHUMAN_BACKEND_BASE } from "./http-utils";
 import { getThreadMessages } from "./gmail-client";
 
@@ -30,7 +31,7 @@ const BASE62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 function randomBase62(length: number): string {
   let result = "";
   for (let i = 0; i < length; i++) {
-    result += BASE62.charAt(Math.floor(Math.random() * BASE62.length));
+    result += BASE62.charAt(randomInt(BASE62.length));
   }
   return result;
 }
@@ -50,11 +51,7 @@ function randomBase62(length: number): string {
 function generateEventId(userPrefix: string = ""): string {
   // If no user prefix provided, fall back to old random generation
   if (!userPrefix || userPrefix.length !== 4) {
-    let id = "event_";
-    for (let i = 0; i < 18; i++) {
-      id += BASE62.charAt(Math.floor(Math.random() * BASE62.length));
-    }
-    return id;
+    return `event_${randomBase62(18)}`;
   }
 
   // Format: 11V + 4 random + userPrefix + 7 random = 18 chars total
@@ -137,7 +134,7 @@ export async function askAI(
   query: string,
   options?: AIQueryOptions,
 ): Promise<AIQueryResult> {
-  const sessionId = options?.sessionId || crypto.randomUUID();
+  const sessionId = options?.sessionId || randomUUID();
 
   let payload: Record<string, unknown>;
 
@@ -268,7 +265,7 @@ export async function askAISearch(
   query: string,
   options?: AIQueryOptions & { threadId?: string },
 ): Promise<AIQueryResult> {
-  const sessionId = options?.sessionId || crypto.randomUUID();
+  const sessionId = options?.sessionId || randomUUID();
 
   // Extract provider_id from the JWT idToken
   const jwtPayload = decodeJwtPayload(superhumanToken);

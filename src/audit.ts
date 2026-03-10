@@ -6,7 +6,7 @@
  */
 
 import { appendFile, rename, stat } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { getConfigDir } from "./config";
 
 // ---------------------------------------------------------------------------
@@ -33,6 +33,36 @@ export interface AuditEntry {
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 const BODY_TRUNCATE_LENGTH = 200;
 
+function truncate(value: string): string {
+  return value.length > BODY_TRUNCATE_LENGTH
+    ? value.slice(0, BODY_TRUNCATE_LENGTH) + "..."
+    : value;
+}
+
+function sanitizeArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const sanitizedArgs: Record<string, unknown> = { ...args };
+
+  if (typeof sanitizedArgs.body === "string") {
+    sanitizedArgs.body = truncate(sanitizedArgs.body);
+  }
+
+  if (Array.isArray(sanitizedArgs.attachments)) {
+    sanitizedArgs.attachments = sanitizedArgs.attachments.map((attachment) => {
+      if (!attachment || typeof attachment !== "object") {
+        return attachment;
+      }
+
+      const safeAttachment = { ...(attachment as Record<string, unknown>) };
+      if (typeof safeAttachment.content === "string") {
+        safeAttachment.content = truncate(safeAttachment.content);
+      }
+      return safeAttachment;
+    });
+  }
+
+  return sanitizedArgs;
+}
+
 function auditLogPath(): string {
   return `${getConfigDir()}/audit.jsonl`;
 }
@@ -52,30 +82,33 @@ export async function logAudit(entry: Omit<AuditEntry, "timestamp">): Promise<vo
     }
 
     const logPath = auditLogPath();
+    let shouldChmod = !existsSync(logPath);
 
     // Rotate if file exceeds 10MB
     try {
       const stats = await stat(logPath);
       if (stats.size > MAX_LOG_SIZE) {
         await rename(logPath, `${logPath}.1`);
+        shouldChmod = true;
       }
     } catch {
       // File doesn't exist yet — that's fine
     }
 
-    // Truncate body field in args if present
-    const sanitizedArgs = { ...entry.args };
-    if (typeof sanitizedArgs.body === "string" && sanitizedArgs.body.length > BODY_TRUNCATE_LENGTH) {
-      sanitizedArgs.body = sanitizedArgs.body.slice(0, BODY_TRUNCATE_LENGTH) + "...";
-    }
-
     const fullEntry: AuditEntry = {
       timestamp: new Date().toISOString(),
       ...entry,
-      args: sanitizedArgs,
+      args: sanitizeArgs(entry.args),
     };
 
     await appendFile(logPath, JSON.stringify(fullEntry) + "\n");
+    if (shouldChmod) {
+      try {
+        chmodSync(logPath, 0o600);
+      } catch {
+        // Best-effort only (Windows may ignore mode bits)
+      }
+    }
   } catch {
     // Audit failure must never block operations — silently swallow
   }
