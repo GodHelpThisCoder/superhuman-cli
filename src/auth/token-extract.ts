@@ -7,7 +7,7 @@
 
 import type { TokenInfo, CapturedToken, SuperhumanTokenInfo } from "./types";
 import type { SuperhumanConnection, ChromeExtConnection } from "../superhuman-api";
-import { tokenCache } from "./token-store";
+import { setTokenInCache } from "./token-store";
 import { listAccounts, switchAccount } from "../accounts";
 
 // ============================================================================
@@ -311,7 +311,7 @@ export async function extractTokenChrome(
   };
 
   // Cache it
-  tokenCache.set(email, tokenInfo);
+  setTokenInCache(email, tokenInfo);
   return tokenInfo;
 }
 

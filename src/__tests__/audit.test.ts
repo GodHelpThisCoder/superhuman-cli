@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { logAudit, readAuditLog, type AuditEntry } from "../audit";
@@ -102,6 +102,41 @@ describe("logAudit", () => {
     const entry = JSON.parse(content) as AuditEntry;
     expect((entry.args.body as string).length).toBe(203); // 200 + "..."
     expect((entry.args.body as string).endsWith("...")).toBe(true);
+  });
+
+  it("truncates attachment content fields", async () => {
+    await logAudit({
+      tool: "superhuman_send",
+      account: "a@test.com",
+      action: "executed",
+      args: {
+        attachments: [{ filename: "report.pdf", content: "A".repeat(500) }],
+      },
+      result: "success",
+      dryRun: false,
+    });
+
+    const content = readFileSync(join(testDir, "audit.jsonl"), "utf-8").trim();
+    const entry = JSON.parse(content) as AuditEntry;
+    const attachments = entry.args.attachments as Array<{ content: string }>;
+    expect(attachments[0]?.content.length).toBe(203);
+    expect(attachments[0]?.content.endsWith("...")).toBe(true);
+  });
+
+  it("applies secure permissions to new log file", async () => {
+    await logAudit({
+      tool: "superhuman_send",
+      account: "a@test.com",
+      action: "executed",
+      args: {},
+      result: "success",
+      dryRun: false,
+    });
+
+    if (process.platform !== "win32") {
+      const mode = statSync(join(testDir, "audit.jsonl")).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
   });
 
   it("preserves short body fields", async () => {

@@ -10,6 +10,7 @@
 import type { SuperhumanTokenInfo, TokenInfo } from "./token-api";
 import { superhumanFetch, gmailFetch, msgraphFetch } from "./token-api";
 import type { ConnectionProvider } from "./connection-provider";
+import { randomUUID } from "node:crypto";
 
 export interface SnoozeResult {
   success: boolean;
@@ -93,11 +94,7 @@ export function parseSnoozeTime(timeStr: string): Date {
  * Generate a UUID for reminder IDs.
  */
 function generateUUID(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+  return randomUUID();
 }
 
 /**

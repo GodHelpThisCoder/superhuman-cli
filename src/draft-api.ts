@@ -5,6 +5,7 @@
  */
 
 import type { SuperhumanConnection } from "./superhuman-api";
+import { randomBytes, randomUUID } from "node:crypto";
 
 const SUPERHUMAN_BACKEND = "https://mail.superhuman.com/~backend";
 
@@ -12,18 +13,15 @@ const SUPERHUMAN_BACKEND = "https://mail.superhuman.com/~backend";
  * Generate a draft ID in Superhuman's format: "draft00" + 14 hex chars
  */
 function generateDraftId(): string {
-  const hex = Array.from({ length: 14 }, () =>
-    Math.floor(Math.random() * 16).toString(16)
-  ).join("");
-  return `draft00${hex}`;
+  return `draft00${randomBytes(7).toString("hex")}`;
 }
 
 /**
  * Generate an RFC822 Message-ID
  */
 function generateRfc822Id(): string {
-  const random = Math.random().toString(36).substring(2, 10);
-  const uuid = crypto.randomUUID();
+  const random = randomBytes(6).toString("base64url").slice(0, 8);
+  const uuid = randomUUID();
   return `<${random}.${uuid}@we.are.superhuman.com>`;
 }
 
@@ -154,7 +152,7 @@ export async function createDraftWithUserInfo(
         cc: (options.cc || []).join(","),
         attachments: "",
       },
-      lastSessionId: crypto.randomUUID(),
+      lastSessionId: randomUUID(),
       quotedContent: "",
       quotedContentInlined: false,
       references: options.references || [],
@@ -251,7 +249,7 @@ export async function updateDraftDirect(
         cc: (options.cc || []).join(","),
         attachments: "",
       },
-      lastSessionId: crypto.randomUUID(),
+      lastSessionId: randomUUID(),
       quotedContent: "",
       quotedContentInlined: false,
       references: [],
@@ -388,7 +386,7 @@ export async function updateDraftWithUserInfo(
         cc: (options.cc || []).join(","),
         attachments: "",
       },
-      lastSessionId: crypto.randomUUID(),
+      lastSessionId: randomUUID(),
       quotedContent: "",
       quotedContentInlined: false,
       references: [],
@@ -502,7 +500,7 @@ export async function sendDraftSuperhuman(
 ): Promise<SendDraftResult> {
   try {
     const rfc822Id = generateRfc822Id();
-    const superhumanId = crypto.randomUUID();
+    const superhumanId = randomUUID();
 
     // Build the outgoing_message structure per Superhuman's API format
     const outgoingMessage = {

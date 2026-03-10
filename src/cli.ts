@@ -68,6 +68,7 @@ import { activate as killActivate, deactivate as killDeactivate, isKilled } from
 import { GmailDraftProvider } from "./providers/gmail-draft-provider";
 import { OutlookDraftProvider } from "./providers/outlook-draft-provider";
 import { SuperhumanDraftProvider } from "./providers/superhuman-draft-provider";
+import { basename, relative, resolve, sep } from "node:path";
 
 const VERSION = "0.14.0";
 const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
@@ -2439,6 +2440,23 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function getSafeAttachmentOutputPath(outputDir: string, attachmentName: string): string {
+  const safeName = basename(attachmentName);
+  if (!safeName || safeName === "." || safeName === "..") {
+    throw new Error(`Unsafe attachment filename: ${attachmentName}`);
+  }
+
+  const resolvedOutputDir = resolve(outputDir);
+  const resolvedOutputPath = resolve(resolvedOutputDir, safeName);
+  const relPath = relative(resolvedOutputDir, resolvedOutputPath);
+
+  if (relPath === "" || relPath === ".." || relPath.startsWith(`..${sep}`)) {
+    throw new Error(`Attachment path escapes output directory: ${attachmentName}`);
+  }
+
+  return resolvedOutputPath;
+}
+
 async function cmdAttachments(options: CliOptions) {
   if (!options.threadId) {
     error("Thread ID is required");
@@ -2483,7 +2501,9 @@ async function cmdDownload(options: CliOptions) {
     try {
       info(`Downloading attachment ${options.attachmentId}...`);
       const content = await downloadAttachment(provider, options.messageId, options.attachmentId);
-      const outputPath = options.outputPath || `attachment-${options.attachmentId}`;
+      const outputPath = options.outputPath
+        ? resolve(options.outputPath)
+        : getSafeAttachmentOutputPath(".", `attachment-${options.attachmentId}`);
       await Bun.write(outputPath, Buffer.from(content.data, "base64"));
       success(`Downloaded: ${outputPath} (${formatFileSize(content.size)})`);
     } catch (e) {
@@ -2513,6 +2533,7 @@ async function cmdDownload(options: CliOptions) {
   }
 
   const outputDir = options.outputPath || ".";
+  const resolvedOutputDir = resolve(outputDir);
   let successCount = 0;
   let failCount = 0;
 
@@ -2526,7 +2547,7 @@ async function cmdDownload(options: CliOptions) {
         att.threadId,
         att.mimeType
       );
-      const outputPath = `${outputDir}/${att.name}`;
+      const outputPath = getSafeAttachmentOutputPath(resolvedOutputDir, att.name);
       await Bun.write(outputPath, Buffer.from(content.data, "base64"));
       success(`Downloaded: ${outputPath} (${formatFileSize(content.size)})`);
       successCount++;

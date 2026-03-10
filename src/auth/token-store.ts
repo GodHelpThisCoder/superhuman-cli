@@ -54,7 +54,7 @@ function decrypt(data: string): string {
 // ---------------------------------------------------------------------------
 
 /** In-memory token cache keyed by email address. */
-export const tokenCache = new Map<string, TokenInfo>();
+const tokenCache = new Map<string, TokenInfo>();
 
 /** Get a token from the in-memory cache (no refresh logic). */
 export function getTokenFromCache(email: string): TokenInfo | undefined {
@@ -99,7 +99,7 @@ export async function getToken(
   conn: CDPConnection,
   email: string,
 ): Promise<TokenInfo> {
-  // Lazy-import to avoid circular dependency (token-extract imports tokenCache from this module)
+  // Lazy-import to avoid circular dependency (token-extract imports setter helpers from this module)
   const { extractToken } = await import("./token-extract");
 
   // Check cache first

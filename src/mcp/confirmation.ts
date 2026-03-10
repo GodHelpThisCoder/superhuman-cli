@@ -6,6 +6,9 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { ConnectionProvider } from "../connection-provider";
+import { readThread } from "../read";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -20,6 +23,19 @@ export interface StagedOperation {
   createdAt: number;
   ttlMs: number;
   account: string;
+}
+
+export interface ManifestThreadInfo {
+  threadId: string;
+  subject: string;
+  from: string;
+  date: string;
+}
+
+export interface BatchManifest {
+  threads: ManifestThreadInfo[];
+  digest: string;
+  anomalies: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -54,14 +70,14 @@ function hashArgs(args: Record<string, unknown>): string {
 // Confirmed Execution Flag
 // ---------------------------------------------------------------------------
 
-let _confirmedToken: string | null = null;
+const confirmedContext = new AsyncLocalStorage<{ token: string }>();
 
 /**
  * Returns true if the current execution is a confirmed replay
  * (i.e., called from the confirmHandler after token validation).
  */
 export function isConfirmedExecution(): boolean {
-  return _confirmedToken !== null;
+  return !!confirmedContext.getStore();
 }
 
 /**
@@ -69,12 +85,96 @@ export function isConfirmedExecution(): boolean {
  * Sets the confirmed flag so handlers skip staging.
  */
 export async function withConfirmation<T>(token: string, fn: () => Promise<T>): Promise<T> {
-  _confirmedToken = token;
-  try {
-    return await fn();
-  } finally {
-    _confirmedToken = null;
+  return confirmedContext.run({ token }, fn);
+}
+
+const SHORT_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+});
+
+function formatShortDate(rawDate: string): string {
+  if (!rawDate) return "unknown";
+  const parsed = new Date(rawDate);
+  if (Number.isNaN(parsed.getTime())) return "unknown";
+  return SHORT_DATE_FORMAT.format(parsed);
+}
+
+function fallbackManifest(threadIds: string[]): BatchManifest {
+  const count = threadIds.length;
+  return {
+    threads: threadIds.map((threadId) => ({
+      threadId,
+      subject: "(metadata unavailable)",
+      from: "unknown",
+      date: "unknown",
+    })),
+    digest: `Digest: ${count} thread${count === 1 ? "" : "s"} | oldest: unknown | newest: unknown`,
+    anomalies: [],
+  };
+}
+
+/**
+ * Build sender/date manifest for batch previews.
+ * Best-effort only: metadata lookup failures are included as unknown rows.
+ */
+export async function buildManifest(
+  provider: ConnectionProvider,
+  threadIds: string[],
+): Promise<BatchManifest> {
+  const threads = await Promise.all(threadIds.map(async (threadId) => {
+    try {
+      const messages = await readThread(provider, threadId);
+      const latest = messages[messages.length - 1] ?? messages[0];
+      return {
+        threadId,
+        subject: latest?.subject || "(unknown subject)",
+        from: latest?.from?.email || latest?.from?.name || "unknown",
+        date: latest?.date || "unknown",
+      };
+    } catch {
+      return {
+        threadId,
+        subject: "(metadata unavailable)",
+        from: "unknown",
+        date: "unknown",
+      };
+    }
+  }));
+
+  const senderCounts = new Map<string, number>();
+  const validDates: number[] = [];
+  for (const thread of threads) {
+    senderCounts.set(thread.from, (senderCounts.get(thread.from) || 0) + 1);
+
+    const ts = Date.parse(thread.date);
+    if (!Number.isNaN(ts)) {
+      validDates.push(ts);
+    }
   }
+
+  const oldest = validDates.length > 0 ? formatShortDate(new Date(Math.min(...validDates)).toISOString()) : "unknown";
+  const newest = validDates.length > 0 ? formatShortDate(new Date(Math.max(...validDates)).toISOString()) : "unknown";
+  const total = threads.length;
+
+  const anomalies: string[] = [];
+  const senderLines = Array.from(senderCounts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([sender, count]) => {
+      const anomalous = total > 0 && count / total < 0.05;
+      if (anomalous) {
+        anomalies.push(sender);
+      }
+      return `  ${count} from ${sender}${anomalous ? " <-- ANOMALY (<5%)" : ""}`;
+    });
+
+  const digestHeader = `Digest: ${total} thread${total === 1 ? "" : "s"} | oldest: ${oldest} | newest: ${newest}`;
+
+  return {
+    threads,
+    digest: senderLines.length > 0 ? `${digestHeader}\n${senderLines.join("\n")}` : digestHeader,
+    anomalies,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -171,29 +271,29 @@ export function buildStagedResponse(preview: string, token: string): string {
 export function buildBatchPreview(
   action: string,
   threadIds: string[],
+  manifest?: BatchManifest,
 ): string {
+  const resolvedManifest = manifest ?? fallbackManifest(threadIds);
   const count = threadIds.length;
+  const detail = (thread: ManifestThreadInfo, i: number) =>
+    `  ${i + 1}. ${thread.threadId} — "${thread.subject}" (from ${thread.from}, ${formatShortDate(thread.date)})`;
 
   if (count <= 5) {
-    // Full detail per thread (just IDs — we don't have metadata without provider)
-    const list = threadIds.map((id, i) => `  ${i + 1}. ${id}`).join("\n");
-    return `Would ${action} ${count} thread(s):\n${list}`;
+    const list = resolvedManifest.threads.map((thread, i) => detail(thread, i)).join("\n");
+    return `Would ${action} ${count} thread(s):\n${resolvedManifest.digest}\n${list}`;
   }
 
   if (count <= 20) {
-    // Digest + thread list
-    const list = threadIds.map((id, i) => `  ${i + 1}. ${id}`).join("\n");
-    return `Would ${action} ${count} threads:\n${list}`;
+    const list = resolvedManifest.threads.map((thread, i) => detail(thread, i)).join("\n");
+    return `Would ${action} ${count} threads:\n${resolvedManifest.digest}\nSubjects:\n${list}`;
   }
 
   if (count <= 50) {
-    // Digest + 5-thread sample
-    const sample = threadIds.slice(0, 5).map((id, i) => `  ${i + 1}. ${id}`).join("\n");
-    return `Would ${action} ${count} threads (showing first 5):\n${sample}\n  ... and ${count - 5} more`;
+    const sample = resolvedManifest.threads.slice(0, 5).map((thread, i) => detail(thread, i)).join("\n");
+    return `Would ${action} ${count} threads (showing first 5):\n${resolvedManifest.digest}\nSample:\n${sample}\n  ... and ${count - 5} more`;
   }
 
-  // 51+: digest only, force required
-  return `Would ${action} ${count} threads. WARNING: Large batch — force: true required on confirm.`;
+  return `Would ${action} ${count} threads.\n${resolvedManifest.digest}\nWARNING: Large batch — force: true required on confirm.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +303,6 @@ export function buildBatchPreview(
 /** Clear all staged operations (for testing). */
 export function _clearStaged(): void {
   staged.clear();
-  _confirmedToken = null;
 }
 
 /** Get count of staged operations (for testing). */

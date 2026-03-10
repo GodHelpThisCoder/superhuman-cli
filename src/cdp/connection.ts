@@ -277,8 +277,13 @@ export function unescapeString(text: string): string {
  */
 export function textToHtml(text: string): string {
   if (!text) return "";
-  if (text.includes("<")) return text;
+  if (/<[a-z][\s\S]*>/i.test(text)) return text;
 
-  const unescaped = unescapeString(text);
-  return `<p>${unescaped.replace(/\n/g, "</p><p>")}</p>`;
+  const escaped = unescapeString(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+  return `<p>${escaped.replace(/\n/g, "</p><p>")}</p>`;
 }
