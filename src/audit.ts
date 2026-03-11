@@ -5,8 +5,7 @@
  * Fire-and-forget: logAudit() never throws into the handler.
  */
 
-import { appendFile, rename, stat } from "node:fs/promises";
-import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmod, mkdir, rename } from "node:fs/promises";
 import { getConfigDir } from "./config";
 
 // ---------------------------------------------------------------------------
@@ -77,22 +76,18 @@ function auditLogPath(): string {
 export async function logAudit(entry: Omit<AuditEntry, "timestamp">): Promise<void> {
   try {
     const dir = getConfigDir();
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
+    await mkdir(dir, { recursive: true });
 
     const logPath = auditLogPath();
-    let shouldChmod = !existsSync(logPath);
+    const existingFile = Bun.file(logPath);
+    let shouldChmod = !(await existingFile.exists());
 
     // Rotate if file exceeds 10MB
-    try {
-      const stats = await stat(logPath);
-      if (stats.size > MAX_LOG_SIZE) {
+    if (await existingFile.exists()) {
+      if (existingFile.size > MAX_LOG_SIZE) {
         await rename(logPath, `${logPath}.1`);
         shouldChmod = true;
       }
-    } catch {
-      // File doesn't exist yet — that's fine
     }
 
     const fullEntry: AuditEntry = {
@@ -101,13 +96,14 @@ export async function logAudit(entry: Omit<AuditEntry, "timestamp">): Promise<vo
       args: sanitizeArgs(entry.args),
     };
 
-    await appendFile(logPath, JSON.stringify(fullEntry) + "\n");
+    const line = JSON.stringify(fullEntry) + "\n";
+    const current = await Bun.file(logPath).text().catch(() => "");
+    await Bun.write(logPath, current + line);
+
     if (shouldChmod) {
-      try {
-        chmodSync(logPath, 0o600);
-      } catch {
+      await chmod(logPath, 0o600).catch(() => {
         // Best-effort only (Windows may ignore mode bits)
-      }
+      });
     }
   } catch {
     // Audit failure must never block operations — silently swallow
@@ -122,12 +118,13 @@ export async function readAuditLog(options?: {
   tool?: string;
 }): Promise<AuditEntry[]> {
   const logPath = auditLogPath();
+  const file = Bun.file(logPath);
 
-  if (!existsSync(logPath)) {
+  if (!(await file.exists())) {
     return [];
   }
 
-  const content = readFileSync(logPath, "utf-8");
+  const content = await file.text();
   const lines = content.trim().split("\n").filter(Boolean);
 
   let entries: AuditEntry[] = [];

@@ -29,19 +29,22 @@ import {
 } from "./tools";
 import { AuditLogSchema, auditLogHandler } from "./tools/audit";
 import { ConfirmSchema, confirmHandler } from "./tools/confirm";
+import { APP_VERSION } from "../version";
 
 function createMcpServer(): McpServer {
   const server = new McpServer(
-    { name: "superhuman-cli", version: "0.14.0" },
+    { name: "superhuman-cli", version: APP_VERSION },
     {
       capabilities: { tools: {} },
       instructions: `Superhuman email and calendar automation server.
 
 WORKFLOW: Use superhuman_accounts first to see available accounts. Use superhuman_inbox or superhuman_search to find emails — these return thread IDs needed by all action tools.
 
-READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_calendar_list, superhuman_calendar_free_busy.
+READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_download_attachment, superhuman_calendar_list, superhuman_calendar_free_busy, superhuman_audit_log.
 
 WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_add_label, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai.
+
+CONFIRMATION TOOL: superhuman_confirm (executes a previously staged mutation token).
 
 DESTRUCTIVE TOOLS (irreversible): superhuman_archive, superhuman_delete, superhuman_calendar_delete.
 
@@ -412,7 +415,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_confirm",
     {
-      description: "Confirm a staged operation. Tier 1/2 mutating tools return a confirmation token instead of executing immediately. Pass the token here to execute. For batches >50 items, set force: true.",
+      description: "Confirm a staged operation. Mutating tools may return a confirmation token instead of executing immediately. Pass the token here to execute. For batches >50 items, set force: true.",
       inputSchema: ConfirmSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },

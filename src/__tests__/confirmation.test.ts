@@ -90,16 +90,16 @@ describe("confirmOperation", () => {
       .toThrow(/Account mismatch/);
   });
 
-  it("allows unknown accounts (lenient binding)", () => {
+  it("rejects staged operations with unknown account binding", () => {
     const token = stageOperation("superhuman_send", {}, "preview", "unknown");
-    const op = confirmOperation(token, "anyone@test.com");
-    expect(op.tool).toBe("superhuman_send");
+    expect(() => confirmOperation(token, "anyone@test.com"))
+      .toThrow(/Account binding unavailable/);
   });
 
-  it("allows confirmation when current account is unknown", () => {
+  it("rejects confirmation when current account is unknown", () => {
     const token = stageOperation("superhuman_send", {}, "preview", "alice@test.com");
-    const op = confirmOperation(token, "unknown");
-    expect(op.tool).toBe("superhuman_send");
+    expect(() => confirmOperation(token, "unknown"))
+      .toThrow(/Account binding unavailable/);
   });
 
   it("rejects replay (double confirm)", () => {

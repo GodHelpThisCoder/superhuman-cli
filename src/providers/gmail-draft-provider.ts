@@ -13,6 +13,7 @@ const GMAIL_API = "https://www.googleapis.com/gmail/v1/users/me";
  * Gmail API draft list response
  */
 interface GmailDraftsListResponse {
+  drafts?: { id: string }[];
   messages?: { id: string }[];
   nextPageToken?: string;
 }
@@ -45,19 +46,46 @@ export class GmailDraftProvider implements IDraftProvider {
   }
 
   async listDrafts(limit: number = 50, offset: number = 0): Promise<Draft[]> {
-    const pageToken = offset > 0 ? `&pageToken=${offset}` : "";
-    const path = `/drafts?maxResults=${limit}${pageToken}`;
+    let pageToken: string | undefined;
+    let toSkip = Math.max(0, offset);
+    const draftRefs: Array<{ id: string }> = [];
 
-    const listResponse = await this.gmailFetch(path);
-    const listResult = listResponse as GmailDraftsListResponse | null;
+    while (draftRefs.length < limit) {
+      const remaining = limit - draftRefs.length;
+      const pageSize = Math.min(500, Math.max(remaining + toSkip, remaining));
+      const tokenParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
+      const path = `/drafts?maxResults=${pageSize}${tokenParam}`;
 
-    if (!listResult || !listResult.messages || listResult.messages.length === 0) {
+      const listResponse = await this.gmailFetch(path);
+      const listResult = listResponse as GmailDraftsListResponse | null;
+      const pageDrafts = (listResult?.drafts ?? listResult?.messages ?? []);
+
+      if (pageDrafts.length === 0) {
+        break;
+      }
+
+      if (toSkip >= pageDrafts.length) {
+        toSkip -= pageDrafts.length;
+      } else {
+        const start = toSkip;
+        draftRefs.push(...pageDrafts.slice(start, start + remaining));
+        toSkip = 0;
+      }
+
+      if (!listResult?.nextPageToken) {
+        break;
+      }
+
+      pageToken = listResult.nextPageToken;
+    }
+
+    if (draftRefs.length === 0) {
       return [];
     }
 
     const drafts: Draft[] = [];
 
-    for (const draft of listResult.messages) {
+    for (const draft of draftRefs) {
       try {
         const detailPath = `/drafts/${draft.id}?format=full`;
         const detailResult = (await this.gmailFetch(detailPath)) as GmailDraftDetailResponse | null;

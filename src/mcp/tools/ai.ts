@@ -11,17 +11,17 @@ import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../co
 // Schema
 // ---------------------------------------------------------------------------
 
-export const AskAISchema = {
+export const AskAISchema = z.object({
   query: z.string().describe("Natural language query — search emails, ask questions, compose drafts, etc."),
   thread_id: z.string().optional().describe("Optional thread ID to ask about a specific email thread"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-};
+});
 
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
 
-export async function askAIHandler(args: z.infer<z.ZodObject<typeof AskAISchema>>): Promise<ToolResult> {
+export async function askAIHandler(args: z.infer<typeof AskAISchema>): Promise<ToolResult> {
   if (args.dryRun) {
     return successResult(`[DRY RUN] Would invoke Superhuman AI with query: "${args.query}"`);
   }

@@ -18,7 +18,7 @@ import {
 import { isKilled } from "../../kill-switch";
 import { logAudit } from "../../audit";
 
-export const CDP_PORT = 9333;
+export const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
 
 export type TextContent = { type: "text"; text: string };
 export type ToolResult = { content: TextContent[]; isError?: boolean };
@@ -71,7 +71,7 @@ export async function getMcpProvider(): Promise<ConnectionProvider> {
   }
   if (!conn) {
     throw new Error(
-      "Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333"
+      `Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${CDP_PORT}`
     );
   }
   _cachedCdpProvider = new CDPConnectionProvider(conn);
@@ -111,13 +111,13 @@ export function actionableError(context: string, error: unknown): ToolResult {
     return errorResult(
       `Authentication failed: ${context}. Token may be expired. ` +
       `Use superhuman_accounts to verify account status, or restart Superhuman ` +
-      `with --remote-debugging-port=9333 to re-authenticate.`
+      `with --remote-debugging-port=${CDP_PORT} to re-authenticate.`
     );
   }
   if (msg.includes("Could not connect") || msg.includes("ECONNREFUSED")) {
     return errorResult(
       `Connection failed: ${context}. Ensure Superhuman is running ` +
-      `with --remote-debugging-port=9333. If it just started, wait a few seconds and retry.`
+      `with --remote-debugging-port=${CDP_PORT}. If it just started, wait a few seconds and retry.`
     );
   }
   return errorResult(`${context}: ${msg}. Verify Superhuman is running and the account is authenticated.`);
@@ -131,7 +131,8 @@ export function guardMutation(tool?: string, args?: Record<string, unknown>): To
   const { killed, reason } = isKilled();
   if (killed) {
     if (tool) {
-      logAudit({ tool, account: "unknown", action: "killed", args: args || {}, result: "error", dryRun: false });
+      logAudit({ tool, account: "unknown", action: "killed", args: args || {}, result: "error", dryRun: false })
+        .catch(() => {});
     }
     return errorResult(
       `KILLED — ${reason || "All mutations suspended."}\nRemove kill-switch file to resume.`
@@ -159,7 +160,7 @@ export function auditMutation(
     error: result.isError ? result.content[0]?.text : undefined,
     batchSize: options?.batchSize,
     dryRun: false,
-  });
+  }).catch(() => {});
 }
 
 // Re-export types used by handlers

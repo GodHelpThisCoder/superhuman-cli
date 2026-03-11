@@ -1,5 +1,7 @@
 /**
- * Re-export shim — the original 3946-line monolith has been split into:
+ * Re-export module that preserves the historical `token-api` import surface.
+ *
+ * Source implementations now live in:
  *
  *   src/auth/types.ts          — shared interfaces
  *   src/auth/token-store.ts    — encrypted disk persistence + in-memory cache

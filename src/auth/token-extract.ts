@@ -105,7 +105,15 @@ export async function extractToken(
     throw new Error(`Token extraction failed: ${value.error}`);
   }
 
-  return value;
+  return {
+    ...value,
+    superhumanToken: value.idToken
+      ? {
+          token: value.idToken,
+          expires: value.idTokenExpires ?? 0,
+        }
+      : undefined,
+  };
 }
 
 // ============================================================================
@@ -307,6 +315,22 @@ export async function extractTokenChrome(
           }
         })()
       : undefined,
+    superhumanToken: bestToken
+      ? {
+          token: bestToken,
+          expires: (() => {
+            try {
+              const p = JSON.parse(
+                Buffer.from(bestToken.split(".")[1] ?? "", "base64url").toString()
+              );
+              return p.exp ? p.exp * 1000 : 0;
+            } catch (error) {
+              console.error("Failed to parse backend token expiry:", error);
+              return 0;
+            }
+          })(),
+        }
+      : undefined,
     userPrefix: metadata.userPrefix ?? undefined,
   };
 
@@ -321,7 +345,7 @@ export async function extractTokenChrome(
 
 /**
  * Extract Superhuman backend token via CDP.
- * The token is stored in window.GoogleAccount.backend._credential
+ * The token is read from window.GoogleAccount.credential._authData.idToken.
  *
  * @param conn - Superhuman connection
  * @param email - Account email

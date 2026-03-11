@@ -1,14 +1,15 @@
 /**
  * Two-Phase Commit — server-enforced staging with confirmation tokens.
  *
- * Mutating operations are staged (Tier 1/2) and return a single-use token
- * that must be confirmed via `superhuman_confirm` before execution.
+ * Mutating operations are staged and return a single-use token that must be
+ * confirmed via `superhuman_confirm` before execution.
  */
 
 import { createHash, randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ConnectionProvider } from "../connection-provider";
 import { readThread } from "../read";
+import { logAudit } from "../audit";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,9 +51,45 @@ function prune(): void {
   const now = Date.now();
   for (const [key, op] of staged) {
     if (now - op.createdAt > op.ttlMs) {
+      logAudit({
+        tool: op.tool,
+        account: op.account,
+        action: "expired",
+        args: op.args,
+        token: op.token,
+        result: "error",
+        error: "Confirmation token expired before execution",
+        dryRun: false,
+      }).catch(() => {});
       staged.delete(key);
     }
   }
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const current = nextIndex;
+      nextIndex += 1;
+      if (current >= items.length) {
+        return;
+      }
+      results[current] = await fn(items[current]!);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
 }
 
 /** Generate a confirmation token: shm_<24-char-alphanumeric> */
@@ -122,7 +159,7 @@ export async function buildManifest(
   provider: ConnectionProvider,
   threadIds: string[],
 ): Promise<BatchManifest> {
-  const threads = await Promise.all(threadIds.map(async (threadId) => {
+  const threads = await mapWithConcurrency(threadIds, 10, async (threadId) => {
     try {
       const messages = await readThread(provider, threadId);
       const latest = messages[messages.length - 1] ?? messages[0];
@@ -140,7 +177,7 @@ export async function buildManifest(
         date: "unknown",
       };
     }
-  }));
+  });
 
   const senderCounts = new Map<string, number>();
   const validDates: number[] = [];
@@ -226,6 +263,16 @@ export function confirmOperation(
 
   // Check expiry explicitly (prune might not have caught it)
   if (Date.now() - op.createdAt > op.ttlMs) {
+    logAudit({
+      tool: op.tool,
+      account: op.account,
+      action: "expired",
+      args: op.args,
+      token: op.token,
+      result: "error",
+      error: "Confirmation token expired",
+      dryRun: false,
+    }).catch(() => {});
     staged.delete(token);
     throw new Error(
       `Confirmation token expired: ${token}. ` +
@@ -234,7 +281,15 @@ export function confirmOperation(
   }
 
   // Account binding check
-  if (op.account !== "unknown" && currentAccount !== "unknown" && op.account !== currentAccount) {
+  if (op.account === "unknown" || currentAccount === "unknown") {
+    staged.delete(token);
+    throw new Error(
+      `Account binding unavailable for token ${token}. ` +
+      `Re-stage the operation with a known active account.`
+    );
+  }
+
+  if (op.account !== currentAccount) {
     staged.delete(token);
     throw new Error(
       `Account mismatch: operation was staged for ${op.account} but ` +

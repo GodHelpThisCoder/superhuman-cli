@@ -5,8 +5,11 @@
  * refuses execution immediately. Optional file content is used as a reason.
  */
 
+// Intentional exception to Bun.file preference: guard checks must be synchronous
+// to avoid any async gap between kill-switch detection and mutation execution.
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { getConfigDir } from "./config";
+import { logAudit } from "./audit";
 
 function killSwitchPath(): string {
   return `${getConfigDir()}/kill-switch`;
@@ -35,6 +38,14 @@ export function activate(reason?: string): void {
   const dir = getConfigDir();
   mkdirSync(dir, { recursive: true });
   writeFileSync(killSwitchPath(), reason || "");
+  logAudit({
+    tool: "superhuman_kill_switch",
+    account: "unknown",
+    action: "killed",
+    args: { state: "activated", reason: reason || "" },
+    result: "success",
+    dryRun: false,
+  }).catch(() => {});
 }
 
 /**
@@ -44,5 +55,13 @@ export function deactivate(): void {
   const path = killSwitchPath();
   if (existsSync(path)) {
     unlinkSync(path);
+    logAudit({
+      tool: "superhuman_kill_switch",
+      account: "unknown",
+      action: "executed",
+      args: { state: "deactivated" },
+      result: "success",
+      dryRun: false,
+    }).catch(() => {});
   }
 }

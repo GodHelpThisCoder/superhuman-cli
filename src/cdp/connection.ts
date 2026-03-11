@@ -9,15 +9,19 @@
 
 import CDP from "chrome-remote-interface";
 
+let launchedSuperhumanProcess: ReturnType<typeof Bun.spawn> | null = null;
+
 // ---------------------------------------------------------------------------
 // Connection types
 // ---------------------------------------------------------------------------
 
 export interface SuperhumanConnection {
   client: CDP.Client;
+  backgroundClient?: CDP.Client;
   Runtime: CDP.Client["Runtime"];
   Input: CDP.Client["Input"];
   Network: CDP.Client["Network"];
+  BackgroundNetwork?: CDP.Client["Network"];
   Page: CDP.Client["Page"];
 }
 
@@ -96,7 +100,7 @@ export async function launchSuperhuman(port = 9333): Promise<boolean> {
 
   console.error("Launching Superhuman with remote debugging...");
   try {
-    Bun.spawn([appPath, `--remote-debugging-port=${port}`], {
+    launchedSuperhumanProcess = Bun.spawn([appPath, `--remote-debugging-port=${port}`], {
       stdout: "ignore",
       stderr: "ignore",
     });
@@ -110,8 +114,20 @@ export async function launchSuperhuman(port = 9333): Promise<boolean> {
       }
     }
     console.error("Timeout waiting for Superhuman to start");
+    try {
+      launchedSuperhumanProcess?.kill();
+    } catch {
+      // Process may have already exited.
+    }
+    launchedSuperhumanProcess = null;
     return false;
   } catch (e) {
+    try {
+      launchedSuperhumanProcess?.kill();
+    } catch {
+      // Process may have already exited.
+    }
+    launchedSuperhumanProcess = null;
     console.error("Failed to launch Superhuman:", (e as Error).message);
     return false;
   }
@@ -128,7 +144,7 @@ export async function ensureSuperhuman(port = 9333): Promise<boolean> {
 }
 
 /**
- * Find and connect to the Superhuman main page via CDP.
+ * Find and connect to both Superhuman main UI page and background page via CDP.
  */
 export async function connectToSuperhuman(
   port = 9333,
@@ -152,6 +168,11 @@ export async function connectToSuperhuman(
       !t.url.includes("serviceworker") &&
       t.type === "page"
   );
+  const backgroundPage = targets.find(
+    (t: any) =>
+      t.url.includes("background_page.html") ||
+      (t.url.includes("mail.superhuman.com") && t.type === "background_page")
+  );
 
   if (!mainPage) {
     console.error("Could not find Superhuman main page");
@@ -160,12 +181,25 @@ export async function connectToSuperhuman(
 
   const client = await CDP({ target: mainPage.id, host, port });
   await client.Page.enable();
+  await client.Network.enable().catch(() => {});
+
+  let backgroundClient: CDP.Client | undefined;
+  if (backgroundPage) {
+    try {
+      backgroundClient = await CDP({ target: backgroundPage.id, host, port });
+      await backgroundClient.Network.enable();
+    } catch (error) {
+      console.error(`[CDP background connect]: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   return {
     client,
+    backgroundClient,
     Runtime: client.Runtime,
     Input: client.Input,
-    Network: client.Network,
+    Network: backgroundClient?.Network ?? client.Network,
+    BackgroundNetwork: backgroundClient?.Network,
     Page: client.Page,
   };
 }
@@ -174,6 +208,9 @@ export async function connectToSuperhuman(
  * Disconnect from Superhuman.
  */
 export async function disconnect(conn: SuperhumanConnection): Promise<void> {
+  if (conn.backgroundClient) {
+    await conn.backgroundClient.close().catch(() => {});
+  }
   await conn.client.close();
 }
 
@@ -210,6 +247,9 @@ export async function findChromeExtension(port: number): Promise<any | null> {
 export async function connectToSuperhumanChrome(
   port: number
 ): Promise<ChromeExtConnection | null> {
+  let swClient: CDP.Client | null = null;
+  let mainClient: CDP.Client | null = null;
+
   try {
     const host = getCDPHost();
     const targets = await CDP.List({ host, port });
@@ -226,12 +266,18 @@ export async function connectToSuperhumanChrome(
 
     if (!sw || !mainPage) return null;
 
-    const swClient = await CDP({ target: sw.id, host, port });
-    const mainClient = await CDP({ target: mainPage.id, host, port });
+    swClient = await CDP({ target: sw.id, host, port });
+    mainClient = await CDP({ target: mainPage.id, host, port });
     await mainClient.Page.enable();
 
     return { swClient, mainClient };
   } catch (error) {
+    if (mainClient) {
+      await mainClient.close().catch(() => {});
+    }
+    if (swClient) {
+      await swClient.close().catch(() => {});
+    }
     console.error(`[Chrome extension CDP connect]: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }

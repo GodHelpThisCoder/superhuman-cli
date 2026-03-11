@@ -16,6 +16,8 @@ export interface Draft {
   timestamp: string;
   source: "gmail" | "outlook" | "native";
   threadId?: string; // Optional: used by native Superhuman drafts for update/delete
+  references?: string[];
+  rfc822Id?: string;
 }
 
 /**
