@@ -183,8 +183,8 @@ export async function getCachedToken(
   if (token.expires < Date.now() + bufferMs) {
     // Token expired or expiring soon — try to refresh
     if (token.refreshToken) {
-      const { refreshAccessToken } = await import("./token-refresh");
-      const refreshed = await refreshAccessToken(token);
+      const { refreshWithLock } = await import("./token-refresh");
+      const refreshed = await refreshWithLock(email, token);
       if (refreshed) {
         tokenCache.set(email, refreshed);
         await saveTokensToDisk();

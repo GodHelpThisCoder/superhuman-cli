@@ -68,9 +68,10 @@ import { activate as killActivate, deactivate as killDeactivate, isKilled } from
 import { GmailDraftProvider } from "./providers/gmail-draft-provider";
 import { OutlookDraftProvider } from "./providers/outlook-draft-provider";
 import { SuperhumanDraftProvider } from "./providers/superhuman-draft-provider";
+import { APP_VERSION } from "./version";
 import { basename, relative, resolve, sep } from "node:path";
 
-const VERSION = "0.14.0";
+const VERSION = APP_VERSION;
 const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
 
 /** Format the Superhuman path for display (quotes paths with spaces). */
@@ -110,6 +111,34 @@ function warn(message: string) {
 
 function info(message: string) {
   console.log(`${colors.blue}ℹ${colors.reset} ${message}`);
+}
+
+function handleDryRun(options: CliOptions, action: string, details: string[] = []): boolean {
+  if (!options.dryRun) {
+    return false;
+  }
+
+  info(`[DRY RUN] ${action}`);
+  for (const detail of details) {
+    log(`  ${colors.dim}${detail}${colors.reset}`);
+  }
+  return true;
+}
+
+function dedupeRecipientsPreserveCase(recipients: string[]): string[] {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+
+  for (const recipient of recipients) {
+    const normalized = recipient.toLowerCase();
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    deduped.push(recipient);
+  }
+
+  return deduped;
 }
 
 /**
@@ -946,6 +975,19 @@ async function cmdSnippet(options: CliOptions) {
   const cc = options.cc.length > 0 ? options.cc : snippet.cc.length > 0 ? snippet.cc : undefined;
   const bcc = options.bcc.length > 0 ? options.bcc : snippet.bcc.length > 0 ? snippet.bcc : undefined;
 
+  if (handleDryRun(
+    options,
+    options.send
+      ? `Would send snippet "${snippet.name}"`
+      : `Would create draft from snippet "${snippet.name}"`,
+    [
+      `To: ${to.join(", ") || "(none)"}`,
+      `Subject: ${subject || "(none)"}`,
+    ],
+  )) {
+    return;
+  }
+
   if (options.send) {
     // Send immediately
     if (to.length === 0) {
@@ -1019,6 +1061,10 @@ async function cmdDraft(options: CliOptions) {
     const draftId = options.updateDraftId;
     const isNativeDraft = draftId.startsWith("draft00");
 
+    if (handleDryRun(options, `Would update draft ${draftId}`)) {
+      return;
+    }
+
     // Check for flag mismatch
     if (options.native && !isNativeDraft) {
       error("--native flag is only valid for native Superhuman draft IDs (starting with draft00)");
@@ -1058,6 +1104,8 @@ async function cmdDraft(options: CliOptions) {
         bcc: options.bcc.length > 0 ? options.bcc : undefined,
         subject: options.subject || undefined,
         body: bodyContent,
+        references: draft.references,
+        rfc822Id: draft.rfc822Id,
       });
 
       if (success) {
@@ -1106,6 +1154,10 @@ async function cmdDraft(options: CliOptions) {
   if (options.to.length === 0) {
     error("At least one recipient is required (--to)");
     process.exit(1);
+  }
+
+  if (handleDryRun(options, "Would create draft", [`To: ${options.to.join(", ")}`])) {
+    return;
   }
 
   // Fast path: use cached Superhuman credentials (no CDP needed)
@@ -1204,6 +1256,10 @@ async function cmdDeleteDraft(options: CliOptions) {
     process.exit(1);
   }
 
+  if (handleDryRun(options, `Would delete ${draftIds.length} draft(s)`, draftIds.map((id) => `Draft: ${id}`))) {
+    return;
+  }
+
   // Separate native drafts from provider drafts
   const nativeDraftIds = draftIds.filter(id => id.startsWith("draft00"));
   const providerDraftIds = draftIds.filter(id => !id.startsWith("draft00"));
@@ -1299,6 +1355,10 @@ async function cmdSendDraft(options: CliOptions) {
   if (!options.body && !options.html) {
     error("--body flag is required");
     process.exit(1);
+  }
+
+  if (handleDryRun(options, `Would send draft ${draftId}`)) {
+    return;
   }
 
   // Load cached credentials
@@ -1452,6 +1512,10 @@ async function cmdListDrafts(options: CliOptions) {
 async function cmdSend(options: CliOptions) {
   // If sending an existing draft by ID
   if (options.sendDraftId) {
+    if (handleDryRun(options, `Would send existing draft ${options.sendDraftId}`)) {
+      return;
+    }
+
     const provider = await getProvider(options);
 
     info(`Sending draft ${options.sendDraftId}...`);
@@ -1474,6 +1538,10 @@ async function cmdSend(options: CliOptions) {
   if (options.to.length === 0) {
     error("At least one recipient is required (--to)");
     process.exit(1);
+  }
+
+  if (handleDryRun(options, "Would send email", [`To: ${options.to.join(", ")}`])) {
+    return;
   }
 
   const provider = await getProvider(options);
@@ -1662,6 +1730,10 @@ async function cmdReply(options: CliOptions) {
     process.exit(1);
   }
 
+  if (handleDryRun(options, `Would ${options.send ? "send" : "draft"} reply to ${options.threadId}`)) {
+    return;
+  }
+
   // Fast path: use cached Superhuman credentials (no CDP needed)
   {
     const token = await resolveSuperhumanToken(options.account);
@@ -1770,6 +1842,10 @@ async function cmdReplyAll(options: CliOptions) {
     process.exit(1);
   }
 
+  if (handleDryRun(options, `Would ${options.send ? "send" : "draft"} reply-all to ${options.threadId}`)) {
+    return;
+  }
+
   // Fast path: use cached Superhuman credentials (no CDP needed)
   {
     const token = await resolveSuperhumanToken(options.account);
@@ -1797,7 +1873,7 @@ async function cmdReplyAll(options: CliOptions) {
         ].filter(email => email && email.toLowerCase() !== token.email.toLowerCase());
 
         // Deduplicate recipients
-        const uniqueRecipients = [...new Set(allRecipients.map(e => e.toLowerCase()))];
+        const uniqueRecipients = dedupeRecipientsPreserveCase(allRecipients);
 
         const result = await sendEmailDirect(token, {
           to: uniqueRecipients,
@@ -1844,7 +1920,7 @@ async function cmdReplyAll(options: CliOptions) {
         ].filter(email => email && email.toLowerCase() !== token.email.toLowerCase());
 
         // Deduplicate recipients
-        const uniqueRecipients = [...new Set(allRecipients.map(e => e.toLowerCase()))];
+        const uniqueRecipients = dedupeRecipientsPreserveCase(allRecipients);
 
         const result = await createDraftWithUserInfo(userInfo, {
           to: uniqueRecipients,
@@ -1902,6 +1978,10 @@ async function cmdForward(options: CliOptions) {
     error("Recipient is required (--to)");
     console.log(`Usage: superhuman forward <thread-id> --to <email> [--body "text"] [--send] [--account <email>]`);
     process.exit(1);
+  }
+
+  if (handleDryRun(options, `Would ${options.send ? "send" : "draft"} forward of ${options.threadId}`, [`To: ${options.to.join(", ")}`])) {
+    return;
   }
 
   // Fast path: use cached Superhuman credentials (no CDP needed)
@@ -2012,6 +2092,10 @@ async function cmdArchive(options: CliOptions) {
     process.exit(1);
   }
 
+  if (handleDryRun(options, `Would archive ${options.threadIds.length} thread(s)`)) {
+    return;
+  }
+
   const provider = await getProvider(options);
 
   let successCount = 0;
@@ -2040,6 +2124,10 @@ async function cmdDelete(options: CliOptions) {
     error("At least one thread ID is required");
     console.log(`Usage: superhuman delete <thread-id> [thread-id...]`);
     process.exit(1);
+  }
+
+  if (handleDryRun(options, `Would delete ${options.threadIds.length} thread(s)`)) {
+    return;
   }
 
   const provider = await getProvider(options);
@@ -2072,6 +2160,10 @@ async function cmdMarkRead(options: CliOptions) {
     process.exit(1);
   }
 
+  if (handleDryRun(options, `Would mark ${options.threadIds.length} thread(s) as read`)) {
+    return;
+  }
+
   const provider = await getProvider(options);
 
   let successCount = 0;
@@ -2100,6 +2192,10 @@ async function cmdMarkUnread(options: CliOptions) {
     error("At least one thread ID is required");
     console.log(`Usage: superhuman mark unread <thread-id> [thread-id...]`);
     process.exit(1);
+  }
+
+  if (handleDryRun(options, `Would mark ${options.threadIds.length} thread(s) as unread`)) {
+    return;
   }
 
   const provider = await getProvider(options);
@@ -2190,6 +2286,10 @@ async function cmdAddLabel(options: CliOptions) {
     process.exit(1);
   }
 
+  if (handleDryRun(options, `Would add label ${options.labelId} to ${options.threadIds.length} thread(s)`)) {
+    return;
+  }
+
   const provider = await getProvider(options);
 
   let successCount = 0;
@@ -2226,6 +2326,10 @@ async function cmdRemoveLabel(options: CliOptions) {
     process.exit(1);
   }
 
+  if (handleDryRun(options, `Would remove label ${options.labelId} from ${options.threadIds.length} thread(s)`)) {
+    return;
+  }
+
   const provider = await getProvider(options);
 
   let successCount = 0;
@@ -2256,6 +2360,10 @@ async function cmdStar(options: CliOptions) {
     process.exit(1);
   }
 
+  if (handleDryRun(options, `Would star ${options.threadIds.length} thread(s)`)) {
+    return;
+  }
+
   const provider = await getProvider(options);
 
   let successCount = 0;
@@ -2284,6 +2392,10 @@ async function cmdUnstar(options: CliOptions) {
     error("At least one thread ID is required");
     console.log(`Usage: superhuman star remove <thread-id> [thread-id...]`);
     process.exit(1);
+  }
+
+  if (handleDryRun(options, `Would unstar ${options.threadIds.length} thread(s)`)) {
+    return;
   }
 
   const provider = await getProvider(options);
@@ -2345,6 +2457,10 @@ async function cmdSnooze(options: CliOptions) {
     process.exit(1);
   }
 
+  if (handleDryRun(options, `Would snooze ${options.threadIds.length} thread(s) until ${options.snoozeUntil}`)) {
+    return;
+  }
+
   let snoozeTime: Date;
   try {
     snoozeTime = parseSnoozeTime(options.snoozeUntil);
@@ -2383,6 +2499,10 @@ async function cmdUnsnooze(options: CliOptions) {
     error("At least one thread ID is required");
     console.log(`Usage: superhuman snooze cancel <thread-id> [thread-id...]`);
     process.exit(1);
+  }
+
+  if (handleDryRun(options, `Would unsnooze ${options.threadIds.length} thread(s)`)) {
+    return;
   }
 
   const provider = await getProvider(options);
@@ -2662,6 +2782,10 @@ async function cmdAccount(options: CliOptions) {
     process.exit(1);
   }
 
+  if (handleDryRun(options, `Would switch account to ${options.accountArg}`)) {
+    return;
+  }
+
   const conn = await checkConnection(options.port);
   if (!conn) {
     process.exit(1);
@@ -2866,8 +2990,8 @@ async function resolveCalendarId(conn: SuperhumanConnection, arg: string): Promi
           if (isMicrosoft) {
             const msgraph = di.get?.('msgraph');
             const calendars = await msgraph.getCalendars(accountEmail);
-            const found = calendars?.find(c => 
-              c.id === arg || 
+            const found = calendars?.find(c =>
+              c.id === arg ||
               c.name?.toLowerCase() === arg.toLowerCase() ||
               c.displayName?.toLowerCase() === arg.toLowerCase()
             );
@@ -2879,8 +3003,8 @@ async function resolveCalendarId(conn: SuperhumanConnection, arg: string): Promi
               {},
               { calendarAccountEmail: accountEmail, endpoint: 'gcal.calendarList.list', allowCachedResponses: true }
             );
-            const found = list?.items?.find(c => 
-              c.id === arg || 
+            const found = list?.items?.find(c =>
+              c.id === arg ||
               c.summary?.toLowerCase() === arg.toLowerCase() ||
               c.summaryOverride?.toLowerCase() === arg.toLowerCase()
             );
@@ -3018,6 +3142,10 @@ async function cmdCalendarCreate(options: CliOptions) {
     process.exit(1);
   }
 
+  if (handleDryRun(options, `Would create calendar event "${options.eventTitle || options.subject}"`)) {
+    return;
+  }
+
   const provider = await getProvider(options);
 
   const title = options.eventTitle || options.subject;
@@ -3096,6 +3224,10 @@ async function cmdCalendarUpdate(options: CliOptions) {
     process.exit(1);
   }
 
+  if (handleDryRun(options, `Would update calendar event ${options.eventId}`)) {
+    return;
+  }
+
   const provider = await getProvider(options);
 
   const updates: UpdateEventInput = {};
@@ -3152,6 +3284,10 @@ async function cmdCalendarDelete(options: CliOptions) {
   if (!options.eventId) {
     error("Event ID is required (--event)");
     process.exit(1);
+  }
+
+  if (handleDryRun(options, `Would delete calendar event ${options.eventId}`)) {
+    return;
   }
 
   const provider = await getProvider(options);
@@ -3237,6 +3373,10 @@ async function cmdAi(options: CliOptions) {
     console.log(`  superhuman ai <thread-id> "summarize this thread"`);
     console.log(`  superhuman ai <thread-id> "draft a reply"`);
     process.exit(1);
+  }
+
+  if (handleDryRun(options, `Would ask AI: "${options.aiQuery}"`)) {
+    return;
   }
 
   const provider = await getProvider(options);

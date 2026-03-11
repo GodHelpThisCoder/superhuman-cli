@@ -101,26 +101,28 @@ describe("getThreadInfoDirect MS Graph fallback (Issue #15)", () => {
       receivedDateTime: "2026-01-15T08:00:00Z",
     });
 
-    let fetchCallIndex = 0;
     const fetchCalls: string[] = [];
 
     globalThis.fetch = mock(((url: string | URL | Request) => {
       const urlStr = typeof url === "string" ? url : url.toString();
       fetchCalls.push(urlStr);
-      fetchCallIndex++;
 
-      // 1st call: GET /me/messages?$top=50 — returns 50 recent, none matching
-      if (fetchCallIndex === 1 && urlStr.includes("/me/messages?")) {
+      // Filtered conversation query with a message-id thread token should return no matches.
+      if (
+        urlStr.includes("/me/messages?") &&
+        urlStr.includes("conversationId") &&
+        urlStr.includes(targetMessageId)
+      ) {
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: () => Promise.resolve({ value: recentMessages }),
-          text: () => Promise.resolve(JSON.stringify({ value: recentMessages })),
+          json: () => Promise.resolve({ value: [] }),
+          text: () => Promise.resolve(JSON.stringify({ value: [] })),
         } as Response);
       }
 
-      // 2nd call: GET /me/messages/{messageId} — the fallback direct fetch
-      if (fetchCallIndex === 2 && urlStr.includes(`/me/messages/${targetMessageId}`)) {
+      // Fallback direct message lookup.
+      if (urlStr.includes(`/me/messages/${targetMessageId}`)) {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -153,8 +155,7 @@ describe("getThreadInfoDirect MS Graph fallback (Issue #15)", () => {
     expect(result!.references).toContain("<old-thread-msg@example.com>");
 
     // Verify the fallback fetch was actually called
-    expect(fetchCalls.length).toBeGreaterThanOrEqual(2);
-    expect(fetchCalls[1]).toContain(`/me/messages/${targetMessageId}`);
+    expect(fetchCalls.some((u) => u.includes(`/me/messages/${targetMessageId}`))).toBe(true);
   });
 
   test("still works when conversationId matches in top 50 (no fallback needed)", async () => {
@@ -190,11 +191,26 @@ describe("getThreadInfoDirect MS Graph fallback (Issue #15)", () => {
     ];
 
     globalThis.fetch = mock(((url: string | URL | Request) => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+
+      if (
+        urlStr.includes("/me/messages?") &&
+        urlStr.includes("conversationId") &&
+        urlStr.includes(targetConversationId)
+      ) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ value: [matchingMessage] }),
+          text: () => Promise.resolve(JSON.stringify({ value: [matchingMessage] })),
+        } as Response);
+      }
+
       return Promise.resolve({
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve({ value: recentMessages }),
-        text: () => Promise.resolve(JSON.stringify({ value: recentMessages })),
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({ error: "not found" }),
+        text: () => Promise.resolve("not found"),
       } as Response);
     }) as typeof fetch) as unknown as typeof fetch;
 
@@ -207,35 +223,99 @@ describe("getThreadInfoDirect MS Graph fallback (Issue #15)", () => {
     expect(result!.cc).toContain("dave@example.com");
   });
 
+  test("paginates filtered conversation results when Graph returns nextLink", async () => {
+    const token = createOutlookToken();
+    setTokenCacheForTest(token.email, token);
+
+    const targetConversationId = "AAQkAGI2CONV_PAGINATED";
+    const fetchCalls: string[] = [];
+
+    const firstPage = Array.from({ length: 50 }, (_, i) =>
+      makeMsGraphMessage({
+        id: `page-1-msg-${i}`,
+        conversationId: targetConversationId,
+        subject: `Page 1 message ${i}`,
+        from: `sender${i}@example.com`,
+        to: ["user@outlook.com"],
+        receivedDateTime: new Date(Date.now() - (i + 1) * 60000).toISOString(),
+      })
+    );
+
+    const secondPage = [
+      makeMsGraphMessage({
+        id: "page-2-msg-0",
+        conversationId: targetConversationId,
+        subject: "Page 2 message",
+        from: "older@example.com",
+        to: ["user@outlook.com"],
+        receivedDateTime: "2026-01-01T00:00:00Z",
+      }),
+    ];
+
+    globalThis.fetch = mock(((url: string | URL | Request) => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+      fetchCalls.push(urlStr);
+
+      if (urlStr.includes("$filter=conversationId eq")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({
+            value: firstPage,
+            "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/messages?$skiptoken=abc123",
+          }),
+          text: () => Promise.resolve(JSON.stringify({
+            value: firstPage,
+            "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/messages?$skiptoken=abc123",
+          })),
+        } as Response);
+      }
+
+      if (urlStr.includes("$skiptoken=abc123")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ value: secondPage }),
+          text: () => Promise.resolve(JSON.stringify({ value: secondPage })),
+        } as Response);
+      }
+
+      return Promise.resolve({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({ error: "not found" }),
+        text: () => Promise.resolve("not found"),
+      } as Response);
+    }) as typeof fetch) as unknown as typeof fetch;
+
+    const result = await getThreadInfoDirect(token, targetConversationId);
+
+    expect(result).not.toBeNull();
+    expect(fetchCalls.some((u) => u.includes("$skiptoken=abc123"))).toBe(true);
+  });
+
   test("returns null when threadId matches neither conversationId nor message ID", async () => {
     const token = createOutlookToken();
     setTokenCacheForTest(token.email, token);
 
-    const recentMessages = Array.from({ length: 5 }, (_, i) =>
-      makeMsGraphMessage({
-        id: `msg-${i}`,
-        conversationId: `conv-${i}`,
-        subject: `Msg ${i}`,
-        from: `sender${i}@example.com`,
-        to: ["user@outlook.com"],
-      })
-    );
-
-    let fetchCallIndex = 0;
     globalThis.fetch = mock(((url: string | URL | Request) => {
-      fetchCallIndex++;
+      const urlStr = typeof url === "string" ? url : url.toString();
 
-      // 1st call: top 50 — no match
-      if (fetchCallIndex === 1) {
+      // Filtered conversation query returns no matches.
+      if (
+        urlStr.includes("/me/messages?") &&
+        urlStr.includes("conversationId") &&
+        urlStr.includes("nonexistent-id-xyz")
+      ) {
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: () => Promise.resolve({ value: recentMessages }),
-          text: () => Promise.resolve(JSON.stringify({ value: recentMessages })),
+          json: () => Promise.resolve({ value: [] }),
+          text: () => Promise.resolve(JSON.stringify({ value: [] })),
         } as Response);
       }
 
-      // 2nd call: direct message fetch — 404
+      // Fallback direct message fetch — 404
       return Promise.resolve({
         ok: false,
         status: 404,

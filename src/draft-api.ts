@@ -35,6 +35,7 @@ export interface DraftOptions {
   inReplyToThreadId?: string;
   inReplyToRfc822Id?: string;
   references?: string[];
+  rfc822Id?: string;
 }
 
 export interface DraftResult {
@@ -252,9 +253,9 @@ export async function updateDraftDirect(
       lastSessionId: randomUUID(),
       quotedContent: "",
       quotedContentInlined: false,
-      references: [],
+      references: options.references || [],
       reminder: null,
-      rfc822Id: generateRfc822Id(),
+      rfc822Id: options.rfc822Id,
       scheduledFor: null,
       scheduledReplyInterruptedAt: null,
       schemaVersion: 3,
@@ -389,9 +390,9 @@ export async function updateDraftWithUserInfo(
       lastSessionId: randomUUID(),
       quotedContent: "",
       quotedContentInlined: false,
-      references: [],
+      references: options.references || [],
       reminder: null,
-      rfc822Id: generateRfc822Id(),
+      rfc822Id: options.rfc822Id,
       scheduledFor: null,
       scheduledReplyInterruptedAt: null,
       schemaVersion: 3,

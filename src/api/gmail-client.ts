@@ -17,6 +17,7 @@ import type {
 } from "../auth/types";
 
 import {
+  authFetch,
   gmailFetch,
   msgraphFetch,
   GMAIL_API_BASE,
@@ -36,6 +37,21 @@ interface GmailMessagesListResponse {
     id: string;
     threadId: string;
   }>;
+  nextPageToken?: string;
+  resultSizeEstimate?: number;
+}
+
+/** Gmail API response for drafts.list */
+interface GmailDraftsListResponse {
+  drafts?: Array<{
+    id: string;
+    message?: {
+      id: string;
+      threadId: string;
+    };
+  }>;
+  // Backward-compatible fallback used by existing tests/mocks.
+  messages?: Array<{ id: string }>;
   nextPageToken?: string;
   resultSizeEstimate?: number;
 }
@@ -109,6 +125,131 @@ interface GmailThreadFullResponse {
     };
     internalDate: string;
   }>;
+}
+
+function sanitizeMimeHeaderValue(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+function sanitizeMimeFilename(filename: string): string {
+  return sanitizeMimeHeaderValue(filename).replace(/"/g, "");
+}
+
+function escapeODataStringLiteral(value: string): string {
+  // Remove control chars and escape single quotes for OData string literals.
+  return value.replace(/[\u0000-\u001F\u007F]/g, "").replace(/'/g, "''");
+}
+
+async function listGmailDraftRefs(
+  accessToken: string,
+  limit: number,
+  offset: number,
+): Promise<Array<{ id: string }>> {
+  if (limit <= 0) {
+    return [];
+  }
+
+  let pageToken: string | undefined;
+  let toSkip = Math.max(0, offset);
+  const selected: Array<{ id: string }> = [];
+
+  while (selected.length < limit) {
+    const remaining = limit - selected.length;
+    const pageSize = Math.min(500, Math.max(remaining + toSkip, remaining));
+    const tokenParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
+    const path = `/drafts?maxResults=${pageSize}${tokenParam}`;
+    const page = await gmailFetch(accessToken, path) as GmailDraftsListResponse | null;
+
+    const pageDrafts = (page?.drafts ?? page?.messages ?? []).map((draft) => ({ id: draft.id }));
+    if (pageDrafts.length === 0) {
+      break;
+    }
+
+    if (toSkip >= pageDrafts.length) {
+      toSkip -= pageDrafts.length;
+    } else {
+      const start = toSkip;
+      selected.push(...pageDrafts.slice(start, start + remaining));
+      toSkip = 0;
+    }
+
+    if (!page?.nextPageToken) {
+      break;
+    }
+    pageToken = page.nextPageToken;
+  }
+
+  return selected;
+}
+
+async function msgraphFetchNextLink(accessToken: string, nextLink: string): Promise<any | null> {
+  if (nextLink.startsWith(MSGRAPH_API_BASE)) {
+    return msgraphFetch(accessToken, nextLink.slice(MSGRAPH_API_BASE.length));
+  }
+  return authFetch(nextLink, accessToken);
+}
+
+async function fetchMsGraphConversationMessages(
+  token: TokenInfo,
+  threadId: string,
+  selectFields: string,
+): Promise<any[]> {
+  const MAX_FILTERED_MESSAGES = 500;
+  const safeThreadId = escapeODataStringLiteral(threadId);
+  const filteredPath =
+    `/me/messages?$filter=conversationId eq '${safeThreadId}'` +
+    `&$select=${selectFields}&$orderby=receivedDateTime desc&$top=50`;
+
+  try {
+    const filteredMatches: any[] = [];
+    let nextFilteredPath = filteredPath;
+    let scannedFiltered = 0;
+
+    while (nextFilteredPath && scannedFiltered < MAX_FILTERED_MESSAGES) {
+      const filtered = nextFilteredPath.startsWith("http")
+        ? await msgraphFetchNextLink(token.accessToken, nextFilteredPath)
+        : await msgraphFetch(token.accessToken, nextFilteredPath);
+
+      const page = Array.isArray(filtered?.value) ? filtered.value : [];
+      if (page.length === 0) {
+        break;
+      }
+
+      filteredMatches.push(...page);
+      scannedFiltered += page.length;
+      nextFilteredPath = filtered?.["@odata.nextLink"] || "";
+    }
+
+    return filteredMatches;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (!msg.includes("InefficientFilter")) {
+      throw error;
+    }
+  }
+
+  const MAX_SCAN_MESSAGES = 500;
+  let scanned = 0;
+  let nextPath = `/me/messages?$select=${selectFields}&$top=50&$orderby=receivedDateTime desc`;
+  const matches: any[] = [];
+
+  while (nextPath && scanned < MAX_SCAN_MESSAGES) {
+    const result = nextPath.startsWith("http")
+      ? await msgraphFetchNextLink(token.accessToken, nextPath)
+      : await msgraphFetch(token.accessToken, nextPath);
+
+    const page = Array.isArray(result?.value) ? result.value : [];
+    if (page.length === 0) {
+      break;
+    }
+
+    scanned += page.length;
+    matches.push(...page.filter((m: any) => m.conversationId === threadId));
+
+    nextPath = result?.["@odata.nextLink"] || "";
+  }
+
+  return matches;
 }
 
 // ============================================================================
@@ -540,7 +681,7 @@ export async function getThread(
 } | null> {
   if (token.isMicrosoft) {
     // MS Graph: Get conversation messages
-    const safeThreadId = threadId.replace(/'/g, "''");
+    const safeThreadId = escapeODataStringLiteral(threadId);
     const path = `/me/messages?$filter=conversationId eq '${safeThreadId}'&$select=id,hasAttachments&$expand=attachments`;
     const result = await msgraphFetch(token.accessToken, path);
 
@@ -653,7 +794,7 @@ export async function getConversationMessageIds(
     throw new Error("getConversationMessageIds is MS Graph-only");
   }
 
-  const safeConversationId = conversationId.replace(/'/g, "''");
+  const safeConversationId = escapeODataStringLiteral(conversationId);
   const path = `/me/messages?$filter=conversationId eq '${safeConversationId}'&$select=id`;
   const result = await msgraphFetch(token.accessToken, path);
 
@@ -810,15 +951,15 @@ export async function addAttachmentToGmailDraft(
 
   const mimeHeaders = [
     "MIME-Version: 1.0",
-    `From: ${from}`,
-    `To: ${to}`,
+    `From: ${sanitizeMimeHeaderValue(from)}`,
+    `To: ${sanitizeMimeHeaderValue(to)}`,
   ];
 
-  if (cc) mimeHeaders.push(`Cc: ${cc}`);
-  if (bcc) mimeHeaders.push(`Bcc: ${bcc}`);
-  mimeHeaders.push(`Subject: ${subject}`);
-  if (inReplyTo) mimeHeaders.push(`In-Reply-To: ${inReplyTo}`);
-  if (references) mimeHeaders.push(`References: ${references}`);
+  if (cc) mimeHeaders.push(`Cc: ${sanitizeMimeHeaderValue(cc)}`);
+  if (bcc) mimeHeaders.push(`Bcc: ${sanitizeMimeHeaderValue(bcc)}`);
+  mimeHeaders.push(`Subject: ${sanitizeMimeHeaderValue(subject)}`);
+  if (inReplyTo) mimeHeaders.push(`In-Reply-To: ${sanitizeMimeHeaderValue(inReplyTo)}`);
+  if (references) mimeHeaders.push(`References: ${sanitizeMimeHeaderValue(references)}`);
   mimeHeaders.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
   mimeHeaders.push("");
 
@@ -831,14 +972,17 @@ export async function addAttachmentToGmailDraft(
   ].join("\r\n");
 
   // Attachment parts
-  const attachmentParts = existingAttachments.map((att) => [
-    `--${boundary}`,
-    `Content-Type: ${att.mimeType}; name="${att.filename}"`,
-    `Content-Disposition: attachment; filename="${att.filename}"`,
-    "Content-Transfer-Encoding: base64",
-    "",
-    att.data,
-  ].join("\r\n")).join("\r\n");
+  const attachmentParts = existingAttachments.map((att) => {
+    const safeFilename = sanitizeMimeFilename(att.filename);
+    return [
+      `--${boundary}`,
+      `Content-Type: ${att.mimeType}; name="${safeFilename}"`,
+      `Content-Disposition: attachment; filename="${safeFilename}"`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      att.data,
+    ].join("\r\n");
+  }).join("\r\n");
 
   const fullMessage = [
     mimeHeaders.join("\r\n"),
@@ -912,21 +1056,27 @@ export async function addAttachmentToDraft(
  * This is the format required by Gmail API for sending/creating drafts.
  */
 export function buildMimeMessage(options: MimeMessageOptions): string {
+  const sanitizedFrom = sanitizeMimeHeaderValue(options.from);
+  const sanitizedTo = options.to.map((recipient) => sanitizeMimeHeaderValue(recipient));
+  const sanitizedCc = options.cc?.map((recipient) => sanitizeMimeHeaderValue(recipient));
+  const sanitizedBcc = options.bcc?.map((recipient) => sanitizeMimeHeaderValue(recipient));
+  const sanitizedSubject = sanitizeMimeHeaderValue(options.subject);
+
   const headers: string[] = [
     "MIME-Version: 1.0",
-    `From: ${options.from}`,
-    `To: ${options.to.join(", ")}`,
+    `From: ${sanitizedFrom}`,
+    `To: ${sanitizedTo.join(", ")}`,
   ];
 
-  if (options.cc && options.cc.length > 0) {
-    headers.push(`Cc: ${options.cc.join(", ")}`);
+  if (sanitizedCc && sanitizedCc.length > 0) {
+    headers.push(`Cc: ${sanitizedCc.join(", ")}`);
   }
 
-  if (options.bcc && options.bcc.length > 0) {
-    headers.push(`Bcc: ${options.bcc.join(", ")}`);
+  if (sanitizedBcc && sanitizedBcc.length > 0) {
+    headers.push(`Bcc: ${sanitizedBcc.join(", ")}`);
   }
 
-  headers.push(`Subject: ${options.subject}`);
+  headers.push(`Subject: ${sanitizedSubject}`);
 
   // Content type based on whether body is HTML
   if (options.isHtml !== false) {
@@ -938,15 +1088,17 @@ export function buildMimeMessage(options: MimeMessageOptions): string {
   // Add threading headers for replies
   if (options.inReplyTo) {
     // Ensure Message-ID format with angle brackets
-    const formattedReplyTo = options.inReplyTo.startsWith("<")
-      ? options.inReplyTo
-      : `<${options.inReplyTo}>`;
+    const sanitizedReplyTo = sanitizeMimeHeaderValue(options.inReplyTo);
+    const formattedReplyTo = sanitizedReplyTo.startsWith("<")
+      ? sanitizedReplyTo
+      : `<${sanitizedReplyTo}>`;
     headers.push(`In-Reply-To: ${formattedReplyTo}`);
   }
 
   if (options.references && options.references.length > 0) {
     // Format references with angle brackets if needed
     const formattedRefs = options.references
+      .map((r) => sanitizeMimeHeaderValue(r))
       .map((r) => (r.startsWith("<") ? r : `<${r}>`))
       .join(" ");
     headers.push(`References: ${formattedRefs}`);
@@ -985,18 +1137,10 @@ export async function getThreadInfo(
   threadId: string
 ): Promise<ThreadInfoDirect | null> {
   if (token.isMicrosoft) {
-    // MS Graph: $filter on conversationId returns "InefficientFilter" / 400,
-    // so fetch recent messages and filter client-side (same as getThreadMessages).
+    // Prefer server-side conversationId filter, but fall back to pagination when
+    // Graph rejects it with "InefficientFilter".
     const selectFields = "id,subject,from,toRecipients,ccRecipients,internetMessageHeaders,receivedDateTime,conversationId";
-    const recentPath = `/me/messages?$select=${selectFields}&$top=50&$orderby=receivedDateTime desc`;
-    const result = await msgraphFetch(token.accessToken, recentPath);
-
-    if (!result || !result.value) {
-      return null;
-    }
-
-    // Filter by conversationId client-side and get the latest message
-    let messages = result.value.filter((m: any) => m.conversationId === threadId);
+    let messages = await fetchMsGraphConversationMessages(token, threadId, selectFields);
 
     // Fallback: threadId might be a message ID, not a conversationId
     // (matches pattern in getThreadMessagesMsGraph and readThreadMSGraph)
@@ -1145,20 +1289,16 @@ export async function listDrafts(
       timestamp: message.receivedDateTime || new Date().toISOString(),
     }));
   } else {
-    // Gmail: GET /drafts?includeSpamTrash=false
-    // Gmail doesn't have offset directly, but we can use pagination with pageToken
-    const pageToken = offset > 0 ? `&pageToken=${offset}` : "";
-    const path = `/drafts?maxResults=${limit}${pageToken}`;
-    const result = await gmailFetch(token.accessToken, path) as GmailMessagesListResponse | null;
+    const draftRefs = await listGmailDraftRefs(token.accessToken, limit, offset);
 
-    if (!result || !result.messages || result.messages.length === 0) {
+    if (draftRefs.length === 0) {
       return [];
     }
 
     const drafts: DraftMessage[] = [];
 
     // For each draft message ID, fetch its details
-    for (const draft of result.messages) {
+    for (const draft of draftRefs) {
       try {
         const detailPath = `/drafts/${draft.id}?format=full`;
         const detailResult = await gmailFetch(token.accessToken, detailPath);
@@ -1441,7 +1581,7 @@ export async function createReplyDraft(
   if (token.isMicrosoft) {
     // MS Graph: Use createReply/createReplyAll endpoint
     // First, get the last message ID in the conversation
-    const safeReplyThreadId = threadId.replace(/'/g, "''");
+    const safeReplyThreadId = escapeODataStringLiteral(threadId);
     const messagesPath = `/me/messages?$filter=conversationId eq '${safeReplyThreadId}'&$select=id&$orderby=receivedDateTime desc&$top=1`;
     const messagesResult = await msgraphFetch(token.accessToken, messagesPath);
 
@@ -1903,20 +2043,15 @@ async function getThreadMessagesMsGraph(
   token: TokenInfo,
   threadId: string
 ): Promise<FullThreadMessage[]> {
-  // The $filter on conversationId at /me/messages level returns "InefficientFilter",
-  // so we fetch recent messages and filter client-side by conversationId.
+  // Prefer server-side conversationId filter, but fall back to pagination when
+  // Graph rejects it with "InefficientFilter".
   const selectFields = "id,subject,body,conversationId,receivedDateTime,from,toRecipients,ccRecipients,bodyPreview";
-  const recentPath = `/me/messages?$select=${selectFields}&$top=50&$orderby=receivedDateTime desc`;
-  const recentResult = await msgraphFetch(token.accessToken, recentPath);
+  let messages: any[] = await fetchMsGraphConversationMessages(token, threadId, selectFields);
 
-  let messages: any[] = [];
-  if (recentResult?.value) {
-    messages = recentResult.value.filter((m: any) => m.conversationId === threadId);
-    // Sort oldest first for thread context
-    messages.sort((a: any, b: any) =>
-      new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime()
-    );
-  }
+  // Sort oldest first for thread context
+  messages.sort((a: any, b: any) =>
+    new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime()
+  );
 
   // Fallback: if threadId is actually a message ID, fetch it directly
   if (messages.length === 0) {

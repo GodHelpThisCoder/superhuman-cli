@@ -25,6 +25,8 @@ interface SuperhumanDraft {
   from: string;
   snippet: string;
   date: string;
+  references?: string[];
+  rfc822Id?: string;
 }
 
 interface SuperhumanMessage {
@@ -123,6 +125,8 @@ export class SuperhumanDraftProvider implements IDraftProvider {
       to: updates.to || existingDraft.to,
       subject: updates.subject || existingDraft.subject,
       body: updates.preview || existingDraft.preview, // preview maps to body
+      references: updates.references || existingDraft.references,
+      rfc822Id: updates.rfc822Id || existingDraft.rfc822Id,
     };
 
     // 4. Use the threadId from the existing draft (critical for correct path!)
@@ -204,6 +208,8 @@ export class SuperhumanDraftProvider implements IDraftProvider {
             timestamp: draft.date || "",
             source: "native",
             threadId: threadId, // Capture threadId for update/delete operations
+            references: draft.references || [],
+            rfc822Id: draft.rfc822Id,
           });
         }
       }
