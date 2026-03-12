@@ -131,13 +131,17 @@ export function formatTranscript(session: RawAgentSession): string {
 
   const header = `# ${session.title}\n(${events.length} messages, last updated: ${payload.updatedAt || new Date(session.updated_at).toISOString()})\n`;
 
-  const messages = events.map(evt => {
-    const speaker = evt.speaker === "user" ? "You" : "AI";
-    let content = evt.payload?.content ?? "";
-    content = stripThinking(content);
-    content = truncateContent(content);
-    return `**${speaker}:** ${content}`;
-  });
+  const messages = events
+    .map(evt => {
+      const speaker = evt.speaker === "user" ? "You" : "AI";
+      let content = evt.payload?.content ?? "";
+      content = stripThinking(content);
+      content = content.trim();
+      if (!content) return null; // skip empty tool-use events
+      content = truncateContent(content);
+      return `**${speaker}:** ${content}`;
+    })
+    .filter(Boolean);
 
   return header + "\n" + messages.join("\n\n");
 }
