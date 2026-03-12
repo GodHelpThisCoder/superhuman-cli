@@ -111,4 +111,14 @@ export {
   // AI
   AskAISchema,
   askAIHandler,
+
+  // Agent Sessions
+  AgentSessionsSchema,
+  AgentSessionReadSchema,
+  AgentSessionDiscardSchema,
+  AgentSessionRestoreSchema,
+  agentSessionsHandler,
+  agentSessionReadHandler,
+  agentSessionDiscardHandler,
+  agentSessionRestoreHandler,
 } from "./tools/index";

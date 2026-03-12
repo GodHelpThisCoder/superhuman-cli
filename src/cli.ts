@@ -366,7 +366,7 @@ ${colors.bold}REQUIREMENTS${colors.reset}
 // Commands that use noun+verb subcommand groups (e.g., "calendar create", "draft delete")
 const GROUPED_COMMANDS = new Set([
   "calendar", "draft", "label", "star", "snooze", "mark",
-  "attachment", "snippet", "account", "contact",
+  "attachment", "snippet", "account", "contact", "agent-session",
 ]);
 
 interface CliOptions {
@@ -430,6 +430,8 @@ interface CliOptions {
   vars: string; // template variable substitution: "key1=val1,key2=val2"
   // read options
   context: number; // number of messages to show full body for (0 = all)
+  // agent session options
+  sessionId: string; // agent session UUID
   // draft provider option
   provider: "superhuman" | "gmail" | "outlook"; // which API to use for drafts (default: superhuman)
   // native draft flag
@@ -484,6 +486,7 @@ function parseArgs(args: string[]): CliOptions {
     snippetQuery: "",
     vars: "",
     context: 0,
+    sessionId: "",
     provider: "superhuman",
     native: false,
     dryRun: false,
@@ -636,11 +639,16 @@ function parseArgs(args: string[]): CliOptions {
           options.eventId = unescapeString(value!);
           i += inc;
           break;
+        case "session":
+          options.sessionId = unescapeString(value!);
+          i += inc;
+          break;
         case "account":
           options.account = unescapeString(value!);
           i += inc;
           break;
         case "include-done":
+        case "include-discarded":
           options.includeDone = true;
           i += 1;
           break;
@@ -759,6 +767,10 @@ function parseArgs(args: string[]): CliOptions {
     } else if (options.command === "snippet" && options.subcommand === "use" && !options.snippetQuery) {
       // snippet use <name>
       options.snippetQuery = unescapeString(arg);
+      i += 1;
+    } else if (options.command === "agent-session" && (options.subcommand === "read" || options.subcommand === "discard" || options.subcommand === "restore") && !options.sessionId) {
+      // agent-session read/discard/restore <session-id>
+      options.sessionId = unescapeString(arg);
       i += 1;
     } else if (options.command === "draft" && options.subcommand === "update" && !options.updateDraftId) {
       // draft update <draft-id>
@@ -3481,6 +3493,185 @@ async function cmdCalendarFree(options: CliOptions) {
   await provider.disconnect();
 }
 
+// ---------------------------------------------------------------------------
+// Agent Session CLI handlers
+// ---------------------------------------------------------------------------
+
+async function cmdAgentSessionList(options: CliOptions) {
+  const conn = await connectToSuperhuman(options.port);
+  if (!conn) {
+    error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    process.exit(1);
+  }
+
+  try {
+    const result = await conn.Runtime.evaluate({
+      expression: `
+        (async () => {
+          try {
+            const portal = window.GoogleAccount.di.get("portal");
+            return await portal.invoke("agentSessionsInternal", "getAllSessions", []);
+          } catch (e) {
+            throw new Error("Failed to list agent sessions: " + (e.message || String(e)));
+          }
+        })()
+      `,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+
+    if (result.exceptionDetails) {
+      error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || "CDP evaluation error");
+      return;
+    }
+
+    const { formatSessionList } = await import("./mcp/tools/agent-sessions");
+    const sessions = (result.result.value || []) as Array<{ id: string; updated_at: number; title: string; json: string; is_discarded: number }>;
+    const includeDiscarded = options.includeDone; // reuse --include-done flag
+    const output = formatSessionList(sessions, includeDiscarded);
+    log(output);
+  } finally {
+    await disconnect(conn);
+  }
+}
+
+async function cmdAgentSessionRead(options: CliOptions) {
+  if (!options.sessionId) {
+    error("Session ID is required");
+    log("Usage: superhuman agent-session read <session-id>");
+    process.exit(1);
+  }
+
+  const conn = await connectToSuperhuman(options.port);
+  if (!conn) {
+    error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    process.exit(1);
+  }
+
+  try {
+    const sessionId = options.sessionId;
+    const result = await conn.Runtime.evaluate({
+      expression: `
+        (async () => {
+          try {
+            const portal = window.GoogleAccount.di.get("portal");
+            const session = await portal.invoke("agentSessionsInternal", "getSession", [${JSON.stringify(sessionId)}]);
+            if (!session) throw new Error("Session not found");
+            return session;
+          } catch (e) {
+            throw new Error("Failed to fetch agent session: " + (e.message || String(e)));
+          }
+        })()
+      `,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+
+    if (result.exceptionDetails) {
+      error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || "CDP evaluation error");
+      return;
+    }
+
+    const { formatTranscript } = await import("./mcp/tools/agent-sessions");
+    const session = result.result.value as { id: string; updated_at: number; title: string; json: string; is_discarded: number };
+    log(formatTranscript(session));
+  } finally {
+    await disconnect(conn);
+  }
+}
+
+async function cmdAgentSessionDiscard(options: CliOptions) {
+  if (!options.sessionId) {
+    error("Session ID is required");
+    log("Usage: superhuman agent-session discard <session-id>");
+    process.exit(1);
+  }
+
+  if (handleDryRun(options, `Would discard agent session ${options.sessionId}`)) {
+    return;
+  }
+
+  const conn = await connectToSuperhuman(options.port);
+  if (!conn) {
+    error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    process.exit(1);
+  }
+
+  try {
+    const sessionId = options.sessionId;
+    const result = await conn.Runtime.evaluate({
+      expression: `
+        (async () => {
+          try {
+            const backend = window.GoogleAccount.di.get("backend");
+            await backend.discardAgentSession(${JSON.stringify(sessionId)});
+            return { success: true };
+          } catch (e) {
+            throw new Error("Failed to discard agent session: " + (e.message || String(e)));
+          }
+        })()
+      `,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+
+    if (result.exceptionDetails) {
+      error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || "CDP evaluation error");
+      return;
+    }
+
+    success(`Discarded agent session ${sessionId}`);
+  } finally {
+    await disconnect(conn);
+  }
+}
+
+async function cmdAgentSessionRestore(options: CliOptions) {
+  if (!options.sessionId) {
+    error("Session ID is required");
+    log("Usage: superhuman agent-session restore <session-id>");
+    process.exit(1);
+  }
+
+  if (handleDryRun(options, `Would restore agent session ${options.sessionId}`)) {
+    return;
+  }
+
+  const conn = await connectToSuperhuman(options.port);
+  if (!conn) {
+    error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    process.exit(1);
+  }
+
+  try {
+    const sessionId = options.sessionId;
+    const result = await conn.Runtime.evaluate({
+      expression: `
+        (async () => {
+          try {
+            const backend = window.GoogleAccount.di.get("backend");
+            await backend.restoreAgentSession(${JSON.stringify(sessionId)});
+            return { success: true };
+          } catch (e) {
+            throw new Error("Failed to restore agent session: " + (e.message || String(e)));
+          }
+        })()
+      `,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+
+    if (result.exceptionDetails) {
+      error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || "CDP evaluation error");
+      return;
+    }
+
+    success(`Restored agent session ${sessionId}`);
+  } finally {
+    await disconnect(conn);
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
@@ -3757,6 +3948,29 @@ async function main() {
       }
       break;
     }
+
+    // agent-session list|read|discard|restore
+    case "agent-session":
+      switch (options.subcommand) {
+        case "list":
+        case "":
+          await cmdAgentSessionList(options);
+          break;
+        case "read":
+          await cmdAgentSessionRead(options);
+          break;
+        case "discard":
+          await cmdAgentSessionDiscard(options);
+          break;
+        case "restore":
+          await cmdAgentSessionRestore(options);
+          break;
+        default:
+          error(`Unknown subcommand: agent-session ${options.subcommand}`);
+          log(`Usage: superhuman agent-session list|read|discard|restore`);
+          process.exit(1);
+      }
+      break;
 
     default:
       error(`Unknown command: ${options.command}`);

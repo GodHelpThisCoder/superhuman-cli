@@ -13,6 +13,7 @@
  *   tools/accounts.ts     — list/switch accounts
  *   tools/snippets.ts     — list/use snippets
  *   tools/ai.ts           — ask AI
+ *   tools/agent-sessions.ts — list/read/discard/restore agent sessions
  */
 
 // Shared
@@ -68,6 +69,16 @@ export { snippetsHandler, useSnippetHandler } from "./snippets";
 // AI
 export { AskAISchema } from "./ai";
 export { askAIHandler } from "./ai";
+
+// Agent Sessions
+export {
+  AgentSessionsSchema, AgentSessionReadSchema,
+  AgentSessionDiscardSchema, AgentSessionRestoreSchema,
+} from "./agent-sessions";
+export {
+  agentSessionsHandler, agentSessionReadHandler,
+  agentSessionDiscardHandler, agentSessionRestoreHandler,
+} from "./agent-sessions";
 
 // Audit — re-exported directly in server.ts due to barrel resolution quirk
 // export { AuditLogSchema, auditLogHandler } from "./audit";
