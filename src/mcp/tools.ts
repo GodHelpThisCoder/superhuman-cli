@@ -11,6 +11,7 @@
  *   tools/accounts.ts     — list/switch accounts
  *   tools/snippets.ts     — list/use snippets
  *   tools/ai.ts           — ask AI
+ *   tools/agent-sessions.ts — list/read/discard/restore agent sessions
  *
  * Existing consumers continue to work via these re-exports.
  */
