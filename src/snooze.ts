@@ -240,7 +240,16 @@ async function getThreadMessageIds(
   threadId: string
 ): Promise<string[]> {
   if (token.isMicrosoft) {
-    // MS Graph: search messages by conversationId
+    // MS Graph: search messages by conversationId (server-side filter first)
+    try {
+      const result = await msgraphFetch(token.accessToken, `/me/messages?$select=id,conversationId&$filter=conversationId eq '${threadId}'`);
+      if (result?.value?.length > 0) {
+        return result.value.map((m: any) => m.id);
+      }
+    } catch {
+      // InefficientFilter or other server-side filter error — fall through to client-side
+    }
+    // Fallback: client-side filter
     const result = await msgraphFetch(token.accessToken, `/me/messages?$top=50&$select=id,conversationId&$orderby=receivedDateTime desc`);
     if (!result?.value) return [];
     return result.value
@@ -317,13 +326,11 @@ export async function unsnoozeThreadViaProvider(
 
   // Fetch all snoozed threads to find reminder IDs
   log.debug(`unsnooze token present: ${!!token.idToken}, email: ${token.email}`);
-  const snoozedThreads = await listSnoozedDirect(superhumanToken, 50);
+  const snoozedThreads = await listSnoozedDirect(superhumanToken, 500);
   const results: SnoozeResult[] = [];
 
   for (const threadId of threadIds) {
-    const snoozed = snoozedThreads.find((t) =>
-      t.id === threadId || t.id.endsWith(threadId) || threadId.endsWith(t.id)
-    );
+    const snoozed = snoozedThreads.find((t) => t.id === threadId);
     if (!snoozed?.reminderId) {
       log.debug(`No match for threadId="${threadId}" in ${snoozedThreads.length} snoozed threads: ${snoozedThreads.map(t => t.id).join(", ")}`);
       results.push({

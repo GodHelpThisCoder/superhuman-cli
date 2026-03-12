@@ -1,7 +1,7 @@
 /**
  * Unified Draft Service
  *
- * Aggregates drafts from multiple providers (Gmail, Outlook) with a unified interface.
+ * Aggregates drafts from multiple providers (Gmail, Outlook, Superhuman native) with a unified interface.
  */
 
 /**

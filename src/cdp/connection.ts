@@ -246,7 +246,8 @@ export async function connectToSuperhuman(
         try {
           const req = params?.request;
           if (req) {
-            const body = req.postData ? ` ${req.postData.slice(0, 200)}` : "";
+            const isAuthUrl = req.url && (/\/token/i.test(req.url) || /\/oauth/i.test(req.url));
+            const body = req.postData && !isAuthUrl ? ` ${req.postData.slice(0, 200)}` : "";
             netLog.debug(`=> ${req.method} ${req.url}${body}`);
           }
         } catch { /* listener errors must never propagate */ }
@@ -281,7 +282,7 @@ export async function disconnect(conn: SuperhumanConnection): Promise<void> {
   if (conn.backgroundClient) {
     await conn.backgroundClient.close().catch(() => {});
   }
-  await conn.client.close();
+  await conn.client.close().catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -393,7 +394,7 @@ export function unescapeString(text: string): string {
  */
 export function textToHtml(text: string): string {
   if (!text) return "";
-  if (/<[a-z][\s\S]*>/i.test(text)) return text;
+  if (/<[a-z][^>]*>/i.test(text)) return text;
 
   const escaped = unescapeString(text)
     .replace(/&/g, "&amp;")

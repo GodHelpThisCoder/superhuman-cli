@@ -282,7 +282,10 @@ export function confirmOperation(
 
   // Account binding check
   if (op.account === "unknown" || currentAccount === "unknown") {
-    staged.delete(token);
+    // Don't consume token when both accounts are unknown — allow retry
+    if (op.account !== "unknown" || currentAccount !== "unknown") {
+      staged.delete(token);
+    }
     throw new Error(
       `Account binding unavailable for token ${token}. ` +
       `Re-stage the operation with a known active account.`

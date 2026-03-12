@@ -133,9 +133,12 @@ export async function refreshAccessToken(
     });
 
     if (!response.ok) {
-      const { error, error_description } = (await response
-        .json()
-        .catch(() => ({}) as Record<string, unknown>)) as any;
+      let error: unknown, error_description: unknown;
+      try {
+        ({ error, error_description } = JSON.parse(await response.text()) as Record<string, unknown>);
+      } catch {
+        // Response body is not JSON (e.g., "Unauthorized")
+      }
       log.error(
         `Refresh failed for ${token.email}: HTTP ${response.status} ${response.statusText}` +
           (error ? ` — ${error}: ${error_description || ""}` : "")
@@ -143,7 +146,7 @@ export async function refreshAccessToken(
       return null;
     }
 
-    const data = (await response.json()) as {
+    const data = JSON.parse(await response.text()) as {
       access_token: string;
       expires_in: number;
       refresh_token?: string;

@@ -110,7 +110,7 @@ export async function readHandler(args: z.infer<typeof ReadSchema>): Promise<Too
     const messagesText = messages
       .map(
         (m) =>
-          `From: ${fmtContact(m.from)}\nTo: ${fmtContacts(m.to)}\nDate: ${m.date}\nSubject: ${m.subject}\n\n${m.snippet}`
+          `From: ${fmtContact(m.from)}\nTo: ${fmtContacts(m.to)}\nDate: ${m.date}\nSubject: ${m.subject}\n\n${m.body || m.snippet}`
       )
       .join("\n\n");
 

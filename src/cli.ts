@@ -557,6 +557,7 @@ function parseArgs(args: string[]): CliOptions {
           break;
         case "thread":
           options.threadId = unescapeString(value!);
+          options.sendDraftThreadId = unescapeString(value!);
           i += inc;
           break;
         case "json":
@@ -658,10 +659,6 @@ function parseArgs(args: string[]): CliOptions {
           break;
         case "delay":
           options.sendDraftDelay = parseInt(value!, 10);
-          i += inc;
-          break;
-        case "thread":
-          options.sendDraftThreadId = unescapeString(value!);
           i += inc;
           break;
         case "native":

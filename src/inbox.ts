@@ -97,7 +97,7 @@ export async function searchInbox(
         bodyPreview?: string;
       }
 
-      const result = await response.json() as { value?: MSGraphMessage[] };
+      const result = JSON.parse(await response.text()) as { value?: MSGraphMessage[] };
       if (!result.value) {
         return [];
       }

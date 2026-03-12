@@ -20,9 +20,6 @@ export interface SwitchResult {
 }
 
 /**
- * List all linked accounts in Superhuman
- */
-/**
  * Get the current account's email address
  */
 export async function getCurrentAccount(

@@ -80,15 +80,17 @@ export async function logAudit(entry: Omit<AuditEntry, "timestamp">): Promise<vo
     await mkdir(dir, { recursive: true });
 
     const logPath = auditLogPath();
-    const existingFile = Bun.file(logPath);
-    let shouldChmod = !(await existingFile.exists());
-
-    // Rotate if file exceeds 10MB
-    if (await existingFile.exists()) {
-      if (existingFile.size > MAX_LOG_SIZE) {
+    // node:fs stat gives fresh size — Bun.file().size is cached at creation time
+    const { stat: fsStat } = await import("node:fs/promises");
+    let shouldChmod = false;
+    try {
+      const stats = await fsStat(logPath);
+      if (stats.size > MAX_LOG_SIZE) {
         await rename(logPath, `${logPath}.1`);
         shouldChmod = true;
       }
+    } catch {
+      shouldChmod = true; // File doesn't exist yet
     }
 
     const fullEntry: AuditEntry = {
@@ -98,8 +100,9 @@ export async function logAudit(entry: Omit<AuditEntry, "timestamp">): Promise<vo
     };
 
     const line = JSON.stringify(fullEntry) + "\n";
-    const current = await Bun.file(logPath).text().catch(() => "");
-    await Bun.write(logPath, current + line);
+    // node:fs appendFile is atomic for small writes — intentional exception to Bun.file preference
+    const { appendFile: fsAppend } = await import("node:fs/promises");
+    await fsAppend(logPath, line);
 
     if (shouldChmod) {
       await chmod(logPath, 0o600).catch(() => {

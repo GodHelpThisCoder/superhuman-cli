@@ -64,7 +64,7 @@ export async function listSnippets(
   userInfo: UserInfo,
   options?: { limit?: number }
 ): Promise<Snippet[]> {
-  const limit = options?.limit ?? 100;
+  const limit = Math.min(options?.limit ?? 50, 50);
 
   const response = await fetch(`${SUPERHUMAN_BACKEND}/v3/userdata.getThreads`, {
     method: "POST",
@@ -84,7 +84,7 @@ export async function listSnippets(
     throw new Error(`API error ${response.status}: ${text}`);
   }
 
-  const data = (await response.json()) as GetThreadsResponse;
+  const data = JSON.parse(await response.text()) as GetThreadsResponse;
 
   const snippets: Snippet[] = [];
 

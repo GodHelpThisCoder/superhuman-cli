@@ -179,6 +179,6 @@ export class GmailDraftProvider implements IDraftProvider {
       return null;
     }
 
-    return response.json();
+    return JSON.parse(await response.text());
   }
 }

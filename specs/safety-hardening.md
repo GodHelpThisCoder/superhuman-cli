@@ -1,3 +1,5 @@
+> **Note:** This is the original design spec for safety hardening. All 5 features have been implemented in v0.14.0. Current metrics: 36 MCP tools, 230 tests across 27 files.
+
 # Safety Hardening Spec — superhuman-cli
 
 ## Context

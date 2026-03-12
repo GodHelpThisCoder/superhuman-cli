@@ -88,7 +88,7 @@ export async function calendarListHandler(args: z.infer<typeof CalendarListSchem
         case "this-week": {
           const dow = timeMin.getDay();
           // Start from today, end at Sunday
-          days = 7 - dow;
+          days = dow === 6 ? 2 : 7 - dow; // Include Sunday when called on Saturday
           break;
         }
         case "next-week": {
