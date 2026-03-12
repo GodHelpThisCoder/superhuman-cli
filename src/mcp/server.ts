@@ -26,6 +26,8 @@ import {
   SnippetsSchema, UseSnippetSchema,
   snippetsHandler, useSnippetHandler,
   AskAISchema, askAIHandler,
+  AgentSessionsSchema, AgentSessionReadSchema, AgentSessionDiscardSchema, AgentSessionRestoreSchema,
+  agentSessionsHandler, agentSessionReadHandler, agentSessionDiscardHandler, agentSessionRestoreHandler,
 } from "./tools";
 import { AuditLogSchema, auditLogHandler } from "./tools/audit";
 import { ConfirmSchema, confirmHandler } from "./tools/confirm";
@@ -40,13 +42,13 @@ function createMcpServer(): McpServer {
 
 WORKFLOW: Use superhuman_accounts first to see available accounts. Use superhuman_inbox or superhuman_search to find emails — these return thread IDs needed by all action tools.
 
-READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_download_attachment, superhuman_calendar_list, superhuman_calendar_free_busy, superhuman_audit_log.
+READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_download_attachment, superhuman_calendar_list, superhuman_calendar_free_busy, superhuman_audit_log, superhuman_agent_sessions, superhuman_agent_session_read.
 
-WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_add_label, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai.
+WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_add_label, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai, superhuman_agent_session_restore.
 
 CONFIRMATION TOOL: superhuman_confirm (executes a previously staged mutation token).
 
-DESTRUCTIVE TOOLS (irreversible): superhuman_archive, superhuman_delete, superhuman_calendar_delete.
+DESTRUCTIVE TOOLS (irreversible): superhuman_archive, superhuman_delete, superhuman_calendar_delete, superhuman_agent_session_discard.
 
 Multi-account: Most tools operate on the currently active account. Use superhuman_switch_account to change. Batch operations (archive, delete, star, etc.) accept arrays of thread IDs.`,
     }
@@ -408,6 +410,48 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     askAIHandler
+  );
+
+  // ---- Agent Sessions ----
+
+  server.registerTool(
+    "superhuman_agent_sessions",
+    {
+      description: "List all AI sidebar conversations (agent sessions) in Superhuman. Returns session titles, IDs, update dates, and message counts. Use this to discover conversation history before reading a specific session with superhuman_agent_session_read.",
+      inputSchema: AgentSessionsSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    agentSessionsHandler
+  );
+
+  server.registerTool(
+    "superhuman_agent_session_read",
+    {
+      description: "Read the full message history of a specific AI sidebar conversation. Returns a cleaned transcript with speaker labels (You/AI) and thinking blocks stripped. Requires a session ID from superhuman_agent_sessions.",
+      inputSchema: AgentSessionReadSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    agentSessionReadHandler
+  );
+
+  server.registerTool(
+    "superhuman_agent_session_discard",
+    {
+      description: "Discard (soft-delete) an AI sidebar conversation. The session can be restored later with superhuman_agent_session_restore. Requires a session ID from superhuman_agent_sessions.",
+      inputSchema: AgentSessionDiscardSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    agentSessionDiscardHandler
+  );
+
+  server.registerTool(
+    "superhuman_agent_session_restore",
+    {
+      description: "Restore a previously discarded AI sidebar conversation. Use superhuman_agent_sessions with include_discarded=true to find discarded sessions.",
+      inputSchema: AgentSessionRestoreSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    agentSessionRestoreHandler
   );
 
   // ---- Confirm (two-phase commit) ----

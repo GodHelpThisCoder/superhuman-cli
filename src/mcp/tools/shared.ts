@@ -121,6 +121,40 @@ export function invalidateCdpProvider(): void {
     _cachedCdpProvider.disconnect().catch(() => {});
     _cachedCdpProvider = null;
   }
+  _cachedCdpConn = null;
+}
+
+// Cached raw CDP connection — reused by handlers that need Runtime.evaluate.
+let _cachedCdpConn: SuperhumanConnection | null = null;
+
+/**
+ * Get a cached raw CDP connection for handlers that need Runtime.evaluate
+ * (e.g., agent sessions). Includes auto-launch and connection validation.
+ * Do NOT disconnect the returned connection — it is cached for reuse.
+ */
+export async function getCdpConnection(): Promise<SuperhumanConnection> {
+  if (_cachedCdpConn) {
+    try {
+      await _cachedCdpConn.Runtime.evaluate({ expression: "1", returnByValue: true });
+      return _cachedCdpConn;
+    } catch {
+      _cachedCdpConn = null;
+    }
+  }
+  let conn = await connectToSuperhuman(CDP_PORT);
+  if (!conn) {
+    log.warn("Superhuman not available, attempting launch...");
+    await ensureSuperhuman(CDP_PORT);
+    await new Promise(r => setTimeout(r, 3000));
+    conn = await connectToSuperhuman(CDP_PORT, false);
+  }
+  if (!conn) {
+    throw new Error(
+      `Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${CDP_PORT}`
+    );
+  }
+  _cachedCdpConn = conn;
+  return conn;
 }
 
 /**
