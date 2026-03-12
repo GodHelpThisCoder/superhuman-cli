@@ -4,7 +4,7 @@
 //
 // These tests are SKIPPED in CI and normal `bun test` runs.
 // They exercise CDP-dependent functionality: account listing/switching, MCP handlers.
-import { test, expect, describe, beforeAll, afterAll } from "bun:test";
+import { test, expect, describe, beforeAll, afterAll, afterEach } from "bun:test";
 import {
   connectToSuperhuman,
   disconnect,
@@ -12,6 +12,8 @@ import {
 } from "../superhuman-api";
 import { listAccounts, switchAccount } from "../accounts";
 import { accountsHandler, switchAccountHandler } from "../mcp/tools";
+import { confirmHandler } from "../mcp/tools/confirm";
+import { _clearStaged } from "../mcp/confirmation";
 
 const CDP_PORT = 9333;
 
@@ -122,6 +124,14 @@ describe("MCP account handlers (CDP integration)", () => {
   });
 
   describe("switchAccountHandler", () => {
+    afterEach(() => _clearStaged());
+
+    function extractToken(text: string): string {
+      const match = text.match(/Confirm: (shm_[A-Za-z0-9_-]+)/);
+      if (!match) throw new Error(`No token found in: ${text}`);
+      return match[1]!;
+    }
+
     test("switches account by email address", async () => {
       if (skip || !conn) return;
 
@@ -131,7 +141,14 @@ describe("MCP account handlers (CDP integration)", () => {
       const targetAccount = accounts.find((a) => !a.isCurrent);
       if (!targetAccount) return;
 
-      const result = await switchAccountHandler({ account: targetAccount.email });
+      // Phase 1: stage
+      const staged = await switchAccountHandler({ account: targetAccount.email });
+      expect(staged.isError).toBeUndefined();
+      expect(staged.content[0]!.text).toContain("STAGED");
+      const token = extractToken(staged.content[0]!.text);
+
+      // Phase 2: confirm
+      const result = await confirmHandler({ token });
       expect(result.isError).toBeUndefined();
       expect(result.content[0]!.text).toContain("Switched to");
       expect(result.content[0]!.text).toContain(targetAccount.email);
@@ -147,7 +164,14 @@ describe("MCP account handlers (CDP integration)", () => {
       const targetIndex = currentIndex === 0 ? 2 : 1;
       const targetEmail = accounts[targetIndex - 1]!.email;
 
-      const result = await switchAccountHandler({ account: String(targetIndex) });
+      // Phase 1: stage
+      const staged = await switchAccountHandler({ account: String(targetIndex) });
+      expect(staged.isError).toBeUndefined();
+      expect(staged.content[0]!.text).toContain("STAGED");
+      const token = extractToken(staged.content[0]!.text);
+
+      // Phase 2: confirm
+      const result = await confirmHandler({ token });
       expect(result.isError).toBeUndefined();
       expect(result.content[0]!.text).toContain("Switched to");
       expect(result.content[0]!.text).toContain(targetEmail);
@@ -156,17 +180,27 @@ describe("MCP account handlers (CDP integration)", () => {
     test("returns error for invalid account identifier", async () => {
       if (skip) return;
 
-      const result = await switchAccountHandler({ account: "nonexistent@example.com" });
+      // Phase 1: staging succeeds (no input validation at stage time)
+      const staged = await switchAccountHandler({ account: "nonexistent@example.com" });
+      expect(staged.isError).toBeUndefined();
+      const token = extractToken(staged.content[0]!.text);
+
+      // Phase 2: confirmation executes and hits the validation error
+      const result = await confirmHandler({ token });
       expect(result.isError).toBe(true);
-      expect(result.content[0]!.text).toContain("not found");
     });
 
     test("returns error for out-of-range index", async () => {
       if (skip) return;
 
-      const result = await switchAccountHandler({ account: "999" });
+      // Phase 1: staging succeeds
+      const staged = await switchAccountHandler({ account: "999" });
+      expect(staged.isError).toBeUndefined();
+      const token = extractToken(staged.content[0]!.text);
+
+      // Phase 2: confirmation executes and hits the validation error
+      const result = await confirmHandler({ token });
       expect(result.isError).toBe(true);
-      expect(result.content[0]!.text).toContain("not found");
     });
   });
 });
