@@ -391,6 +391,10 @@ bun src/index.ts --mcp
 | `superhuman_calendar_delete` | Delete calendar event |
 | `superhuman_calendar_free_busy` | Check free/busy availability |
 | `superhuman_ask_ai` | Ask AI to search emails, answer questions, or compose |
+| `superhuman_agent_sessions` | List AI sidebar conversations (agent sessions) |
+| `superhuman_agent_session_read` | Read a specific agent session transcript |
+| `superhuman_agent_session_discard` | Discard (soft-delete) an agent session |
+| `superhuman_agent_session_restore` | Restore a discarded agent session |
 | `superhuman_confirm` | Confirm a staged destructive operation using its `shm_` token |
 | `superhuman_audit_log` | View the JSONL mutation audit log with optional filters |
 
