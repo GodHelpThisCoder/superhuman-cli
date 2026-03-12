@@ -1917,7 +1917,7 @@ export async function updateDraft(
     );
 
     if (!result.ok) return null;
-    const data = await result.json() as any;
+    const data = JSON.parse(await result.text()) as { id: string; message?: { id: string } };
     return { draftId: data.id, messageId: data.message?.id };
   }
 }

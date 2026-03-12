@@ -23,7 +23,7 @@ describe("sendDraftSuperhuman", () => {
         ok: response.ok,
         status: response.status ?? (response.ok ? 200 : 500),
         json: () => Promise.resolve(response.data ?? {}),
-        text: () => Promise.resolve(response.text ?? ""),
+        text: () => Promise.resolve(response.text ?? JSON.stringify(response.data ?? {})),
       } as Response)
     );
     // Cast to any to bypass Bun's fetch type requiring preconnect

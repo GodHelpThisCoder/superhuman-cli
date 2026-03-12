@@ -139,8 +139,7 @@ export class CDPConnectionProvider implements ConnectionProvider {
  * Priority:
  * 1. If --account specified and token is cached -> CachedTokenProvider
  * 2. If any cached tokens exist -> CachedTokenProvider (first account)
- * 3. If CDP available -> CDPConnectionProvider
- * 4. null (caller must handle)
+ * 3. null (caller must handle — fall back to CDP themselves if needed)
  *
  * @param options - Object with optional `account` and `port` fields
  * @returns ConnectionProvider or null if no tokens and no CDP

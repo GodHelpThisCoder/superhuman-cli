@@ -124,7 +124,7 @@ export async function forwardThread(
   const forwardBody = buildForwardBody({
     userHtml,
     from: threadInfo.replyTo || "unknown",
-    date: new Date().toUTCString(), // Best effort; threadInfo doesn't have date
+    date: lastMessage?.date || new Date().toUTCString(),
     subject: threadInfo.subject,
     to: threadInfo.allTo.join(", ") || "unknown",
     originalBody,

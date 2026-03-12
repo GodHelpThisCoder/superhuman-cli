@@ -549,10 +549,10 @@ export async function sendDraftSuperhuman(
       };
     }
 
-    const data = await response.json();
+    const data = JSON.parse(await response.text()) as { send_at?: number };
     return {
       success: true,
-      sendAt: (data as any).send_at,
+      sendAt: data.send_at,
     };
   } catch (error) {
     return {

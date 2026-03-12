@@ -1,3 +1,5 @@
+> **Note:** This document was the initialization plan for safety hardening. All features described here have been implemented. Current metrics: 230 tests across 27 files.
+
 # Safety Hardening — Implementation Session Init
 
 ## Your Task

@@ -72,7 +72,7 @@ export async function getThreadLabels(
       return [];
     }
 
-    const msg = await response.json() as { parentFolderId?: string };
+    const msg = JSON.parse(await response.text()) as { parentFolderId?: string };
     const folderId = msg.parentFolderId;
     const folder = labelMap.get(folderId!);
 
@@ -90,7 +90,7 @@ export async function getThreadLabels(
       return [];
     }
 
-    const thread = await response.json() as { messages?: Array<{ labelIds?: string[] }> };
+    const thread = JSON.parse(await response.text()) as { messages?: Array<{ labelIds?: string[] }> };
     const labelIds = thread.messages?.[0]?.labelIds || [];
 
     return labelIds.map((id: string) => labelMap.get(id) || { id, name: id });
@@ -269,7 +269,7 @@ export async function listStarred(
         return [];
       }
 
-      const result = await response.json() as { value?: Array<{ conversationId?: string }> };
+      const result = JSON.parse(await response.text()) as { value?: Array<{ conversationId?: string }> };
       if (!result.value) {
         return [];
       }

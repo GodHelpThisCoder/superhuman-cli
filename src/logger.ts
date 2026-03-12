@@ -88,15 +88,17 @@ async function writeToFile(line: string): Promise<void> {
   if (!_fileLoggingEnabled) return;
   try {
     const path = logFilePath();
-    const file = Bun.file(path);
-
-    // Rotate if over 5MB
-    if (await file.exists() && file.size > MAX_LOG_SIZE) {
-      await rename(path, `${path}.1`).catch(() => {});
+    // node:fs appendFile is atomic for small writes — intentional exception to Bun.file preference
+    const { appendFile: fsAppend, stat: fsStat } = await import("node:fs/promises");
+    try {
+      const stats = await fsStat(path);
+      if (stats.size > MAX_LOG_SIZE) {
+        await rename(path, `${path}.1`).catch(() => {});
+      }
+    } catch {
+      // File doesn't exist yet — that's fine
     }
-
-    const current = await Bun.file(path).text().catch(() => "");
-    await Bun.write(path, current + line);
+    await fsAppend(path, line);
   } catch {
     // Fire-and-forget — never block on file write failures
   }

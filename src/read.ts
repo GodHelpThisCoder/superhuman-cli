@@ -22,6 +22,7 @@ export interface ThreadMessage {
   cc: Array<{ email: string; name: string }>;
   date: string;
   snippet: string;
+  body?: string;
 }
 
 /**
@@ -98,6 +99,20 @@ async function readThreadGmail(
 
     const fromParsed = parseRecipient(getHeader("From"));
 
+    // Extract body from payload parts (prefer HTML, fall back to plain text)
+    let body = "";
+    function extractBody(part: any): void {
+      if (part.mimeType === "text/html" && part.body?.data) {
+        body = Buffer.from(part.body.data, "base64url").toString("utf-8");
+      } else if (part.mimeType === "text/plain" && part.body?.data && !body) {
+        body = Buffer.from(part.body.data, "base64url").toString("utf-8");
+      }
+      if (part.parts) {
+        for (const p of part.parts) extractBody(p);
+      }
+    }
+    if (msg.payload) extractBody(msg.payload);
+
     return {
       id: msg.id,
       threadId: result.id,
@@ -107,27 +122,42 @@ async function readThreadGmail(
       cc: parseRecipientList(getHeader("Cc")),
       date: getHeader("Date"),
       snippet: msg.snippet || "",
+      body: body || undefined,
     };
   });
 }
 
 /**
  * Read thread messages from MS Graph API.
- * Uses client-side filter by conversationId because $filter on conversationId
- * at /me/messages level returns an InefficientFilter error.
+ * Tries server-side $filter by conversationId first, falls back to client-side
+ * filtering if the server returns an InefficientFilter error.
  */
 async function readThreadMSGraph(
   accessToken: string,
   conversationId: string
 ): Promise<ThreadMessage[]> {
-  const path = `/me/messages?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,conversationId&$top=50&$orderby=receivedDateTime desc`;
-  const result = await msgraphFetch(accessToken, path);
-
   let messages: any[] = [];
-  if (result?.value) {
-    messages = result.value.filter(
-      (m: any) => m.conversationId === conversationId
-    );
+
+  // Try server-side filter first (handles threads beyond the top 50 messages)
+  try {
+    const serverFilterPath = `/me/messages?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,body,conversationId&$filter=conversationId eq '${conversationId}'&$orderby=receivedDateTime asc`;
+    const result = await msgraphFetch(accessToken, serverFilterPath);
+    if (result?.value) {
+      messages = result.value;
+    }
+  } catch {
+    // InefficientFilter or other server-side filter error — fall back to client-side
+  }
+
+  // Fallback: client-side filter with $top=50
+  if (messages.length === 0) {
+    const fallbackPath = `/me/messages?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,body,conversationId&$top=50&$orderby=receivedDateTime desc`;
+    const result = await msgraphFetch(accessToken, fallbackPath);
+    if (result?.value) {
+      messages = result.value.filter(
+        (m: any) => m.conversationId === conversationId
+      );
+    }
     // Sort oldest first for thread reading order
     messages.sort(
       (a: any, b: any) =>
@@ -141,7 +171,7 @@ async function readThreadMSGraph(
     try {
       const msg = await msgraphFetch(
         accessToken,
-        `/me/messages/${conversationId}?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,conversationId`
+        `/me/messages/${conversationId}?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,body,conversationId`
       );
       if (msg) {
         messages = [msg];
@@ -166,6 +196,7 @@ async function readThreadMSGraph(
       cc: (msg.ccRecipients || []).map(mapRecipient),
       date: msg.receivedDateTime || "",
       snippet: msg.bodyPreview || "",
+      body: msg.body?.content || undefined,
     };
   });
 }

@@ -82,7 +82,7 @@ export class SuperhumanDraftProvider implements IDraftProvider {
       return [];
     }
 
-    const data = (await response.json()) as SuperhumanGetThreadsResponse;
+    const data = JSON.parse(await response.text()) as SuperhumanGetThreadsResponse;
     const drafts = this.parseThreadList(data.threadList || []);
 
     // Update cache with latest drafts
