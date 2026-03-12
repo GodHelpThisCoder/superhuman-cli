@@ -180,19 +180,19 @@ async function fetchAllSessions(conn: SuperhumanConnection): Promise<RawAgentSes
 }
 
 /** Fetch a single agent session by ID via CDP portal API. */
-async function fetchSession(conn: SuperhumanConnection, sessionId: string): Promise<RawAgentSession> {
-  return evalInRenderer<RawAgentSession>(conn, `
+export async function fetchSession(conn: SuperhumanConnection, sessionId: string): Promise<RawAgentSession> {
+  const session = await evalInRenderer<RawAgentSession | null>(conn, `
     (async () => {
       try {
         const portal = window.GoogleAccount.di.get("portal");
-        const session = await portal.invoke("agentSessionsInternal", "getSession", [${JSON.stringify(sessionId)}]);
-        if (!session) throw new Error("Session not found: ${sessionId}");
-        return session;
+        return await portal.invoke("agentSessionsInternal", "getSession", [${JSON.stringify(sessionId)}]);
       } catch (e) {
         throw new Error("Failed to fetch agent session: " + (e.message || String(e)));
       }
     })()
   `);
+  if (!session) throw new Error(`Session not found: ${sessionId}`);
+  return session;
 }
 
 /** Discard a session via CDP backend API. */
