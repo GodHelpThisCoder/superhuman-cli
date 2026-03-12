@@ -15,6 +15,9 @@ import type {
 import { randomInt, randomUUID } from "node:crypto";
 import { SUPERHUMAN_BACKEND_BASE } from "./http-utils";
 import { getThreadMessages } from "./gmail-client";
+import { createLogger } from "../logger";
+
+const log = createLogger("superhuman-api");
 
 // ---------------------------------------------------------------------------
 // Private helpers
@@ -73,7 +76,7 @@ function decodeJwtPayload(jwt: string): Record<string, unknown> {
     const payload = Buffer.from(parts[1] ?? "", "base64url").toString("utf-8");
     return JSON.parse(payload);
   } catch (error) {
-    console.error(`[JWT decode]: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`JWT decode: ${error instanceof Error ? error.message : String(error)}`);
     return {};
   }
 }
@@ -232,7 +235,7 @@ export async function askAI(
           fullContent = data.content;
         }
       } catch (error) {
-        console.error(`[SSE JSON parse - ai.compose]: ${error instanceof Error ? error.message : String(error)}`);
+        log.error(`SSE JSON parse - ai.compose: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
@@ -287,7 +290,7 @@ export async function askAISearch(
       const fullMessages = await getThreadMessages(oauthToken, currentThreadId);
       currentThreadMessages = fullMessages.map(formatMessageForAIProxy);
     } catch (error) {
-      console.error(`[thread fetch for AI context]: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`thread fetch for AI context: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -370,7 +373,7 @@ export async function askAISearch(
           fullContent = data.content;
         }
       } catch (error) {
-        console.error(`[SSE JSON parse - askAIProxy]: ${error instanceof Error ? error.message : String(error)}`);
+        log.error(`SSE JSON parse - askAIProxy: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }

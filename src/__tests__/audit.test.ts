@@ -325,6 +325,22 @@ describe("readAuditLog", () => {
     expect(entries.length).toBe(2);
   });
 
+  it("preserves durationMs field", async () => {
+    await logAudit({
+      tool: "superhuman_archive",
+      account: "a@test.com",
+      action: "executed",
+      args: { threadIds: ["t1"] },
+      result: "success",
+      durationMs: 142,
+      dryRun: false,
+    });
+
+    const entries = await readAuditLog();
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.durationMs).toBe(142);
+  });
+
   it("defaults to 50 entries limit", async () => {
     const logPath = join(testDir, "audit.jsonl");
     const lines: string[] = [];

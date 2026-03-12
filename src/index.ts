@@ -20,41 +20,66 @@
 
 import { runMcpServer } from "./mcp/server";
 import { ensureSuperhuman, isSuperhumanRunning } from "./superhuman-api";
+import { setLogLevel, initFileLogging, createLogger } from "./logger";
+import { isUpdaterRunning } from "./update-awareness";
 
 const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
 const HEALTH_CHECK_INTERVAL_MS = 30_000;
+const RELAUNCH_COOLDOWN_MS = 60_000;
 
 const args = process.argv.slice(2);
 const isMcpMode = args.includes("--mcp");
+const isVerbose = args.includes("--verbose") || process.env.SUPERHUMAN_LOG_LEVEL === "debug";
+if (isVerbose) setLogLevel("debug");
+
+const log = createLogger("launcher");
 
 if (isMcpMode) {
   // MCP server mode — linked lifecycle with Superhuman
   (async () => {
+    await initFileLogging();
+
     // Ensure Superhuman is running before we start accepting tool calls
     const launched = await ensureSuperhuman(CDP_PORT);
     if (!launched) {
-      console.error("[launcher] Warning: Superhuman not available at startup. Tools will attempt auto-launch on first call.");
+      log.warn("Superhuman not available at startup. Tools will attempt auto-launch on first call.");
     } else {
-      console.error("[launcher] Superhuman is running on CDP port " + CDP_PORT);
+      log.info("Superhuman is running on CDP port " + CDP_PORT);
     }
 
     // Start MCP server (blocks on stdio transport)
     const serverPromise = runMcpServer();
 
     // Health monitor — check Superhuman every 30s, relaunch if down
+    // Update-aware: skips relaunch if installer is active or cooldown hasn't elapsed
+    let lastRelaunchAttemptMs = 0;
     const healthInterval = setInterval(async () => {
       try {
         if (!(await isSuperhumanRunning(CDP_PORT))) {
-          console.error("[launcher] Superhuman not detected, attempting relaunch...");
+          // Check relaunch cooldown
+          const now = Date.now();
+          if (now - lastRelaunchAttemptMs < RELAUNCH_COOLDOWN_MS) {
+            log.debug("Relaunch cooldown active, skipping health check relaunch");
+            return;
+          }
+
+          // Check if updater is running — don't fight the installer
+          if (await isUpdaterRunning()) {
+            log.info("Skipping relaunch — update installer active");
+            return;
+          }
+
+          log.warn("Superhuman not detected, attempting relaunch...");
+          lastRelaunchAttemptMs = now;
           const ok = await ensureSuperhuman(CDP_PORT);
           if (ok) {
-            console.error("[launcher] Superhuman relaunched successfully");
+            log.info("Superhuman relaunched successfully");
           } else {
-            console.error("[launcher] Failed to relaunch Superhuman — tools may fail until it's running");
+            log.error("Failed to relaunch Superhuman — tools may fail until it's running");
           }
         }
       } catch (e) {
-        console.error("[launcher] Health check error:", (e as Error).message);
+        log.error("Health check error:", (e as Error).message);
       }
     }, HEALTH_CHECK_INTERVAL_MS);
 
@@ -67,7 +92,7 @@ if (isMcpMode) {
     process.on("SIGTERM", cleanup);
 
     await serverPromise;
-  })().catch(console.error);
+  })().catch((e) => log.error("Fatal:", e instanceof Error ? e.message : String(e)));
 } else {
   // CLI mode - import and run the CLI
   import("./cli").then((cli) => {

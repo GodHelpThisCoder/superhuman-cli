@@ -10,6 +10,9 @@
  */
 
 import type { TokenInfo } from "./types";
+import { createLogger } from "../logger";
+
+const log = createLogger("token-refresh");
 
 // ---------------------------------------------------------------------------
 // JWT helpers
@@ -70,7 +73,7 @@ export function extractClientId(accessToken: string): string | null {
 
     return null;
   } catch (error) {
-    console.error(`[JWT client_id extraction]: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`JWT client_id extraction: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -94,9 +97,7 @@ export async function refreshAccessToken(
   token: TokenInfo
 ): Promise<TokenInfo | null> {
   if (!token.refreshToken) {
-    console.error(
-      `[token-refresh] Cannot refresh token for ${token.email}: no refresh token available`
-    );
+    log.error(`Cannot refresh token for ${token.email}: no refresh token available`);
     return null;
   }
 
@@ -110,10 +111,7 @@ export async function refreshAccessToken(
     token.clientId ?? extractClientId(token.accessToken) ?? undefined;
 
   if (!clientId) {
-    console.warn(
-      `[token-refresh] Could not determine client_id for ${token.email}; ` +
-        `the refresh request may fail`
-    );
+    log.warn(`Could not determine client_id for ${token.email}; the refresh request may fail`);
   }
 
   const body: Record<string, string> = {
@@ -138,9 +136,8 @@ export async function refreshAccessToken(
       const { error, error_description } = (await response
         .json()
         .catch(() => ({}) as Record<string, unknown>)) as any;
-      console.error(
-        `[token-refresh] Refresh failed for ${token.email}: ` +
-          `HTTP ${response.status} ${response.statusText}` +
+      log.error(
+        `Refresh failed for ${token.email}: HTTP ${response.status} ${response.statusText}` +
           (error ? ` — ${error}: ${error_description || ""}` : "")
       );
       return null;
@@ -161,9 +158,8 @@ export async function refreshAccessToken(
       clientId: clientId ?? token.clientId,
     };
   } catch (error) {
-    console.error(
-      `[token-refresh] Network/parse error refreshing token for ${token.email}:`,
-      error instanceof Error ? error.message : error
+    log.error(
+      `Network/parse error refreshing token for ${token.email}: ${error instanceof Error ? error.message : String(error)}`
     );
     return null;
   }

@@ -6,6 +6,9 @@
 
 import type { Draft, IDraftProvider } from "../services/draft-service";
 import type { TokenInfo } from "../token-api";
+import { createLogger } from "../logger";
+
+const log = createLogger("gmail-draft");
 
 const GMAIL_API = "https://www.googleapis.com/gmail/v1/users/me";
 
@@ -156,7 +159,7 @@ export class GmailDraftProvider implements IDraftProvider {
           source: "gmail",
         });
       } catch (error) {
-        console.error(`Error fetching draft ${draft.id}:`, error);
+        log.error(`Error fetching draft ${draft.id}: ${error instanceof Error ? error.message : String(error)}`);
         continue;
       }
     }

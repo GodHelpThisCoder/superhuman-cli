@@ -13,7 +13,7 @@ import {
 } from "../../send-api";
 import { addAttachmentToDraft } from "../../token-api";
 import type { ConnectionProvider } from "../../connection-provider";
-import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -138,7 +138,9 @@ export const ForwardSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_draft", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would create draft to ${args.to} with subject "${args.subject}"`);
   }
 
@@ -159,7 +161,7 @@ export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<T
 
     if (!result.success || !result.draftId) {
       const toolResult = errorResult(`Failed to create draft: ${result.error || "no draft ID returned"}`);
-      auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
 
@@ -168,24 +170,26 @@ export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<T
       const attError = await addAttachments(provider, result.draftId, args.attachments);
       if (attError) {
         const toolResult = errorResult(`Draft created (${result.draftId}) but ${attError}`);
-        auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
     }
 
     const attSuffix = args.attachments?.length ? `\nAttachments: ${args.attachments.length}` : "";
     const toolResult = successResult(`Draft created successfully\nDraft ID: ${result.draftId}${attSuffix}`);
-    auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult);
+    auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } catch (error) {
     const toolResult = actionableError("Failed to create draft", error);
-    auditMutation("superhuman_draft", args as Record<string, unknown>, "unknown", toolResult);
+    auditMutation("superhuman_draft", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   }
 }
 
 export async function sendHandler(args: z.infer<typeof SendSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_send", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would send email to ${args.to} with subject "${args.subject}"`);
   }
 
@@ -200,7 +204,7 @@ export async function sendHandler(args: z.infer<typeof SendSchema>): Promise<Too
     if (!isConfirmedExecution()) {
       const preview = `Would send email to ${args.to} with subject "${args.subject}"`;
       const token = stageOperation("superhuman_send", args as Record<string, unknown>, preview, account);
-      auditMutation("superhuman_send", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+      auditMutation("superhuman_send", args as Record<string, unknown>, account, successResult(preview), { action: "staged", durationMs: Math.round(performance.now() - _t0) });
       return successResult(buildStagedResponse(preview, token));
     }
 
@@ -218,25 +222,25 @@ export async function sendHandler(args: z.infer<typeof SendSchema>): Promise<Too
 
       if (!draftResult.success || !draftResult.draftId) {
         const toolResult = errorResult(`Failed to create draft for send: ${draftResult.error || "no draft ID"}`);
-        auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
       const attError = await addAttachments(provider, draftResult.draftId, args.attachments);
       if (attError) {
         const toolResult = errorResult(`Draft created but ${attError}. Draft ID: ${draftResult.draftId}`);
-        auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
       const sendResult = await sendDraftByIdViaProvider(provider, draftResult.draftId);
       if (sendResult.success) {
         const toolResult = successResult(`Email sent successfully to ${args.to} with ${args.attachments.length} attachment(s)`);
-        auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
       const toolResult = errorResult(`Attachments added but send failed: ${sendResult.error}. Draft ID: ${draftResult.draftId}`);
-      auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
 
@@ -251,21 +255,23 @@ export async function sendHandler(args: z.infer<typeof SendSchema>): Promise<Too
 
     if (result.success) {
       const toolResult = successResult(`Email sent successfully to ${args.to}`);
-      auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
     const toolResult = errorResult(`Failed to send email: ${result.error}`);
-    auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult);
+    auditMutation("superhuman_send", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } catch (error) {
     const toolResult = actionableError("Failed to send email", error);
-    auditMutation("superhuman_send", args as Record<string, unknown>, "unknown", toolResult);
+    auditMutation("superhuman_send", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   }
 }
 
 export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_reply", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would ${args.send ? "send" : "draft"} reply to thread ${args.threadId}`);
   }
 
@@ -282,7 +288,7 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
     if (!isConfirmedExecution() && (args.send ?? false)) {
       const preview = `Would send reply to thread ${args.threadId}`;
       const token = stageOperation("superhuman_reply", args as Record<string, unknown>, preview, account);
-      auditMutation("superhuman_reply", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+      auditMutation("superhuman_reply", args as Record<string, unknown>, account, successResult(preview), { action: "staged", durationMs: Math.round(performance.now() - _t0) });
       return successResult(buildStagedResponse(preview, token));
     }
 
@@ -294,14 +300,14 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
       const result = await replyToThread(provider, args.threadId, args.body, false);
       if (!result.success || !result.draftId) {
         const toolResult = errorResult(`Failed to create reply draft: ${result.error || "no draft ID"}`);
-        auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
       const attError = await addAttachments(provider, result.draftId, args.attachments!);
       if (attError) {
         const toolResult = errorResult(`Reply draft created but ${attError}. Draft ID: ${result.draftId}`);
-        auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
@@ -309,16 +315,16 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
         const sendResult = await sendDraftByIdViaProvider(provider, result.draftId);
         if (sendResult.success) {
           const toolResult = successResult(`Reply sent to thread ${args.threadId} with ${args.attachments!.length} attachment(s)`);
-          auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+          auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
           return toolResult;
         }
         const toolResult = errorResult(`Reply with attachments created but send failed: ${sendResult.error}. Draft ID: ${result.draftId}`);
-        auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
       const toolResult = successResult(`Reply draft created for thread ${args.threadId}\nDraft ID: ${result.draftId}\nAttachments: ${args.attachments!.length}`);
-      auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
 
@@ -330,23 +336,25 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
 
     if (wantSend) {
       const toolResult = successResult(`Reply sent successfully to thread ${args.threadId}`);
-      auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
     const toolResult = successResult(`Reply draft created for thread ${args.threadId}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
-    auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult);
+    auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } catch (error) {
     const toolResult = actionableError("Failed to reply", error);
-    auditMutation("superhuman_reply", args as Record<string, unknown>, "unknown", toolResult);
+    auditMutation("superhuman_reply", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_reply_all", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would ${args.send ? "send" : "draft"} reply-all to thread ${args.threadId}`);
   }
 
@@ -363,7 +371,7 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
     if (!isConfirmedExecution() && (args.send ?? false)) {
       const preview = `Would send reply-all to thread ${args.threadId}`;
       const token = stageOperation("superhuman_reply_all", args as Record<string, unknown>, preview, account);
-      auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+      auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, successResult(preview), { action: "staged", durationMs: Math.round(performance.now() - _t0) });
       return successResult(buildStagedResponse(preview, token));
     }
 
@@ -374,14 +382,14 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
       const result = await replyAllToThread(provider, args.threadId, args.body, false);
       if (!result.success || !result.draftId) {
         const toolResult = errorResult(`Failed to create reply-all draft: ${result.error || "no draft ID"}`);
-        auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
       const attError = await addAttachments(provider, result.draftId, args.attachments!);
       if (attError) {
         const toolResult = errorResult(`Reply-all draft created but ${attError}. Draft ID: ${result.draftId}`);
-        auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
@@ -389,16 +397,16 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
         const sendResult = await sendDraftByIdViaProvider(provider, result.draftId);
         if (sendResult.success) {
           const toolResult = successResult(`Reply-all sent to thread ${args.threadId} with ${args.attachments!.length} attachment(s)`);
-          auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+          auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
           return toolResult;
         }
         const toolResult = errorResult(`Reply-all with attachments created but send failed: ${sendResult.error}. Draft ID: ${result.draftId}`);
-        auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
       const toolResult = successResult(`Reply-all draft created for thread ${args.threadId}\nDraft ID: ${result.draftId}\nAttachments: ${args.attachments!.length}`);
-      auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
 
@@ -410,23 +418,25 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
 
     if (wantSend) {
       const toolResult = successResult(`Reply-all sent successfully to thread ${args.threadId}`);
-      auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
     const toolResult = successResult(`Reply-all draft created for thread ${args.threadId}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
-    auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult);
+    auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } catch (error) {
     const toolResult = actionableError("Failed to reply-all", error);
-    auditMutation("superhuman_reply_all", args as Record<string, unknown>, "unknown", toolResult);
+    auditMutation("superhuman_reply_all", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_forward", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would ${args.send ? "send" : "draft"} forward of thread ${args.threadId} to ${args.toEmail}`);
   }
 
@@ -443,7 +453,7 @@ export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promi
     if (!isConfirmedExecution() && (args.send ?? false)) {
       const preview = `Would forward thread ${args.threadId} to ${args.toEmail}`;
       const token = stageOperation("superhuman_forward", args as Record<string, unknown>, preview, account);
-      auditMutation("superhuman_forward", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+      auditMutation("superhuman_forward", args as Record<string, unknown>, account, successResult(preview), { action: "staged", durationMs: Math.round(performance.now() - _t0) });
       return successResult(buildStagedResponse(preview, token));
     }
 
@@ -454,14 +464,14 @@ export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promi
       const result = await forwardThread(provider, args.threadId, args.toEmail, args.body, false);
       if (!result.success || !result.draftId) {
         const toolResult = errorResult(`Failed to create forward draft: ${result.error || "no draft ID"}`);
-        auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
       const attError = await addAttachments(provider, result.draftId, args.attachments!);
       if (attError) {
         const toolResult = errorResult(`Forward draft created but ${attError}. Draft ID: ${result.draftId}`);
-        auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
@@ -469,16 +479,16 @@ export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promi
         const sendResult = await sendDraftByIdViaProvider(provider, result.draftId);
         if (sendResult.success) {
           const toolResult = successResult(`Email forwarded to ${args.toEmail} with ${args.attachments!.length} attachment(s)`);
-          auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+          auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
           return toolResult;
         }
         const toolResult = errorResult(`Forward with attachments created but send failed: ${sendResult.error}. Draft ID: ${result.draftId}`);
-        auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
       const toolResult = successResult(`Forward draft created for ${args.toEmail}\nDraft ID: ${result.draftId}\nAttachments: ${args.attachments!.length}`);
-      auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
 
@@ -490,17 +500,17 @@ export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promi
 
     if (wantSend) {
       const toolResult = successResult(`Email forwarded successfully to ${args.toEmail}`);
-      auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
     const toolResult = successResult(`Forward draft created for ${args.toEmail}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
-    auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult);
+    auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } catch (error) {
     const toolResult = actionableError("Failed to forward", error);
-    auditMutation("superhuman_forward", args as Record<string, unknown>, "unknown", toolResult);
+    auditMutation("superhuman_forward", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }

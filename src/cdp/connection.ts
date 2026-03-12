@@ -8,8 +8,15 @@
  */
 
 import CDP from "chrome-remote-interface";
+import { createLogger, getLogLevel } from "../logger";
+import { getPendingUpdateInfo, isUpdaterRunning } from "../update-awareness";
+
+const log = createLogger("cdp");
+const netLog = createLogger("cdp-network");
 
 let launchedSuperhumanProcess: ReturnType<typeof Bun.spawn> | null = null;
+let lastLaunchAttemptMs = 0;
+const LAUNCH_COOLDOWN_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // Connection types
@@ -76,7 +83,7 @@ export async function isSuperhumanRunning(port = 9333): Promise<boolean> {
     const targets = await CDP.List({ host, port });
     return targets.some((t: any) => t.url.includes("mail.superhuman.com"));
   } catch (error) {
-    console.error(`[CDP Superhuman check]: ${error instanceof Error ? error.message : String(error)}`);
+    log.debug("Superhuman check failed:", error instanceof Error ? error.message : String(error));
     return false;
   }
 }
@@ -84,36 +91,74 @@ export async function isSuperhumanRunning(port = 9333): Promise<boolean> {
 /**
  * Launch Superhuman with remote debugging enabled.
  * Skips launch when CDP_HOST is set (remote/container environment).
+ * Update-aware: defers launch if an installer is actively running,
+ * and extends the wait timeout if an update is being applied mid-startup.
  */
 export async function launchSuperhuman(port = 9333): Promise<boolean> {
   if (await isSuperhumanRunning(port)) {
     return true;
   }
 
+  // Cooldown: prevent rapid-fire relaunch attempts
+  const now = Date.now();
+  if (now - lastLaunchAttemptMs < LAUNCH_COOLDOWN_MS) {
+    log.info("Launch cooldown active, skipping (last attempt was " +
+      Math.round((now - lastLaunchAttemptMs) / 1000) + "s ago)");
+    return false;
+  }
+  lastLaunchAttemptMs = now;
+
   const host = getCDPHost();
   if (host !== "localhost") {
-    console.error(`Superhuman not reachable at ${host}:${port}. Ensure it is running on the host with --remote-debugging-port=${port}`);
+    log.warn(`Superhuman not reachable at ${host}:${port}. Ensure it is running on the host with --remote-debugging-port=${port}`);
     return false;
+  }
+
+  // Update awareness: check for pending updates and active installers
+  const pendingUpdate = await getPendingUpdateInfo();
+  if (pendingUpdate) {
+    log.warn(`Pending update to v${pendingUpdate.version} detected`);
+    if (await isUpdaterRunning()) {
+      log.warn("Update installer active, deferring launch");
+      return false;
+    }
   }
 
   const appPath = getSuperhumanPath();
 
-  console.error("Launching Superhuman with remote debugging...");
+  log.info("Launching Superhuman with remote debugging...");
   try {
     launchedSuperhumanProcess = Bun.spawn([appPath, `--remote-debugging-port=${port}`], {
       stdout: "ignore",
       stderr: "ignore",
     });
 
-    for (let i = 0; i < 30; i++) {
+    // Wait up to 30s normally, or 120s if an update is being applied
+    const maxWaitSeconds = pendingUpdate ? 120 : 30;
+    let wasRunning = false;
+
+    for (let i = 0; i < maxWaitSeconds; i++) {
       await new Promise(r => setTimeout(r, 1000));
+
       if (await isSuperhumanRunning(port)) {
-        console.error("Superhuman is ready");
+        log.info("Superhuman is ready");
         await new Promise(r => setTimeout(r, 2000));
         return true;
       }
+
+      // Detect if Superhuman started then died (likely update install)
+      if (!wasRunning && i > 5) {
+        // Give it a few seconds, then start checking for updater activity
+        if (await isUpdaterRunning()) {
+          if (!wasRunning) {
+            log.info("Superhuman quit for update install, waiting for updater to finish...");
+            wasRunning = true;
+          }
+        }
+      }
     }
-    console.error("Timeout waiting for Superhuman to start");
+
+    log.warn(`Timeout waiting for Superhuman to start (waited ${maxWaitSeconds}s)`);
     try {
       launchedSuperhumanProcess?.kill();
     } catch {
@@ -128,7 +173,7 @@ export async function launchSuperhuman(port = 9333): Promise<boolean> {
       // Process may have already exited.
     }
     launchedSuperhumanProcess = null;
-    console.error("Failed to launch Superhuman:", (e as Error).message);
+    log.error("Failed to launch Superhuman:", (e as Error).message);
     return false;
   }
 }
@@ -175,7 +220,7 @@ export async function connectToSuperhuman(
   );
 
   if (!mainPage) {
-    console.error("Could not find Superhuman main page");
+    log.warn("Could not find Superhuman main page");
     return null;
   }
 
@@ -189,8 +234,33 @@ export async function connectToSuperhuman(
       backgroundClient = await CDP({ target: backgroundPage.id, host, port });
       await backgroundClient.Network.enable();
     } catch (error) {
-      console.error(`[CDP background connect]: ${error instanceof Error ? error.message : String(error)}`);
+      log.warn("Background page connect failed:", error instanceof Error ? error.message : String(error));
     }
+  }
+
+  // Attach network listeners at debug level (zero cost otherwise)
+  if (getLogLevel() === "debug") {
+    const netDomain = backgroundClient?.Network ?? client.Network;
+    try {
+      (netDomain as any).on("requestWillBeSent", (params: any) => {
+        try {
+          const req = params?.request;
+          if (req) {
+            const body = req.postData ? ` ${req.postData.slice(0, 200)}` : "";
+            netLog.debug(`=> ${req.method} ${req.url}${body}`);
+          }
+        } catch { /* listener errors must never propagate */ }
+      });
+      (netDomain as any).on("responseReceived", (params: any) => {
+        try {
+          const resp = params?.response;
+          if (resp) {
+            const timing = resp.timing?.receiveHeadersEnd != null ? ` ${Math.round(resp.timing.receiveHeadersEnd)}ms` : "";
+            netLog.debug(`<= ${resp.status} ${resp.url}${timing}`);
+          }
+        } catch { /* listener errors must never propagate */ }
+      });
+    } catch { /* best-effort — ignore if listeners can't be attached */ }
   }
 
   return {
@@ -235,7 +305,7 @@ export async function findChromeExtension(port: number): Promise<any | null> {
       ) ?? null
     );
   } catch (error) {
-    console.error(`[find Chrome extension]: ${error instanceof Error ? error.message : String(error)}`);
+    log.debug("Find Chrome extension failed:", error instanceof Error ? error.message : String(error));
     return null;
   }
 }
@@ -278,7 +348,7 @@ export async function connectToSuperhumanChrome(
     if (swClient) {
       await swClient.close().catch(() => {});
     }
-    console.error(`[Chrome extension CDP connect]: ${error instanceof Error ? error.message : String(error)}`);
+    log.warn("Chrome extension CDP connect failed:", error instanceof Error ? error.message : String(error));
     return null;
   }
 }

@@ -6,6 +6,9 @@
 
 import type { ConnectionProvider } from "./connection-provider";
 import { gmailFetch, msgraphFetch } from "./token-api";
+import { createLogger } from "./logger";
+
+const log = createLogger("read");
 
 export interface ThreadMessage {
   id: string;
@@ -144,7 +147,7 @@ async function readThreadMSGraph(
         messages = [msg];
       }
     } catch (error) {
-      console.error(`[MS Graph message ID fallback]: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`MS Graph message ID fallback: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

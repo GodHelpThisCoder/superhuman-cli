@@ -22,6 +22,7 @@ export interface AuditEntry {
   result: "success" | "error" | "dry_run";
   error?: string;
   batchSize?: number;
+  durationMs?: number;
   dryRun: boolean;
 }
 

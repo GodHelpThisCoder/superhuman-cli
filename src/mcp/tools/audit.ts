@@ -41,6 +41,7 @@ export async function auditLogHandler(args: z.infer<typeof AuditLogSchema>): Pro
         ];
         if (e.token) parts.push(`token:${e.token}`);
         if (e.batchSize) parts.push(`batch:${e.batchSize}`);
+        if (e.durationMs != null) parts.push(`${e.durationMs}ms`);
         if (e.error) parts.push(`error:${e.error}`);
         if (e.dryRun) parts.push("(dry-run)");
         return parts.join(" | ");

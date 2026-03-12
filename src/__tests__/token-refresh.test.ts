@@ -328,9 +328,9 @@ describe("error handling", () => {
   });
 
   test("logs warning when token expires without refresh", async () => {
-    const originalWarn = console.warn;
-    let warnMessage = "";
-    console.warn = (msg: string) => { warnMessage = msg; };
+    const originalError = console.error;
+    let captured = "";
+    console.error = (...args: unknown[]) => { captured += args.map(String).join(" "); };
 
     try {
       const token: TokenInfo = {
@@ -345,10 +345,10 @@ describe("error handling", () => {
 
       await getCachedToken(token.email);
 
-      expect(warnMessage).toContain("warn-test@example.com");
-      expect(warnMessage).toContain("superhuman auth");
+      expect(captured).toContain("warn-test@example.com");
+      expect(captured).toContain("superhuman auth");
     } finally {
-      console.warn = originalWarn;
+      console.error = originalError;
     }
   });
 });

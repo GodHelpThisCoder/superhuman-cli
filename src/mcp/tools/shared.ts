@@ -17,6 +17,9 @@ import {
 } from "../../token-api";
 import { isKilled } from "../../kill-switch";
 import { logAudit } from "../../audit";
+import { createLogger } from "../../logger";
+
+const log = createLogger("mcp");
 
 export const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
 
@@ -64,7 +67,7 @@ export async function getMcpProvider(): Promise<ConnectionProvider> {
   let conn = await connectToSuperhuman(CDP_PORT);
   if (!conn) {
     // Superhuman may be starting — wait and retry once
-    console.error("[mcp] Superhuman not available, attempting launch...");
+    log.warn("Superhuman not available, attempting launch...");
     await ensureSuperhuman(CDP_PORT);
     await new Promise(r => setTimeout(r, 3000));
     conn = await connectToSuperhuman(CDP_PORT, false);
@@ -149,7 +152,7 @@ export function auditMutation(
   args: Record<string, unknown>,
   account: string,
   result: ToolResult,
-  options?: { batchSize?: number; action?: "executed" | "staged" | "confirmed" },
+  options?: { batchSize?: number; durationMs?: number; action?: "executed" | "staged" | "confirmed" },
 ): void {
   logAudit({
     tool,
@@ -159,7 +162,27 @@ export function auditMutation(
     result: result.isError ? "error" : "success",
     error: result.isError ? result.content[0]?.text : undefined,
     batchSize: options?.batchSize,
+    durationMs: options?.durationMs,
     dryRun: false,
+  }).catch(() => {});
+}
+
+/**
+ * Log an audit entry for a dry-run operation. Fire-and-forget.
+ */
+export function auditDryRun(
+  tool: string,
+  args: Record<string, unknown>,
+  durationMs?: number,
+): void {
+  logAudit({
+    tool,
+    account: "dry-run",
+    action: "executed",
+    args: { ...args, dryRun: true },
+    result: "dry_run",
+    dryRun: true,
+    durationMs,
   }).catch(() => {});
 }
 

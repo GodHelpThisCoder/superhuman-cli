@@ -64,7 +64,7 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
   } catch (error) {
     return actionableError("Search failed", error);
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
@@ -92,7 +92,7 @@ export async function inboxHandler(args: z.infer<typeof InboxSchema>): Promise<T
   } catch (error) {
     return actionableError("Failed to list inbox", error);
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
@@ -118,6 +118,6 @@ export async function readHandler(args: z.infer<typeof ReadSchema>): Promise<Too
   } catch (error) {
     return actionableError("Failed to read thread", error);
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }

@@ -6,6 +6,10 @@
  */
 
 import type { ConnectionProvider } from "./connection-provider";
+import { createLogger } from "./logger";
+
+const log = createLogger("calendar");
+
 import {
   type CalendarEventDirect as CalendarEvent,
   type CreateCalendarEventInput as CreateEventInput,
@@ -75,7 +79,7 @@ export async function listEvents(
       limit: options?.limit,
     });
   } catch (e: any) {
-    console.error("listEvents error:", e.message);
+    log.error(`listEvents error: ${e.message}`);
     return [];
   }
 }
@@ -197,7 +201,7 @@ export async function getFreeBusy(
 
     return { busy, free: [] };
   } catch (e: any) {
-    console.error("getFreeBusy error:", e.message);
+    log.error(`getFreeBusy error: ${e.message}`);
     return { busy: [], free: [] };
   }
 }

@@ -11,6 +11,9 @@ import type { SuperhumanTokenInfo, TokenInfo } from "./token-api";
 import { superhumanFetch, gmailFetch, msgraphFetch } from "./token-api";
 import type { ConnectionProvider } from "./connection-provider";
 import { randomUUID } from "node:crypto";
+import { createLogger } from "./logger";
+
+const log = createLogger("snooze");
 
 export interface SnoozeResult {
   success: boolean;
@@ -199,22 +202,18 @@ export async function listSnoozedDirect(
       }),
     });
 
-    if (process.env.SUPERHUMAN_DEBUG) {
-      console.error("[DEBUG listSnoozedDirect] result:", result === null ? "null" : JSON.stringify(Object.keys(result)));
-    }
+    log.debug(`listSnoozedDirect result: ${result === null ? "null" : JSON.stringify(Object.keys(result))}`);
     if (result === null || !result.threadList) {
       return [];
     }
 
-    if (process.env.SUPERHUMAN_DEBUG) {
-      for (const item of result.threadList.slice(0, 3)) {
-        console.error("[DEBUG snooze] raw item:", JSON.stringify({
-          "reminder.threadId": item.thread?.reminder?.threadId,
-          "reminder.reminderId": item.thread?.reminder?.reminderId,
-          "thread.id": item.thread?.id,
-          "item.id": item.id,
-        }));
-      }
+    for (const item of result.threadList.slice(0, 3)) {
+      log.debug("raw item:", JSON.stringify({
+        "reminder.threadId": item.thread?.reminder?.threadId,
+        "reminder.reminderId": item.thread?.reminder?.reminderId,
+        "thread.id": item.thread?.id,
+        "item.id": item.id,
+      }));
     }
 
     return result.threadList.map((item: any) => ({
@@ -223,9 +222,7 @@ export async function listSnoozedDirect(
       reminderId: item.thread?.reminder?.reminderId,
     }));
   } catch (_e) {
-    if (process.env.SUPERHUMAN_DEBUG) {
-      console.error("[DEBUG listSnoozedDirect] error:", _e);
-    }
+    log.debug(`listSnoozedDirect error: ${_e}`);
     return [];
   }
 }
@@ -319,9 +316,7 @@ export async function unsnoozeThreadViaProvider(
   };
 
   // Fetch all snoozed threads to find reminder IDs
-  if (process.env.SUPERHUMAN_DEBUG) {
-    console.error(`[DEBUG unsnooze] token present: ${!!token.idToken}, email: ${token.email}`);
-  }
+  log.debug(`unsnooze token present: ${!!token.idToken}, email: ${token.email}`);
   const snoozedThreads = await listSnoozedDirect(superhumanToken, 50);
   const results: SnoozeResult[] = [];
 
@@ -330,10 +325,7 @@ export async function unsnoozeThreadViaProvider(
       t.id === threadId || t.id.endsWith(threadId) || threadId.endsWith(t.id)
     );
     if (!snoozed?.reminderId) {
-      if (process.env.SUPERHUMAN_DEBUG) {
-        console.error(`[DEBUG unsnooze] No match for threadId="${threadId}" in ${snoozedThreads.length} snoozed threads:`,
-          snoozedThreads.map(t => t.id).join(", "));
-      }
+      log.debug(`No match for threadId="${threadId}" in ${snoozedThreads.length} snoozed threads: ${snoozedThreads.map(t => t.id).join(", ")}`);
       results.push({
         success: false,
         error: `Could not find reminder ID for thread ${threadId}`,

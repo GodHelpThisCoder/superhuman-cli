@@ -9,7 +9,7 @@ import {
   type SuperhumanConnection,
 } from "../../superhuman-api";
 import { listAccounts, switchAccount } from "../../accounts";
-import { successResult, errorResult, actionableError, guardMutation, auditMutation, CDP_PORT, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, guardMutation, auditMutation, auditDryRun, CDP_PORT, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -59,7 +59,9 @@ export async function accountsHandler(_args: z.infer<typeof AccountsSchema>): Pr
 }
 
 export async function switchAccountHandler(args: z.infer<typeof SwitchAccountSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_switch_account", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would switch to account ${args.account}`);
   }
 
