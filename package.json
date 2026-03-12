@@ -14,9 +14,7 @@
     "mcp": "bun run src/index.ts --mcp"
   },
   "devDependencies": {
-    "@paralleldrive/cuid2": "^3.3.0",
-    "@types/bun": "latest",
-    "playwright": "^1.58.2"
+    "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"
