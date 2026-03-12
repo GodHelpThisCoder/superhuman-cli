@@ -208,19 +208,38 @@ export async function listSnoozedDirect(
     }
 
     for (const item of result.threadList.slice(0, 3)) {
-      log.debug("raw item:", JSON.stringify({
-        "reminder.threadId": item.thread?.reminder?.threadId,
-        "reminder.reminderId": item.thread?.reminder?.reminderId,
-        "thread.id": item.thread?.id,
-        "item.id": item.id,
-      }));
+      log.debug("raw snoozed item:", JSON.stringify(item, null, 2));
     }
 
-    return result.threadList.map((item: any) => ({
-      id: item.thread?.reminder?.threadId || item.thread?.id || item.id || "",
-      snoozeUntil: item.thread?.reminder?.triggerAt,
-      reminderId: item.thread?.reminder?.reminderId,
-    }));
+    return result.threadList.map((item: any) => {
+      // Try multiple paths for reminderId — API structure varies
+      const reminder = item.thread?.reminder;
+      const reminderId =
+        reminder?.reminderId ||
+        reminder?.id ||
+        item.reminder?.reminderId ||
+        item.reminder?.id ||
+        item.reminderId ||
+        item.id ||
+        "";
+
+      const threadId =
+        reminder?.threadId ||
+        item.thread?.id ||
+        item.threadId ||
+        item.id ||
+        "";
+
+      const snoozeUntil =
+        reminder?.triggerAt ||
+        item.reminder?.triggerAt ||
+        item.snoozeUntil ||
+        "";
+
+      log.debug(`snoozed thread mapping: threadId=${threadId}, reminderId=${reminderId}, snoozeUntil=${snoozeUntil}`);
+
+      return { id: threadId, snoozeUntil, reminderId };
+    });
   } catch (_e) {
     log.debug(`listSnoozedDirect error: ${_e}`);
     return [];
@@ -324,9 +343,11 @@ export async function unsnoozeThreadViaProvider(
     email: token.email,
   };
 
-  // Fetch all snoozed threads to find reminder IDs
+  // Fetch snoozed threads to find reminder IDs.
+  // NOTE: Superhuman backend rejects limit > ~50 with HTTP 400,
+  // so we cap at 50 and paginate if needed.
   log.debug(`unsnooze token present: ${!!token.idToken}, email: ${token.email}`);
-  const snoozedThreads = await listSnoozedDirect(superhumanToken, 500);
+  const snoozedThreads = await listSnoozedDirect(superhumanToken, 50);
   const results: SnoozeResult[] = [];
 
   for (const threadId of threadIds) {

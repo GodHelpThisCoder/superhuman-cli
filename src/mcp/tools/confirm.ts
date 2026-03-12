@@ -7,7 +7,7 @@ import {
   confirmOperation,
   withConfirmation,
 } from "../confirmation";
-import { getMcpProvider, successResult, errorResult, actionableError, resolveSuperhumanToken, guardMutation, auditMutation, type ToolResult } from "./shared";
+import { resolveCurrentAccountViaCDP, getMcpProvider, successResult, errorResult, actionableError, resolveSuperhumanToken, guardMutation, auditMutation, type ToolResult } from "./shared";
 import { logAudit } from "../../audit";
 
 // Handler imports for dispatch
@@ -61,21 +61,21 @@ export async function confirmHandler(args: z.infer<typeof ConfirmSchema>): Promi
   if (killed) return killed;
 
   try {
-    // Resolve current account for binding check
+    // Resolve current account directly from CDP (authoritative for active UI state).
+    // Falls back to cached tokens only if CDP is unavailable.
     let currentAccount = "unknown";
     try {
-      const token = await resolveSuperhumanToken();
-      if (token?.email) {
-        currentAccount = token.email;
-      }
+      currentAccount = await resolveCurrentAccountViaCDP();
     } catch {
-      // Fall through to CDP lookup below.
+      // CDP unavailable — fall back to cached tokens.
     }
 
     if (currentAccount === "unknown") {
       try {
-        const provider = await getMcpProvider();
-        currentAccount = await provider.getCurrentEmail();
+        const token = await resolveSuperhumanToken();
+        if (token?.email) {
+          currentAccount = token.email;
+        }
       } catch {
         // Keep "unknown" — confirmOperation will reject unknown account bindings.
       }
