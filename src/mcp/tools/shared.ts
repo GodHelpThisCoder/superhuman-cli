@@ -4,9 +4,11 @@
 
 import {
   connectToSuperhuman,
+  disconnect,
   ensureSuperhuman,
   type SuperhumanConnection,
 } from "../../superhuman-api";
+import { listAccounts } from "../../accounts";
 import { CDPConnectionProvider, resolveProvider, type ConnectionProvider } from "../../connection-provider";
 import {
   loadTokensFromDisk,
@@ -39,34 +41,47 @@ let _cachedCdpProvider: CDPConnectionProvider | null = null;
 
 /**
  * Get a ConnectionProvider for MCP tools.
- * Prefers cached tokens; falls back to CDP with auto-reconnect.
+ * Resolves the active account from CDP, then returns a CachedTokenProvider
+ * bound to that account. Falls back to CDP-only provider if no cached tokens.
  *
- * If the CDP connection is stale (Superhuman restarted), the cached provider
- * is invalidated and a fresh connection is established. If Superhuman is not
- * running, `ensureSuperhuman()` will attempt to launch it.
+ * IMPORTANT: In multi-account setups, the active account in the Superhuman UI
+ * may differ from the first cached account on disk. We always query CDP to
+ * determine which account is active, then use cached tokens for that account.
  */
 export async function getMcpProvider(): Promise<ConnectionProvider> {
-  // Cached tokens don't need CDP — always prefer them
-  const tokenProvider = await resolveProvider({ port: CDP_PORT });
-  if (tokenProvider) return tokenProvider;
+  // Step 1: Determine active account from CDP (authoritative source)
+  let activeEmail: string | undefined;
+  try {
+    activeEmail = await resolveCurrentAccountViaCDP();
+  } catch {
+    // CDP unavailable — will fall through to best-effort below
+  }
 
-  // Return cached CDP provider if still valid
+  // Step 2: If we know the active account and have cached tokens, use them
+  if (activeEmail) {
+    const tokenProvider = await resolveProvider({ account: activeEmail, port: CDP_PORT });
+    if (tokenProvider) return tokenProvider;
+  }
+
+  // Step 3: Fall back to any cached tokens (single-account or CDP unavailable)
+  if (!activeEmail) {
+    const tokenProvider = await resolveProvider({ port: CDP_PORT });
+    if (tokenProvider) return tokenProvider;
+  }
+
+  // Step 4: No cached tokens — use CDP connection provider directly
   if (_cachedCdpProvider) {
     try {
-      // Quick liveness check — will throw if connection is dead
       await _cachedCdpProvider.getCurrentEmail();
       return _cachedCdpProvider;
     } catch {
-      // Connection stale — invalidate and reconnect below
       try { await _cachedCdpProvider.disconnect(); } catch { /* ignore */ }
       _cachedCdpProvider = null;
     }
   }
 
-  // Attempt connection (with auto-launch)
   let conn = await connectToSuperhuman(CDP_PORT);
   if (!conn) {
-    // Superhuman may be starting — wait and retry once
     log.warn("Superhuman not available, attempting launch...");
     await ensureSuperhuman(CDP_PORT);
     await new Promise(r => setTimeout(r, 3000));
@@ -79,6 +94,25 @@ export async function getMcpProvider(): Promise<ConnectionProvider> {
   }
   _cachedCdpProvider = new CDPConnectionProvider(conn);
   return _cachedCdpProvider;
+}
+
+/**
+ * Resolve the current account email directly from CDP (bypasses cached tokens).
+ * This is the only reliable way to determine which account is active in the
+ * Superhuman UI, since CachedTokenProvider.getCurrentEmail() returns the first
+ * cached account from disk which may not match the active UI account.
+ */
+export async function resolveCurrentAccountViaCDP(): Promise<string> {
+  const conn = await connectToSuperhuman(CDP_PORT);
+  if (!conn) throw new Error("Cannot connect to Superhuman via CDP");
+  try {
+    const accounts = await listAccounts(conn);
+    const current = accounts.find((a) => a.isCurrent);
+    if (!current) throw new Error("No current account found via CDP");
+    return current.email;
+  } finally {
+    await disconnect(conn);
+  }
 }
 
 /** Invalidate the cached CDP provider (called on connection errors). */

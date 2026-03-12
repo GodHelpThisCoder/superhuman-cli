@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 import { askAISearch } from "../../token-api";
-import { successResult, errorResult, actionableError, resolveSuperhumanToken, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, resolveSuperhumanToken, getMcpProvider, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -32,9 +32,21 @@ export async function askAIHandler(args: z.infer<typeof AskAISchema>): Promise<T
   if (killed) return killed;
 
   try {
-    const token = await resolveSuperhumanToken();
-    if (!token || !token.idToken) {
-      return errorResult("No Superhuman credentials found. Run 'superhuman account auth' first.");
+    // Try CDP provider first (extracts idToken from running Superhuman), fall back to cached tokens
+    let token = await resolveSuperhumanToken();
+    if (!token?.idToken) {
+      try {
+        const provider = await getMcpProvider();
+        token = await provider.getToken();
+      } catch {
+        // Fall through
+      }
+    }
+    if (!token?.idToken) {
+      return errorResult(
+        "No Superhuman backend credentials found. Ensure Superhuman is running " +
+        "and authenticated, or run 'superhuman account auth' to cache credentials."
+      );
     }
 
     const account = token.email || "unknown";

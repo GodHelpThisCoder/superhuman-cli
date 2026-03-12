@@ -9,7 +9,7 @@ import {
   type SuperhumanConnection,
 } from "../../superhuman-api";
 import { listAccounts, switchAccount } from "../../accounts";
-import { successResult, errorResult, actionableError, guardMutation, auditMutation, auditDryRun, CDP_PORT, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, resolveCurrentAccountViaCDP, guardMutation, auditMutation, auditDryRun, CDP_PORT, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -70,9 +70,19 @@ export async function switchAccountHandler(args: z.infer<typeof SwitchAccountSch
 
   // Two-phase: stage unless this is a confirmed execution
   if (!isConfirmedExecution()) {
+    // Resolve *current* account directly from CDP (not cached tokens).
+    // CachedTokenProvider.getCurrentEmail() returns the first cached account
+    // from disk, which doesn't reflect the actual Superhuman UI state.
+    let currentAccount = "unknown";
+    try {
+      currentAccount = await resolveCurrentAccountViaCDP();
+    } catch {
+      // Fall through with "unknown"
+    }
+
     const preview = `Would switch to account ${args.account}`;
-    const token = stageOperation("superhuman_switch_account", args as Record<string, unknown>, preview, args.account);
-    auditMutation("superhuman_switch_account", args as Record<string, unknown>, args.account, successResult(preview), { action: "staged" });
+    const token = stageOperation("superhuman_switch_account", args as Record<string, unknown>, preview, currentAccount);
+    auditMutation("superhuman_switch_account", args as Record<string, unknown>, currentAccount, successResult(preview), { action: "staged" });
     return successResult(buildStagedResponse(preview, token));
   }
 
