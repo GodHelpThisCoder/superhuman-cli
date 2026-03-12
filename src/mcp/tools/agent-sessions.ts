@@ -165,7 +165,7 @@ async function evalInRenderer<T>(conn: SuperhumanConnection, expression: string)
 }
 
 /** Fetch all agent sessions via CDP portal API. */
-async function fetchAllSessions(conn: SuperhumanConnection): Promise<RawAgentSession[]> {
+export async function fetchAllSessions(conn: SuperhumanConnection): Promise<RawAgentSession[]> {
   return evalInRenderer<RawAgentSession[]>(conn, `
     (async () => {
       try {
@@ -196,7 +196,7 @@ export async function fetchSession(conn: SuperhumanConnection, sessionId: string
 }
 
 /** Discard a session via CDP backend API. */
-async function discardSessionViaCDP(conn: SuperhumanConnection, sessionId: string): Promise<void> {
+export async function discardSessionViaCDP(conn: SuperhumanConnection, sessionId: string): Promise<void> {
   await evalInRenderer<void>(conn, `
     (async () => {
       try {
@@ -210,7 +210,7 @@ async function discardSessionViaCDP(conn: SuperhumanConnection, sessionId: strin
 }
 
 /** Restore a session via CDP backend API. */
-async function restoreSessionViaCDP(conn: SuperhumanConnection, sessionId: string): Promise<void> {
+export async function restoreSessionViaCDP(conn: SuperhumanConnection, sessionId: string): Promise<void> {
   await evalInRenderer<void>(conn, `
     (async () => {
       try {

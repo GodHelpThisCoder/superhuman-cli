@@ -3505,28 +3505,8 @@ async function cmdAgentSessionList(options: CliOptions) {
   }
 
   try {
-    const result = await conn.Runtime.evaluate({
-      expression: `
-        (async () => {
-          try {
-            const portal = window.GoogleAccount.di.get("portal");
-            return await portal.invoke("agentSessionsInternal", "getAllSessions", []);
-          } catch (e) {
-            throw new Error("Failed to list agent sessions: " + (e.message || String(e)));
-          }
-        })()
-      `,
-      returnByValue: true,
-      awaitPromise: true,
-    });
-
-    if (result.exceptionDetails) {
-      error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || "CDP evaluation error");
-      return;
-    }
-
-    const { formatSessionList } = await import("./mcp/tools/agent-sessions");
-    const sessions = (result.result.value || []) as Array<{ id: string; updated_at: number; title: string; json: string; is_discarded: number }>;
+    const { fetchAllSessions, formatSessionList } = await import("./mcp/tools/agent-sessions");
+    const sessions = await fetchAllSessions(conn);
     const includeDiscarded = options.includeDone; // reuse --include-done flag
     const output = formatSessionList(sessions, includeDiscarded);
     log(output);
@@ -3549,31 +3529,8 @@ async function cmdAgentSessionRead(options: CliOptions) {
   }
 
   try {
-    const sessionId = options.sessionId;
-    const result = await conn.Runtime.evaluate({
-      expression: `
-        (async () => {
-          try {
-            const portal = window.GoogleAccount.di.get("portal");
-            const session = await portal.invoke("agentSessionsInternal", "getSession", [${JSON.stringify(sessionId)}]);
-            if (!session) throw new Error("Session not found");
-            return session;
-          } catch (e) {
-            throw new Error("Failed to fetch agent session: " + (e.message || String(e)));
-          }
-        })()
-      `,
-      returnByValue: true,
-      awaitPromise: true,
-    });
-
-    if (result.exceptionDetails) {
-      error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || "CDP evaluation error");
-      return;
-    }
-
-    const { formatTranscript } = await import("./mcp/tools/agent-sessions");
-    const session = result.result.value as { id: string; updated_at: number; title: string; json: string; is_discarded: number };
+    const { fetchSession, formatTranscript } = await import("./mcp/tools/agent-sessions");
+    const session = await fetchSession(conn, options.sessionId);
     log(formatTranscript(session));
   } finally {
     await disconnect(conn);
@@ -3598,29 +3555,9 @@ async function cmdAgentSessionDiscard(options: CliOptions) {
   }
 
   try {
-    const sessionId = options.sessionId;
-    const result = await conn.Runtime.evaluate({
-      expression: `
-        (async () => {
-          try {
-            const backend = window.GoogleAccount.di.get("backend");
-            await backend.discardAgentSession(${JSON.stringify(sessionId)});
-            return { success: true };
-          } catch (e) {
-            throw new Error("Failed to discard agent session: " + (e.message || String(e)));
-          }
-        })()
-      `,
-      returnByValue: true,
-      awaitPromise: true,
-    });
-
-    if (result.exceptionDetails) {
-      error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || "CDP evaluation error");
-      return;
-    }
-
-    success(`Discarded agent session ${sessionId}`);
+    const { discardSessionViaCDP } = await import("./mcp/tools/agent-sessions");
+    await discardSessionViaCDP(conn, options.sessionId);
+    success(`Discarded agent session ${options.sessionId}`);
   } finally {
     await disconnect(conn);
   }
@@ -3644,29 +3581,9 @@ async function cmdAgentSessionRestore(options: CliOptions) {
   }
 
   try {
-    const sessionId = options.sessionId;
-    const result = await conn.Runtime.evaluate({
-      expression: `
-        (async () => {
-          try {
-            const backend = window.GoogleAccount.di.get("backend");
-            await backend.restoreAgentSession(${JSON.stringify(sessionId)});
-            return { success: true };
-          } catch (e) {
-            throw new Error("Failed to restore agent session: " + (e.message || String(e)));
-          }
-        })()
-      `,
-      returnByValue: true,
-      awaitPromise: true,
-    });
-
-    if (result.exceptionDetails) {
-      error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || "CDP evaluation error");
-      return;
-    }
-
-    success(`Restored agent session ${sessionId}`);
+    const { restoreSessionViaCDP } = await import("./mcp/tools/agent-sessions");
+    await restoreSessionViaCDP(conn, options.sessionId);
+    success(`Restored agent session ${options.sessionId}`);
   } finally {
     await disconnect(conn);
   }
