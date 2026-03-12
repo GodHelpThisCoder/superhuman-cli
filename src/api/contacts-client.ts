@@ -8,6 +8,9 @@
 import type { TokenInfo } from "../auth/types";
 import type { Contact } from "../contacts";
 import { msgraphFetch } from "./http-utils";
+import { createLogger } from "../logger";
+
+const log = createLogger("contacts-api");
 
 /**
  * Search contacts using direct API (Gmail or MS Graph).
@@ -58,7 +61,7 @@ export async function searchContacts(
 
     if (!response.ok) {
       // Fall back to empty array on error
-      console.error("Google People API error:", response.status);
+      log.warn(`Google People API error: ${response.status}`);
       return [];
     }
 

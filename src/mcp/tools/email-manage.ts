@@ -9,7 +9,7 @@ import { markAsRead, markAsUnread } from "../../read-status";
 import { starThread, unstarThread, listStarred } from "../../labels";
 import { parseSnoozeTime, snoozeThreadViaProvider, unsnoozeThreadViaProvider, listSnoozedViaProvider } from "../../snooze";
 import type { ConnectionProvider } from "../../connection-provider";
-import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse, buildBatchPreview, buildManifest } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -73,7 +73,9 @@ export const SnoozedSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export async function archiveHandler(args: z.infer<typeof ArchiveSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_archive", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would archive ${args.threadIds.length} thread(s)`);
   }
 
@@ -95,7 +97,7 @@ export async function archiveHandler(args: z.infer<typeof ArchiveSchema>): Promi
       const manifest = await buildManifest(provider, args.threadIds);
       const preview = buildBatchPreview("archive", args.threadIds, manifest);
       const token = stageOperation("superhuman_archive", args as Record<string, unknown>, preview, account);
-      auditMutation("superhuman_archive", args as Record<string, unknown>, account, successResult(preview), { action: "staged", batchSize: args.threadIds.length });
+      auditMutation("superhuman_archive", args as Record<string, unknown>, account, successResult(preview), { action: "staged", batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return successResult(buildStagedResponse(preview, token));
     }
 
@@ -111,29 +113,31 @@ export async function archiveHandler(args: z.infer<typeof ArchiveSchema>): Promi
 
     if (failed === 0) {
       const toolResult = successResult(`Archived ${succeeded} thread(s) successfully`);
-      auditMutation("superhuman_archive", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_archive", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else if (succeeded === 0) {
       const toolResult = errorResult(`Failed to archive all ${failed} thread(s)`);
-      auditMutation("superhuman_archive", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_archive", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
       const toolResult = successResult(`Archived ${succeeded} thread(s), failed to archive ${failed}: ${failedIds}`);
-      auditMutation("superhuman_archive", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_archive", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to archive", error);
-    auditMutation("superhuman_archive", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length });
+    auditMutation("superhuman_archive", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function deleteHandler(args: z.infer<typeof DeleteSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_delete", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would delete ${args.threadIds.length} thread(s)`);
   }
 
@@ -155,7 +159,7 @@ export async function deleteHandler(args: z.infer<typeof DeleteSchema>): Promise
       const manifest = await buildManifest(provider, args.threadIds);
       const preview = buildBatchPreview("delete", args.threadIds, manifest);
       const token = stageOperation("superhuman_delete", args as Record<string, unknown>, preview, account);
-      auditMutation("superhuman_delete", args as Record<string, unknown>, account, successResult(preview), { action: "staged", batchSize: args.threadIds.length });
+      auditMutation("superhuman_delete", args as Record<string, unknown>, account, successResult(preview), { action: "staged", batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return successResult(buildStagedResponse(preview, token));
     }
 
@@ -171,29 +175,31 @@ export async function deleteHandler(args: z.infer<typeof DeleteSchema>): Promise
 
     if (failed === 0) {
       const toolResult = successResult(`Deleted ${succeeded} thread(s) successfully`);
-      auditMutation("superhuman_delete", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_delete", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else if (succeeded === 0) {
       const toolResult = errorResult(`Failed to delete all ${failed} thread(s)`);
-      auditMutation("superhuman_delete", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_delete", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
       const toolResult = successResult(`Deleted ${succeeded} thread(s), failed to delete ${failed}: ${failedIds}`);
-      auditMutation("superhuman_delete", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_delete", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to delete", error);
-    auditMutation("superhuman_delete", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length });
+    auditMutation("superhuman_delete", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function markReadHandler(args: z.infer<typeof MarkReadSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_mark_read", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would mark ${args.threadIds.length} thread(s) as read`);
   }
 
@@ -221,29 +227,31 @@ export async function markReadHandler(args: z.infer<typeof MarkReadSchema>): Pro
 
     if (failed === 0) {
       const toolResult = successResult(`Marked ${succeeded} thread(s) as read`);
-      auditMutation("superhuman_mark_read", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_mark_read", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else if (succeeded === 0) {
       const toolResult = errorResult(`Failed to mark all ${failed} thread(s) as read`);
-      auditMutation("superhuman_mark_read", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_mark_read", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
       const toolResult = successResult(`Marked ${succeeded} thread(s) as read, failed on ${failed}: ${failedIds}`);
-      auditMutation("superhuman_mark_read", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_mark_read", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to mark as read", error);
-    auditMutation("superhuman_mark_read", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length });
+    auditMutation("superhuman_mark_read", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function markUnreadHandler(args: z.infer<typeof MarkUnreadSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_mark_unread", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would mark ${args.threadIds.length} thread(s) as unread`);
   }
 
@@ -271,29 +279,31 @@ export async function markUnreadHandler(args: z.infer<typeof MarkUnreadSchema>):
 
     if (failed === 0) {
       const toolResult = successResult(`Marked ${succeeded} thread(s) as unread`);
-      auditMutation("superhuman_mark_unread", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_mark_unread", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else if (succeeded === 0) {
       const toolResult = errorResult(`Failed to mark all ${failed} thread(s) as unread`);
-      auditMutation("superhuman_mark_unread", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_mark_unread", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
       const toolResult = successResult(`Marked ${succeeded} thread(s) as unread, failed on ${failed}: ${failedIds}`);
-      auditMutation("superhuman_mark_unread", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_mark_unread", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to mark as unread", error);
-    auditMutation("superhuman_mark_unread", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length });
+    auditMutation("superhuman_mark_unread", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function starHandler(args: z.infer<typeof StarSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_star", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would star ${args.threadIds.length} thread(s)`);
   }
 
@@ -321,29 +331,31 @@ export async function starHandler(args: z.infer<typeof StarSchema>): Promise<Too
 
     if (failed === 0) {
       const toolResult = successResult(`Starred ${succeeded} thread(s)`);
-      auditMutation("superhuman_star", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_star", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else if (succeeded === 0) {
       const toolResult = errorResult(`Failed to star all ${failed} thread(s)`);
-      auditMutation("superhuman_star", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_star", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
       const toolResult = successResult(`Starred ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
-      auditMutation("superhuman_star", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_star", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to star", error);
-    auditMutation("superhuman_star", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length });
+    auditMutation("superhuman_star", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function unstarHandler(args: z.infer<typeof UnstarSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_unstar", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would unstar ${args.threadIds.length} thread(s)`);
   }
 
@@ -371,24 +383,24 @@ export async function unstarHandler(args: z.infer<typeof UnstarSchema>): Promise
 
     if (failed === 0) {
       const toolResult = successResult(`Unstarred ${succeeded} thread(s)`);
-      auditMutation("superhuman_unstar", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_unstar", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else if (succeeded === 0) {
       const toolResult = errorResult(`Failed to unstar all ${failed} thread(s)`);
-      auditMutation("superhuman_unstar", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_unstar", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
       const toolResult = successResult(`Unstarred ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
-      auditMutation("superhuman_unstar", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_unstar", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to unstar", error);
-    auditMutation("superhuman_unstar", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length });
+    auditMutation("superhuman_unstar", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
@@ -412,12 +424,14 @@ export async function starredHandler(args: z.infer<typeof StarredSchema>): Promi
   } catch (error) {
     return actionableError("Failed to list starred threads", error);
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function snoozeHandler(args: z.infer<typeof SnoozeSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_snooze", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would snooze ${args.threadIds.length} thread(s)`);
   }
 
@@ -448,29 +462,31 @@ export async function snoozeHandler(args: z.infer<typeof SnoozeSchema>): Promise
 
     if (failed === 0) {
       const toolResult = successResult(`Snoozed ${succeeded} thread(s) until ${snoozeTime.toISOString()}`);
-      auditMutation("superhuman_snooze", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_snooze", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else if (succeeded === 0) {
       const toolResult = errorResult(`Failed to snooze all ${failed} thread(s)`);
-      auditMutation("superhuman_snooze", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_snooze", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const failedThreads = args.threadIds.filter((_, i) => !results[i]!.success).join(", ");
       const toolResult = successResult(`Snoozed ${succeeded} thread(s), failed on ${failed}: ${failedThreads}`);
-      auditMutation("superhuman_snooze", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_snooze", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to snooze", error);
-    auditMutation("superhuman_snooze", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length });
+    auditMutation("superhuman_snooze", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function unsnoozeHandler(args: z.infer<typeof UnsnoozeSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_unsnooze", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would unsnooze ${args.threadIds.length} thread(s)`);
   }
 
@@ -494,24 +510,24 @@ export async function unsnoozeHandler(args: z.infer<typeof UnsnoozeSchema>): Pro
 
     if (failed === 0) {
       const toolResult = successResult(`Unsnoozed ${succeeded} thread(s)`);
-      auditMutation("superhuman_unsnooze", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_unsnooze", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else if (succeeded === 0) {
       const toolResult = errorResult(`Failed to unsnooze all ${failed} thread(s)`);
-      auditMutation("superhuman_unsnooze", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_unsnooze", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const failedThreads = args.threadIds.filter((_, i) => !results[i]!.success).join(", ");
       const toolResult = successResult(`Unsnoozed ${succeeded} thread(s), failed on ${failed}: ${failedThreads}`);
-      auditMutation("superhuman_unsnooze", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_unsnooze", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to unsnooze", error);
-    auditMutation("superhuman_unsnooze", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length });
+    auditMutation("superhuman_unsnooze", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
@@ -539,6 +555,6 @@ export async function snoozedHandler(args: z.infer<typeof SnoozedSchema>): Promi
   } catch (error) {
     return actionableError("Failed to list snoozed threads", error);
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }

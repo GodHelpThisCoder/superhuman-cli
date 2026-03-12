@@ -26,6 +26,9 @@ import {
 
 import type { InboxThread } from "../inbox";
 import type { Contact } from "../contacts";
+import { createLogger } from "../logger";
+
+const log = createLogger("gmail-api");
 
 // ============================================================================
 // Private API response types
@@ -1154,7 +1157,7 @@ export async function getThreadInfo(
           messages = [msg];
         }
       } catch (error) {
-        console.error(`[MS Graph message ID fallback]: ${error instanceof Error ? error.message : String(error)}`);
+        log.error(`MS Graph message ID fallback: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -1369,7 +1372,7 @@ export async function listDrafts(
         });
       } catch (error) {
         // Log error but continue processing other drafts
-        console.error(`Error fetching draft ${draft.id}:`, error);
+        log.error(`Error fetching draft ${draft.id}: ${error instanceof Error ? error.message : String(error)}`);
         continue;
       }
     }
@@ -2062,7 +2065,7 @@ async function getThreadMessagesMsGraph(
         messages = [msg];
       }
     } catch (error) {
-      console.error(`[MS Graph thread message ID fallback]: ${error instanceof Error ? error.message : String(error)}`);
+      log.error("MS Graph thread message ID fallback: %s", error instanceof Error ? error.message : String(error));
     }
   }
 

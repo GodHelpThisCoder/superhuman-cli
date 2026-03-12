@@ -10,6 +10,9 @@ import { hostname, userInfo } from "os";
 import { chmodSync } from "node:fs";
 import type { TokenInfo, PersistedTokens, CDPConnection } from "./types";
 import { getConfigDir } from "../config";
+import { createLogger } from "../logger";
+
+const log = createLogger("token-store");
 
 // ---------------------------------------------------------------------------
 // AES-256-GCM encryption — key is derived from machine identity
@@ -192,9 +195,7 @@ export async function getCachedToken(
       }
     }
     // Refresh failed or no refresh token
-    console.warn(
-      `Token for ${email} expired. Run 'superhuman auth' to re-authenticate.`,
-    );
+    log.warn(`Token for ${email} expired. Run 'superhuman auth' to re-authenticate.`);
     return undefined;
   }
 
@@ -279,7 +280,7 @@ export async function saveTokensToDisk(): Promise<void> {
   try {
     chmodSync(tokensFile, 0o600);
   } catch (error) {
-    console.error(`[chmod token file]: ${error instanceof Error ? error.message : String(error)}`);
+    log.warn(`chmod token file: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -312,8 +313,8 @@ export async function loadTokensFromDisk(): Promise<boolean> {
       try {
         data = JSON.parse(raw) as PersistedTokens;
       } catch (error) {
-        console.error(`[token file JSON parse]: ${error instanceof Error ? error.message : String(error)}`);
-        console.warn("Token file contains invalid JSON — ignoring.");
+        log.error(`token file JSON parse: ${error instanceof Error ? error.message : String(error)}`);
+        log.warn("Token file contains invalid JSON — ignoring.");
         return false;
       }
 
@@ -324,7 +325,7 @@ export async function loadTokensFromDisk(): Promise<boolean> {
       try {
         await saveTokensToDisk();
       } catch (e) {
-        console.warn("Failed to migrate token file to encrypted format:", e);
+        log.warn("Failed to migrate token file to encrypted format:", e);
       }
 
       return true;
@@ -335,19 +336,16 @@ export async function loadTokensFromDisk(): Promise<boolean> {
     try {
       plaintext = decrypt(raw);
     } catch (error) {
-      console.error(`[token file decrypt]: ${error instanceof Error ? error.message : String(error)}`);
-      console.warn(
-        "Failed to decrypt token file (machine identity may have changed). " +
-          "Run 'superhuman auth' to re-authenticate.",
-      );
+      log.error(`token file decrypt: ${error instanceof Error ? error.message : String(error)}`);
+      log.warn("Failed to decrypt token file (machine identity may have changed). Run 'superhuman auth' to re-authenticate.");
       return false;
     }
 
     try {
       data = JSON.parse(plaintext) as PersistedTokens;
     } catch (error) {
-      console.error(`[decrypted token JSON parse]: ${error instanceof Error ? error.message : String(error)}`);
-      console.warn("Decrypted token data is not valid JSON — ignoring.");
+      log.error(`decrypted token JSON parse: ${error instanceof Error ? error.message : String(error)}`);
+      log.warn("Decrypted token data is not valid JSON — ignoring.");
       return false;
     }
 
@@ -359,7 +357,7 @@ export async function loadTokensFromDisk(): Promise<boolean> {
     populateCache(data);
     return true;
   } catch (error) {
-    console.error(`[load tokens from disk]: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`load tokens from disk: ${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
 }

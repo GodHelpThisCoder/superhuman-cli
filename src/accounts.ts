@@ -5,6 +5,9 @@
  */
 
 import type { SuperhumanConnection, ChromeExtConnection } from "./superhuman-api";
+import { createLogger } from "./logger";
+
+const log = createLogger("accounts");
 
 export interface Account {
   email: string;
@@ -144,7 +147,7 @@ export async function switchAccount(
         return { success: true, email: result.email };
       }
     } catch (error) {
-      console.error(`[account switch poll]: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`account switch poll: ${error instanceof Error ? error.message : String(error)}`);
     }
 
     // Wait before next poll
@@ -161,7 +164,7 @@ export async function switchAccount(
     const finalEmail = finalResult.result.value as string;
     return { success: finalEmail === targetEmail, email: finalEmail };
   } catch (error) {
-    console.error(`[account switch final check]: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`account switch final check: ${error instanceof Error ? error.message : String(error)}`);
     return { success: false, email: "" };
   }
 }

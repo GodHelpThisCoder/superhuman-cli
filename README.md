@@ -113,6 +113,8 @@ Tokens are stored in `~/.config/superhuman-cli/tokens.json` and automatically re
 
 Recipients can be specified as email addresses or contact names. Names are automatically resolved to email addresses via contact search. All compose tools (draft, send, reply, reply-all, forward) support file attachments via MCP.
 
+> **Dry-run mode:** All mutating tools accept `--dry-run` (CLI) or `dryRun: true` (MCP) to preview the operation without executing it.
+
 ```bash
 # Create a draft (using email or name)
 superhuman draft create --to user@example.com --subject "Hello" --body "Hi there!"
@@ -219,6 +221,19 @@ superhuman snooze cancel <thread-id>
 superhuman snooze list
 ```
 
+### Safety
+
+```bash
+# Activate kill switch — blocks all mutations until deactivated
+bun run src/cli.ts kill
+
+# Deactivate kill switch
+bun run src/cli.ts unkill
+
+# View recent audit log entries
+bun run src/cli.ts audit
+```
+
 ### Snippets
 
 Reusable email templates stored in Superhuman. Snippets support template variables like `{first_name}`.
@@ -321,6 +336,15 @@ superhuman calendar free --date tomorrow --range 7
 | `--json` | Output as JSON |
 | `--port <number>` | CDP port (default: 9333) |
 
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CDP_PORT` | `9333` | CDP debugging port |
+| `CDP_HOST` | `localhost` | CDP host |
+
+Token storage location: `~/.config/superhuman-cli/tokens.json`
+
 ## MCP Server
 
 Run as an MCP server for Claude integration:
@@ -367,6 +391,8 @@ bun src/index.ts --mcp
 | `superhuman_calendar_delete` | Delete calendar event |
 | `superhuman_calendar_free_busy` | Check free/busy availability |
 | `superhuman_ask_ai` | Ask AI to search emails, answer questions, or compose |
+| `superhuman_confirm` | Confirm a staged destructive operation using its `shm_` token |
+| `superhuman_audit_log` | View the JSONL mutation audit log with optional filters |
 
 ### Claude Desktop Configuration
 

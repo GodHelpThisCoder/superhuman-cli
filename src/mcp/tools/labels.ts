@@ -5,7 +5,7 @@
 import { z } from "zod";
 import { listLabels, getThreadLabels, addLabel, removeLabel } from "../../labels";
 import type { ConnectionProvider } from "../../connection-provider";
-import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -55,7 +55,7 @@ export async function labelsHandler(_args: z.infer<typeof LabelsSchema>): Promis
   } catch (error) {
     return actionableError("Failed to list labels", error);
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
@@ -81,12 +81,14 @@ export async function getLabelsHandler(args: z.infer<typeof GetLabelsSchema>): P
   } catch (error) {
     return actionableError("Failed to get thread labels", error);
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function addLabelHandler(args: z.infer<typeof AddLabelSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_add_label", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would add label ${args.labelId} to ${args.threadIds.length} thread(s)`);
   }
 
@@ -114,29 +116,31 @@ export async function addLabelHandler(args: z.infer<typeof AddLabelSchema>): Pro
 
     if (failed === 0) {
       const toolResult = successResult(`Added label to ${succeeded} thread(s)`);
-      auditMutation("superhuman_add_label", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_add_label", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else if (succeeded === 0) {
       const toolResult = errorResult(`Failed to add label to all ${failed} thread(s)`);
-      auditMutation("superhuman_add_label", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_add_label", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
       const toolResult = successResult(`Added label to ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
-      auditMutation("superhuman_add_label", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_add_label", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to add label", error);
-    auditMutation("superhuman_add_label", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length });
+    auditMutation("superhuman_add_label", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function removeLabelHandler(args: z.infer<typeof RemoveLabelSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_remove_label", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would remove label ${args.labelId} from ${args.threadIds.length} thread(s)`);
   }
 
@@ -164,23 +168,23 @@ export async function removeLabelHandler(args: z.infer<typeof RemoveLabelSchema>
 
     if (failed === 0) {
       const toolResult = successResult(`Removed label from ${succeeded} thread(s)`);
-      auditMutation("superhuman_remove_label", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_remove_label", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else if (succeeded === 0) {
       const toolResult = errorResult(`Failed to remove label from all ${failed} thread(s)`);
-      auditMutation("superhuman_remove_label", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_remove_label", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
       const toolResult = successResult(`Removed label from ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
-      auditMutation("superhuman_remove_label", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length });
+      auditMutation("superhuman_remove_label", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to remove label", error);
-    auditMutation("superhuman_remove_label", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length });
+    auditMutation("superhuman_remove_label", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }

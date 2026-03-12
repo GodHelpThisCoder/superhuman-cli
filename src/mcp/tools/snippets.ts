@@ -10,7 +10,7 @@ import {
   disconnect,
 } from "../../superhuman-api";
 import type { ConnectionProvider } from "../../connection-provider";
-import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, CDP_PORT, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, auditDryRun, CDP_PORT, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -80,12 +80,14 @@ export async function snippetsHandler(_args: z.infer<typeof SnippetsSchema>): Pr
   } catch (error) {
     return actionableError("Failed to list snippets", error);
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function useSnippetHandler(args: z.infer<typeof UseSnippetSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_snippet", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would ${args.send ? "send" : "draft"} email using snippet "${args.name}"`);
   }
 
@@ -102,7 +104,7 @@ export async function useSnippetHandler(args: z.infer<typeof UseSnippetSchema>):
     if (!isConfirmedExecution() && (args.send ?? false)) {
       const preview = `Would send email using snippet "${args.name}" to ${args.to || "default recipient"}`;
       const token = stageOperation("superhuman_snippet", args as Record<string, unknown>, preview, account);
-      auditMutation("superhuman_snippet", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+      auditMutation("superhuman_snippet", args as Record<string, unknown>, account, successResult(preview), { action: "staged", durationMs: Math.round(performance.now() - _t0) });
       return successResult(buildStagedResponse(preview, token));
     }
 
@@ -113,7 +115,7 @@ export async function useSnippetHandler(args: z.infer<typeof UseSnippetSchema>):
     if (!snippet) {
       const available = snippets.map((s) => s.name).join(", ");
       const toolResult = errorResult(`No snippet matching "${args.name}". Available: ${available}`);
-      auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
 
@@ -134,14 +136,14 @@ export async function useSnippetHandler(args: z.infer<typeof UseSnippetSchema>):
     if (args.send) {
       if (to.length === 0) {
         const toolResult = errorResult("At least one recipient is required (provide 'to' or snippet must have default recipients)");
-        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
       const draftResult = await createDraftWithUserInfo(userInfo, { to, cc, bcc, subject, body });
       if (!draftResult.success || !draftResult.draftId || !draftResult.threadId) {
         const toolResult = errorResult(`Failed to create draft: ${draftResult.error}`);
-        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
 
@@ -158,11 +160,11 @@ export async function useSnippetHandler(args: z.infer<typeof UseSnippetSchema>):
 
       if (sendResult.success) {
         const toolResult = successResult(`Sent using snippet "${snippet.name}" to ${to.join(", ")}`);
-        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       } else {
         const toolResult = errorResult(`Failed to send: ${sendResult.error}`);
-        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
     } else {
@@ -171,19 +173,19 @@ export async function useSnippetHandler(args: z.infer<typeof UseSnippetSchema>):
         const toolResult = successResult(
           `Draft created from snippet "${snippet.name}"\nDraft ID: ${result.draftId}\nTo: ${to.join(", ")}\nSubject: ${subject || "(none)"}`
         );
-        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       } else {
         const toolResult = errorResult(`Failed to create draft: ${result.error}`);
-        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult);
+        auditMutation("superhuman_snippet", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
     }
   } catch (error) {
     const toolResult = actionableError("Failed to use snippet", error);
-    auditMutation("superhuman_snippet", args as Record<string, unknown>, "unknown", toolResult);
+    auditMutation("superhuman_snippet", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }

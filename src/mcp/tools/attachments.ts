@@ -47,7 +47,7 @@ export async function attachmentsHandler(args: z.infer<typeof AttachmentsSchema>
   } catch (error) {
     return actionableError("Failed to list attachments", error);
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
@@ -66,6 +66,6 @@ export async function downloadAttachmentHandler(args: z.infer<typeof DownloadAtt
   } catch (error) {
     return actionableError("Failed to download attachment", error);
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }

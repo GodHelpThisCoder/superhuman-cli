@@ -56,6 +56,7 @@ const HANDLER_MAP: Record<string, HandlerFn> = {
 // ---------------------------------------------------------------------------
 
 export async function confirmHandler(args: z.infer<typeof ConfirmSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   const killed = guardMutation("superhuman_confirm", args as Record<string, unknown>);
   if (killed) return killed;
 
@@ -95,6 +96,7 @@ export async function confirmHandler(args: z.infer<typeof ConfirmSchema>): Promi
         error: `Unknown tool: ${op.tool}`,
         token: args.token,
         dryRun: false,
+        durationMs: Math.round(performance.now() - _t0),
       }).catch(() => {});
       return errorResult(`Unknown tool in staged operation: ${op.tool}`);
     }
@@ -108,7 +110,7 @@ export async function confirmHandler(args: z.infer<typeof ConfirmSchema>): Promi
       { token: args.token, tool: op.tool, force: args.force },
       currentAccount,
       result,
-      { action: "confirmed" },
+      { action: "confirmed", durationMs: Math.round(performance.now() - _t0) },
     );
 
     return result;
@@ -124,6 +126,7 @@ export async function confirmHandler(args: z.infer<typeof ConfirmSchema>): Promi
       error: msg,
       token: args.token,
       dryRun: false,
+      durationMs: Math.round(performance.now() - _t0),
     }).catch(() => {});
 
     // Return user-friendly error messages

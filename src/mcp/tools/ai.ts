@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 import { askAISearch } from "../../token-api";
-import { successResult, errorResult, actionableError, resolveSuperhumanToken, guardMutation, auditMutation, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, resolveSuperhumanToken, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -22,7 +22,9 @@ export const AskAISchema = z.object({
 // ---------------------------------------------------------------------------
 
 export async function askAIHandler(args: z.infer<typeof AskAISchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_ask_ai", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would invoke Superhuman AI with query: "${args.query}"`);
   }
 
@@ -41,7 +43,7 @@ export async function askAIHandler(args: z.infer<typeof AskAISchema>): Promise<T
     if (!isConfirmedExecution()) {
       const preview = `Would invoke Superhuman AI with query: "${args.query}"${args.thread_id ? ` (thread: ${args.thread_id})` : ""}\nWARNING: Superhuman AI has skills: draft, filter, schedule, multiMessage. This query may trigger real email actions.`;
       const stageToken = stageOperation("superhuman_ask_ai", args as Record<string, unknown>, preview, account);
-      auditMutation("superhuman_ask_ai", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+      auditMutation("superhuman_ask_ai", args as Record<string, unknown>, account, successResult(preview), { action: "staged", durationMs: Math.round(performance.now() - _t0) });
       return successResult(buildStagedResponse(preview, stageToken));
     }
 
@@ -53,11 +55,11 @@ export async function askAIHandler(args: z.infer<typeof AskAISchema>): Promise<T
     );
 
     const toolResult = successResult(result.response);
-    auditMutation("superhuman_ask_ai", args as Record<string, unknown>, account, toolResult);
+    auditMutation("superhuman_ask_ai", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } catch (error) {
     const toolResult = actionableError("AI query failed", error);
-    auditMutation("superhuman_ask_ai", args as Record<string, unknown>, "unknown", toolResult);
+    auditMutation("superhuman_ask_ai", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   }
 }

@@ -9,6 +9,9 @@ import type { TokenInfo, CapturedToken, SuperhumanTokenInfo } from "./types";
 import type { SuperhumanConnection, ChromeExtConnection } from "../superhuman-api";
 import { setTokenInCache } from "./token-store";
 import { listAccounts, switchAccount } from "../accounts";
+import { createLogger } from "../logger";
+
+const log = createLogger("token-extract");
 
 // ============================================================================
 // In-memory caches
@@ -220,7 +223,7 @@ export async function extractTokenChrome(
     try {
       await Fetch.continueRequest({ requestId });
     } catch (error) {
-      console.error("Failed to continue intercepted request:", error);
+      log.error(`Failed to continue intercepted request: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
   Fetch.requestPaused(handler);
@@ -269,7 +272,7 @@ export async function extractTokenChrome(
     try {
       await Fetch.continueRequest({ requestId });
     } catch (error) {
-      console.error("Failed to continue provider interception request:", error);
+      log.error(`Failed to continue provider interception request: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
   Fetch.requestPaused(providerHandler);
@@ -290,7 +293,7 @@ export async function extractTokenChrome(
       );
       if (payload.exp) accessTokenExpires = payload.exp * 1000;
     } catch (error) {
-      console.error("Failed to parse provider token expiry:", error);
+      log.warn(`Failed to parse provider token expiry: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -310,7 +313,7 @@ export async function extractTokenChrome(
             );
             return p.exp ? p.exp * 1000 : undefined;
           } catch (error) {
-            console.error("Failed to parse backend token expiry:", error);
+            log.warn(`Failed to parse backend token expiry: ${error instanceof Error ? error.message : String(error)}`);
             return undefined;
           }
         })()
@@ -325,7 +328,7 @@ export async function extractTokenChrome(
               );
               return p.exp ? p.exp * 1000 : 0;
             } catch (error) {
-              console.error("Failed to parse backend token expiry:", error);
+              log.warn(`Failed to parse backend token expiry: ${error instanceof Error ? error.message : String(error)}`);
               return 0;
             }
           })(),

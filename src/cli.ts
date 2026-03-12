@@ -70,9 +70,20 @@ import { OutlookDraftProvider } from "./providers/outlook-draft-provider";
 import { SuperhumanDraftProvider } from "./providers/superhuman-draft-provider";
 import { APP_VERSION } from "./version";
 import { basename, relative, resolve, sep } from "node:path";
+import { setLogLevel, createLogger } from "./logger";
+
+const _cliLog = createLogger("cli");
 
 const VERSION = APP_VERSION;
 const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
+
+// Handle --verbose flag early, before subcommand parsing
+if (process.argv.includes("--verbose") || process.env.SUPERHUMAN_LOG_LEVEL === "debug") {
+  setLogLevel("debug");
+}
+// Strip --verbose from argv so it doesn't interfere with subcommand dispatch
+const _verboseIdx = process.argv.indexOf("--verbose");
+if (_verboseIdx !== -1) process.argv.splice(_verboseIdx, 1);
 
 /** Format the Superhuman path for display (quotes paths with spaces). */
 function getSuperhumanCommand(): string {
@@ -1408,7 +1419,7 @@ async function cmdSendDraft(options: CliOptions) {
       const threadId = options.sendDraftThreadId || draftId;
       await deleteDraftWithUserInfo(userInfo, threadId, draftId);
     } catch (error) {
-      console.error(`[draft cleanup after send]: ${error instanceof Error ? error.message : String(error)}`);
+      _cliLog.warn("Draft cleanup after send failed:", error instanceof Error ? error.message : String(error));
     }
   } else {
     error(`Failed to send draft: ${result.error}`);
@@ -2715,7 +2726,7 @@ async function cmdAuth(options: CliOptions) {
       // 0 accounts from Electron path — try Chrome extension
       await disconnect(conn);
     } catch (error) {
-      console.error(`[auth token extraction]: ${error instanceof Error ? error.message : String(error)}`);
+      _cliLog.warn("Auth token extraction failed:", error instanceof Error ? error.message : String(error));
       await disconnect(conn);
     }
   }

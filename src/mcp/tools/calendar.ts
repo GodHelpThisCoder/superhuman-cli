@@ -13,7 +13,7 @@ import {
   type UpdateEventInput,
 } from "../../calendar";
 import type { ConnectionProvider } from "../../connection-provider";
-import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -130,12 +130,14 @@ export async function calendarListHandler(args: z.infer<typeof CalendarListSchem
   } catch (error) {
     return actionableError("Failed to list calendar events", error);
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function calendarCreateHandler(args: z.infer<typeof CalendarCreateSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_calendar_create", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would create calendar event "${args.title}" at ${args.startTime}`);
   }
 
@@ -152,7 +154,7 @@ export async function calendarCreateHandler(args: z.infer<typeof CalendarCreateS
       if (!isConfirmedExecution()) {
         const preview = `Would create calendar event "${args.title}" at ${args.startTime}`;
         const token = stageOperation("superhuman_calendar_create", args as Record<string, unknown>, preview, account);
-        auditMutation("superhuman_calendar_create", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+        auditMutation("superhuman_calendar_create", args as Record<string, unknown>, account, successResult(preview), { action: "staged", durationMs: Math.round(performance.now() - _t0) });
         return successResult(buildStagedResponse(preview, token));
       }
 
@@ -184,24 +186,26 @@ export async function calendarCreateHandler(args: z.infer<typeof CalendarCreateS
         eventId: result.eventId,
         message: "Event created successfully",
       }));
-      auditMutation("superhuman_calendar_create", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_calendar_create", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const toolResult = errorResult(`Failed to create event: ${result.error}`);
-      auditMutation("superhuman_calendar_create", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_calendar_create", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to create calendar event", error);
-    auditMutation("superhuman_calendar_create", args as Record<string, unknown>, "unknown", toolResult);
+    auditMutation("superhuman_calendar_create", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function calendarUpdateHandler(args: z.infer<typeof CalendarUpdateSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_calendar_update", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would update calendar event ${args.eventId}`);
   }
 
@@ -219,7 +223,7 @@ export async function calendarUpdateHandler(args: z.infer<typeof CalendarUpdateS
         const changes = [args.title && "title", args.startTime && "time", args.description && "description", args.attendees && "attendees"].filter(Boolean).join(", ");
         const preview = `Would update calendar event ${args.eventId}${changes ? ` (${changes})` : ""}`;
         const token = stageOperation("superhuman_calendar_update", args as Record<string, unknown>, preview, account);
-        auditMutation("superhuman_calendar_update", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+        auditMutation("superhuman_calendar_update", args as Record<string, unknown>, account, successResult(preview), { action: "staged", durationMs: Math.round(performance.now() - _t0) });
         return successResult(buildStagedResponse(preview, token));
       }
 
@@ -238,24 +242,26 @@ export async function calendarUpdateHandler(args: z.infer<typeof CalendarUpdateS
         eventId: result.eventId,
         message: "Event updated successfully",
       }));
-      auditMutation("superhuman_calendar_update", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_calendar_update", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const toolResult = errorResult(`Failed to update event: ${result.error}`);
-      auditMutation("superhuman_calendar_update", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_calendar_update", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to update calendar event", error);
-    auditMutation("superhuman_calendar_update", args as Record<string, unknown>, "unknown", toolResult);
+    auditMutation("superhuman_calendar_update", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
 export async function calendarDeleteHandler(args: z.infer<typeof CalendarDeleteSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
   if (args.dryRun) {
+    auditDryRun("superhuman_calendar_delete", args as Record<string, unknown>, Math.round(performance.now() - _t0));
     return successResult(`[DRY RUN] Would delete calendar event ${args.eventId}`);
   }
 
@@ -272,7 +278,7 @@ export async function calendarDeleteHandler(args: z.infer<typeof CalendarDeleteS
       if (!isConfirmedExecution()) {
         const preview = `Would delete calendar event ${args.eventId}`;
         const token = stageOperation("superhuman_calendar_delete", args as Record<string, unknown>, preview, account);
-        auditMutation("superhuman_calendar_delete", args as Record<string, unknown>, account, successResult(preview), { action: "staged" });
+        auditMutation("superhuman_calendar_delete", args as Record<string, unknown>, account, successResult(preview), { action: "staged", durationMs: Math.round(performance.now() - _t0) });
         return successResult(buildStagedResponse(preview, token));
       }
 
@@ -283,19 +289,19 @@ export async function calendarDeleteHandler(args: z.infer<typeof CalendarDeleteS
         success: true,
         message: `Event ${args.eventId} deleted successfully`,
       }));
-      auditMutation("superhuman_calendar_delete", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_calendar_delete", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     } else {
       const toolResult = errorResult(`Failed to delete event: ${result.error}`);
-      auditMutation("superhuman_calendar_delete", args as Record<string, unknown>, account, toolResult);
+      auditMutation("superhuman_calendar_delete", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
   } catch (error) {
     const toolResult = actionableError("Failed to delete calendar event", error);
-    auditMutation("superhuman_calendar_delete", args as Record<string, unknown>, "unknown", toolResult);
+    auditMutation("superhuman_calendar_delete", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
 
@@ -313,6 +319,6 @@ export async function calendarFreeBusyHandler(args: z.infer<typeof CalendarFreeB
   } catch (error) {
     return actionableError("Failed to check free/busy", error);
   } finally {
-    if (provider) await provider.disconnect();
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
