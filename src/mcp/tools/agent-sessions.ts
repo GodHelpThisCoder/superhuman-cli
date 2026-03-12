@@ -4,12 +4,8 @@
  */
 
 import { z } from "zod";
-import {
-  connectToSuperhuman,
-  disconnect,
-  type SuperhumanConnection,
-} from "../../superhuman-api";
-import { successResult, errorResult, actionableError, resolveCurrentAccountViaCDP, guardMutation, auditMutation, auditDryRun, CDP_PORT, type ToolResult } from "./shared";
+import type { SuperhumanConnection } from "../../superhuman-api";
+import { successResult, errorResult, actionableError, resolveCurrentAccountViaCDP, guardMutation, auditMutation, auditDryRun, getCdpConnection, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -232,21 +228,13 @@ async function restoreSessionViaCDP(conn: SuperhumanConnection, sessionId: strin
 // ---------------------------------------------------------------------------
 
 export async function agentSessionsHandler(args: z.infer<typeof AgentSessionsSchema>): Promise<ToolResult> {
-  let conn: SuperhumanConnection | null = null;
-
   try {
-    conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
-    }
-
+    const conn = await getCdpConnection();
     const sessions = await fetchAllSessions(conn);
     const text = formatSessionList(sessions, args.include_discarded ?? false);
     return successResult(text);
   } catch (error) {
     return actionableError("Failed to list agent sessions", error);
-  } finally {
-    if (conn) await disconnect(conn);
   }
 }
 
@@ -255,21 +243,13 @@ export async function agentSessionReadHandler(args: z.infer<typeof AgentSessionR
     return errorResult("sessionId is required. Use superhuman_agent_sessions to list available sessions and their IDs.");
   }
 
-  let conn: SuperhumanConnection | null = null;
-
   try {
-    conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
-    }
-
+    const conn = await getCdpConnection();
     const session = await fetchSession(conn, args.sessionId);
     const text = formatTranscript(session);
     return successResult(text);
   } catch (error) {
     return actionableError(`Failed to read agent session ${args.sessionId}`, error);
-  } finally {
-    if (conn) await disconnect(conn);
   }
 }
 
@@ -288,13 +268,8 @@ export async function agentSessionDiscardHandler(args: z.infer<typeof AgentSessi
     return errorResult("sessionId is required. Use superhuman_agent_sessions to list available sessions and their IDs.");
   }
 
-  let conn: SuperhumanConnection | null = null;
-
   try {
-    conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
-    }
+    const conn = await getCdpConnection();
 
     // Resolve account for staging
     let account = "unknown";
@@ -331,8 +306,6 @@ export async function agentSessionDiscardHandler(args: z.infer<typeof AgentSessi
     const toolResult = actionableError(`Failed to discard agent session ${args.sessionId}`, error);
     auditMutation("superhuman_agent_session_discard", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
-  } finally {
-    if (conn) await disconnect(conn);
   }
 }
 
@@ -351,13 +324,8 @@ export async function agentSessionRestoreHandler(args: z.infer<typeof AgentSessi
     return errorResult("sessionId is required. Use superhuman_agent_sessions with include_discarded=true to find discarded session IDs.");
   }
 
-  let conn: SuperhumanConnection | null = null;
-
   try {
-    conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
-    }
+    const conn = await getCdpConnection();
 
     // Resolve account for staging
     let account = "unknown";
@@ -394,7 +362,5 @@ export async function agentSessionRestoreHandler(args: z.infer<typeof AgentSessi
     const toolResult = actionableError(`Failed to restore agent session ${args.sessionId}`, error);
     auditMutation("superhuman_agent_session_restore", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
-  } finally {
-    if (conn) await disconnect(conn);
   }
 }
