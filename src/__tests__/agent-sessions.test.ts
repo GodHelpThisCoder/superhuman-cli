@@ -224,6 +224,8 @@ describe("formatTranscript", () => {
       }),
     });
     const result = formatTranscript(session);
-    expect(result).toContain("**You:**");
+    // Empty content events are filtered out
+    expect(result).toContain("# Test Session");
+    expect(result).not.toContain("**You:**");
   });
 });
