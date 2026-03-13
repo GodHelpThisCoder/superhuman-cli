@@ -268,7 +268,7 @@ async function fetchMsGraphConversationMessages(
  * @param token - Token info with accessToken and isMicrosoft flag
  * @param query - Gmail search query (e.g., "from:anthropic", "subject:meeting")
  * @param limit - Maximum results (default 10)
- * @returns Array of InboxThread objects
+ * @returns SearchResult containing threads array and optional totalResults count
  */
 export async function searchGmail(
   token: TokenInfo,
@@ -343,7 +343,7 @@ export async function searchGmail(
  * @param token - Token info with accessToken
  * @param query - Search query
  * @param limit - Maximum results
- * @returns Array of InboxThread objects
+ * @returns SearchResult containing threads array and optional totalResults count
  */
 export async function searchMSGraph(
   token: TokenInfo,
