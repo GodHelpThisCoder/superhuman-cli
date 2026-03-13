@@ -47,20 +47,21 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
     const limit = args.limit ?? 10;
 
     const options: SearchOptions = { query: args.query, limit };
-    const results = await searchInbox(provider, options);
+    const { threads, totalResults } = await searchInbox(provider, options);
 
-    if (results.length === 0) {
+    if (threads.length === 0) {
       return successResult(`No results found for: ${args.query}`);
     }
 
-    const resultsText = results
+    const resultsText = threads
       .map(
         (r, i) =>
           `${i + 1}. From: ${fmtContact(r.from)}\n   Subject: ${r.subject}\n   Date: ${r.date}\n   Thread ID: ${r.id}\n   Snippet: ${r.snippet || "(no preview)"}`
       )
       .join("\n\n");
 
-    return successResult(`Search results for "${args.query}" (${results.length}):\n\n${resultsText}`);
+    const totalStr = totalResults != null ? ` (~${totalResults} total)` : "";
+    return successResult(`Search results for "${args.query}" (${threads.length} returned${totalStr}):\n\n${resultsText}`);
   } catch (error) {
     return actionableError("Search failed", error);
   } finally {

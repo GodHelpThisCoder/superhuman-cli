@@ -1661,19 +1661,21 @@ async function cmdSearch(options: CliOptions) {
 
   const provider = await getProvider(options);
 
-  const threads = await searchInbox(provider, {
+  const searchResult = await searchInbox(provider, {
     query: options.query,
     limit: options.limit,
     includeDone: options.includeDone,
   });
+  const threads = searchResult.threads;
 
   if (options.json) {
-    console.log(JSON.stringify(threads, null, 2));
+    console.log(JSON.stringify(searchResult, null, 2));
   } else {
     if (threads.length === 0) {
       info(`No results for "${options.query}"`);
     } else {
-      info(`Found ${threads.length} result(s) for "${options.query}":\n`);
+      const totalStr = searchResult.totalResults != null ? ` (~${searchResult.totalResults} total)` : "";
+      info(`Found ${threads.length} result(s)${totalStr} for "${options.query}":\n`);
       console.log(
         `${colors.dim}${"From".padEnd(25)} ${"Subject".padEnd(40)} ${"Date".padEnd(10)}${colors.reset}`
       );
