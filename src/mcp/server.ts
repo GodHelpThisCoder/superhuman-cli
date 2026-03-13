@@ -38,9 +38,11 @@ function createMcpServer(): McpServer {
     { name: "superhuman-cli", version: APP_VERSION },
     {
       capabilities: { tools: {} },
-      instructions: `Superhuman email and calendar automation server.
+      instructions: `Superhuman email and calendar automation server (41 tools).
 
 WORKFLOW: Use superhuman_accounts first to see available accounts. Use superhuman_inbox or superhuman_search to find emails — these return thread IDs needed by all action tools.
+
+SEARCH: superhuman_search accepts limit (1–50, default 10) and returns totalResults (approximate match count) so you can gauge result coverage without fetching everything.
 
 READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_download_attachment, superhuman_calendar_list, superhuman_calendar_free_busy, superhuman_audit_log, superhuman_agent_sessions, superhuman_agent_session_read.
 
@@ -48,7 +50,9 @@ WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply
 
 CONFIRMATION TOOL: superhuman_confirm (executes a previously staged mutation token).
 
-DESTRUCTIVE TOOLS (irreversible): superhuman_archive, superhuman_delete, superhuman_calendar_delete, superhuman_agent_session_discard.
+DESTRUCTIVE TOOLS (irreversible): superhuman_archive, superhuman_archive_by_query, superhuman_delete, superhuman_calendar_delete, superhuman_agent_session_discard.
+
+BULK ARCHIVE: superhuman_archive_by_query runs a query, collects ALL matching threads (paginated), and stages them for archive in one confirmation step. Use dryRun:true to preview. Max 500 threads per call. Ideal for sweeping entire senders (e.g. query: "from:noreply@example.com").
 
 Multi-account: Most tools operate on the currently active account. Use superhuman_switch_account to change. Batch operations (archive, delete, star, etc.) accept arrays of thread IDs.`,
     }
