@@ -16,6 +16,8 @@ import {
   stageOperation,
   confirmOperation,
   buildStagedResponse,
+  isConfirmedExecution,
+  withConfirmation,
   _clearStaged,
   type BatchManifest,
   type ManifestThreadInfo,
@@ -254,5 +256,33 @@ describe("archive_by_query staging flow", () => {
     expect(response).toContain("STAGED");
     expect(response).toContain("shm_abc123");
     expect(response).toContain("120s");
+  });
+
+  it("confirmed replay receives { threadIds, originalQuery } and isConfirmedExecution is true", async () => {
+    // Stage with the shape that archiveByQueryHandler produces
+    const threadIds = ["t1", "t2", "t3"];
+    const stagedArgs = { threadIds, originalQuery: "from:spam@test.com" };
+    const preview = buildBatchPreview("archive", threadIds);
+    const token = stageOperation("superhuman_archive_by_query", stagedArgs, preview, "user@test.com");
+
+    // Consume the token (simulating confirmHandler)
+    const op = confirmOperation(token, "user@test.com");
+
+    // Verify the args shape matches what the confirmed handler receives
+    expect(op.args).toHaveProperty("threadIds");
+    expect(op.args).toHaveProperty("originalQuery");
+    expect(op.args.threadIds).toEqual(threadIds);
+    expect(op.args.originalQuery).toBe("from:spam@test.com");
+    // The staged args should NOT have 'query' — that's the bug scenario
+    expect(op.args).not.toHaveProperty("query");
+
+    // Verify withConfirmation sets the confirmed context
+    let confirmedInside = false;
+    await withConfirmation(token, async () => {
+      confirmedInside = isConfirmedExecution();
+    });
+    expect(confirmedInside).toBe(true);
+    // Outside withConfirmation, it should be false again
+    expect(isConfirmedExecution()).toBe(false);
   });
 });
