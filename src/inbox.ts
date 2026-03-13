@@ -41,6 +41,13 @@ export interface SearchOptions {
   includeDone?: boolean;
 }
 
+/** Search results with optional total count metadata. */
+export interface SearchResult {
+  threads: InboxThread[];
+  /** Approximate total matching threads (Gmail's resultSizeEstimate). May be absent. */
+  totalResults?: number;
+}
+
 /**
  * List threads from the current inbox view
  */
@@ -62,7 +69,7 @@ export async function listInbox(
 export async function searchInbox(
   provider: ConnectionProvider,
   options: SearchOptions
-): Promise<InboxThread[]> {
+): Promise<SearchResult> {
   const { query, limit = 10, includeDone = false } = options;
   const token = await provider.getToken();
 
@@ -85,7 +92,7 @@ export async function searchInbox(
       );
 
       if (!response.ok) {
-        return [];
+        return { threads: [] };
       }
 
       interface MSGraphMessage {
@@ -99,7 +106,7 @@ export async function searchInbox(
 
       const result = JSON.parse(await response.text()) as { value?: MSGraphMessage[] };
       if (!result.value) {
-        return [];
+        return { threads: [] };
       }
 
       // Group by conversationId
@@ -136,7 +143,8 @@ export async function searchInbox(
         if (threads.length >= limit) break;
       }
 
-      return threads;
+      // MS Graph doesn't provide a totalResults equivalent
+      return { threads };
     } else {
       // Gmail: Add label:INBOX to the query
       const inboxQuery = `label:INBOX ${query}`;

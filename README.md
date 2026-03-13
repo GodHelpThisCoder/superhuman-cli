@@ -366,6 +366,7 @@ bun src/index.ts --mcp
 | `superhuman_reply_all` | Reply-all to a thread (supports attachments) |
 | `superhuman_forward` | Forward a thread (supports attachments) |
 | `superhuman_archive` | Archive thread(s) |
+| `superhuman_archive_by_query` | Archive all threads matching a search query |
 | `superhuman_delete` | Delete thread(s) |
 | `superhuman_mark_read` | Mark thread(s) as read |
 | `superhuman_mark_unread` | Mark thread(s) as unread |

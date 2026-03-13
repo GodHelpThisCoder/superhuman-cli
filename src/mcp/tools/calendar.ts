@@ -29,7 +29,7 @@ export const CalendarListSchema = z.object({
     .describe("End as ISO datetime. Defaults to end of start day."),
   range: z.number().optional()
     .describe("Number of days from start (default: 1). Ignored if end is provided."),
-});
+}).strict();
 
 export const CalendarCreateSchema = z.object({
   title: z.string().describe("Event title/summary"),
@@ -39,7 +39,7 @@ export const CalendarCreateSchema = z.object({
   attendees: z.array(z.string()).optional().describe("List of attendee email addresses"),
   allDay: z.boolean().optional().describe("Whether this is an all-day event (if true, use date format YYYY-MM-DD for startTime)"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const CalendarUpdateSchema = z.object({
   eventId: z.string().describe("The event ID to update"),
@@ -49,17 +49,17 @@ export const CalendarUpdateSchema = z.object({
   description: z.string().optional().describe("New event description"),
   attendees: z.array(z.string()).optional().describe("New list of attendee email addresses"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const CalendarDeleteSchema = z.object({
   eventId: z.string().describe("The event ID to delete"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const CalendarFreeBusySchema = z.object({
   timeMin: z.string().describe("Start of time range as ISO datetime"),
   timeMax: z.string().describe("End of time range as ISO datetime"),
-});
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Handlers

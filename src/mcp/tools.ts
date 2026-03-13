@@ -4,7 +4,7 @@
  *   tools/shared.ts       — types, helpers (successResult, errorResult, getMcpProvider)
  *   tools/email-read.ts   — search, inbox, read
  *   tools/email-write.ts  — draft, send, reply, reply-all, forward
- *   tools/email-manage.ts — archive, delete, mark read/unread, star, snooze
+ *   tools/email-manage.ts — archive, archive-by-query, delete, mark read/unread, star, snooze
  *   tools/labels.ts       — list labels, get/add/remove label
  *   tools/attachments.ts  — list/download attachments
  *   tools/calendar.ts     — list/create/update/delete events, free/busy
@@ -58,8 +58,10 @@ export {
   SnoozeSchema,
   UnsnoozeSchema,
   SnoozedSchema,
+  ArchiveByQuerySchema,
   archiveHandler,
   deleteHandler,
+  archiveByQueryHandler,
   markReadHandler,
   markUnreadHandler,
   starHandler,

@@ -8,6 +8,7 @@ import { archiveThread, deleteThread } from "../../archive";
 import { markAsRead, markAsUnread } from "../../read-status";
 import { starThread, unstarThread, listStarred } from "../../labels";
 import { parseSnoozeTime, snoozeThreadViaProvider, unsnoozeThreadViaProvider, listSnoozedViaProvider } from "../../snooze";
+import { searchInbox, type InboxThread } from "../../inbox";
 import type { ConnectionProvider } from "../../connection-provider";
 import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse, buildBatchPreview, buildManifest } from "../confirmation";
@@ -19,36 +20,36 @@ import { isConfirmedExecution, stageOperation, buildStagedResponse, buildBatchPr
 export const ArchiveSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to archive"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const DeleteSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to delete (move to trash)"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const MarkReadSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to mark as read"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const MarkUnreadSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to mark as unread"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const StarSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to star"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const UnstarSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to unstar"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const StarredSchema = z.object({
   limit: z.number().optional().describe("Maximum number of starred threads to return (default: 50)"),
-});
+}).strict();
 
 export const SnoozeSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to snooze"),
@@ -57,16 +58,21 @@ export const SnoozeSchema = z.object({
     z.string().describe("ISO datetime (e.g., 2026-03-10T14:00:00Z)"),
   ]).describe("When to unsnooze: use a preset or provide an ISO datetime"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const UnsnoozeSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to unsnooze"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const SnoozedSchema = z.object({
   limit: z.number().optional().describe("Maximum number of snoozed threads to return (default: 50)"),
-});
+}).strict();
+
+export const ArchiveByQuerySchema = z.object({
+  query: z.string().describe("Search query whose matching threads will be staged for archive. Run this query through superhuman_search first to verify what it matches."),
+  dryRun: z.boolean().optional().describe("Preview what would be archived without staging. Returns matched threads and count."),
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -554,6 +560,229 @@ export async function snoozedHandler(args: z.infer<typeof SnoozedSchema>): Promi
     return successResult(`Snoozed threads (${threads.length}):\n\n${threadsText}`);
   } catch (error) {
     return actionableError("Failed to list snoozed threads", error);
+  } finally {
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
+  }
+}
+
+/**
+ * Collect ALL threads matching a query via date-anchored pagination.
+ * Returns deduplicated threads in chronological order.
+ */
+async function paginateSearchAll(
+  provider: ConnectionProvider,
+  query: string,
+): Promise<InboxThread[]> {
+  const PAGE_SIZE = 50;
+  const MAX_PAGES = 100; // safety: 5,000 threads max
+  const allThreads = new Map<string, InboxThread>();
+  let currentQuery = query;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const { threads } = await searchInbox(provider, {
+      query: currentQuery,
+      limit: PAGE_SIZE,
+      includeDone: false, // inbox-only — archive_by_query targets unarchived threads
+    });
+
+    if (threads.length === 0) break;
+
+    let newCount = 0;
+    for (const thread of threads) {
+      if (!allThreads.has(thread.id)) {
+        allThreads.set(thread.id, thread);
+        newCount++;
+      }
+    }
+
+    // Proactive cap: stop before wasting API calls on queries that will be rejected
+    if (allThreads.size >= 501) break;
+
+    // If we got fewer than PAGE_SIZE, we've reached the end
+    if (threads.length < PAGE_SIZE) break;
+
+    // If no new threads, we're stuck in a loop
+    if (newCount === 0) break;
+
+    // Date-anchor: use the oldest thread's date as the "before:" boundary
+    const oldestDate = threads
+      .map((t) => new Date(t.date).getTime())
+      .filter((ts) => !Number.isNaN(ts))
+      .sort((a, b) => a - b)[0];
+
+    if (!oldestDate) break;
+
+    // Format as YYYY/MM/DD for Gmail query syntax
+    // Add 1 day because before: is exclusive — ensures same-day threads aren't skipped
+    const d = new Date(oldestDate);
+    d.setDate(d.getDate() + 1);
+    const dateStr = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+    currentQuery = `${query} before:${dateStr}`;
+  }
+
+  // Return sorted chronologically (oldest first)
+  return Array.from(allThreads.values()).sort(
+    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+  );
+}
+
+export async function archiveByQueryHandler(args: z.infer<typeof ArchiveByQuerySchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
+
+  // Confirmed replay: args shape is { threadIds, originalQuery } from staging,
+  // not { query, dryRun } from the original call. Archive pre-resolved threadIds directly.
+  if (isConfirmedExecution()) {
+    const replayArgs = args as unknown as { threadIds: string[]; originalQuery: string };
+    if (!Array.isArray(replayArgs.threadIds) || replayArgs.threadIds.length === 0) {
+      return errorResult("Staged operation missing threadIds. Re-stage the archive_by_query operation.");
+    }
+    const threadIds = replayArgs.threadIds;
+
+    const killed = guardMutation("superhuman_archive_by_query", args as Record<string, unknown>);
+    if (killed) return killed;
+
+    let provider: ConnectionProvider | null = null;
+    try {
+      provider = await getMcpProvider();
+      const account = await provider.getCurrentEmail();
+
+      const results: { threadId: string; success: boolean }[] = [];
+      for (const threadId of threadIds) {
+        const result = await archiveThread(provider, threadId);
+        results.push({ threadId, success: result.success });
+      }
+
+      const succeeded = results.filter((r) => r.success).length;
+      const failed = results.filter((r) => !r.success).length;
+
+      if (failed === 0) {
+        const toolResult = successResult(`Archived ${succeeded} thread(s) matching '${replayArgs.originalQuery}'`);
+        auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, account, toolResult, {
+          batchSize: threadIds.length, durationMs: Math.round(performance.now() - _t0),
+        });
+        return toolResult;
+      } else if (succeeded === 0) {
+        const toolResult = errorResult(`Failed to archive all ${failed} thread(s)`);
+        auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, account, toolResult, {
+          batchSize: threadIds.length, durationMs: Math.round(performance.now() - _t0),
+        });
+        return toolResult;
+      } else {
+        const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
+        const toolResult = successResult(`Archived ${succeeded}, failed on ${failed}: ${failedIds}`);
+        auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, account, toolResult, {
+          batchSize: threadIds.length, durationMs: Math.round(performance.now() - _t0),
+        });
+        return toolResult;
+      }
+    } catch (error) {
+      const toolResult = actionableError("Archive-by-query confirmed execution failed", error);
+      auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, "unknown", toolResult, {
+        durationMs: Math.round(performance.now() - _t0),
+      });
+      return toolResult;
+    } finally {
+      // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
+    }
+  }
+
+  if (args.dryRun) {
+    // Dry run: collect matches and return preview without staging
+    let provider: ConnectionProvider | null = null;
+    try {
+      provider = await getMcpProvider();
+      const threads = await paginateSearchAll(provider, args.query);
+      auditDryRun("superhuman_archive_by_query", args as Record<string, unknown>, Math.round(performance.now() - _t0));
+
+      if (threads.length === 0) {
+        return successResult(`[DRY RUN] Query matched 0 threads: '${args.query}'. Verify the query returns results with superhuman_search first.`);
+      }
+
+      const preview = threads.slice(0, 20).map((t, i) =>
+        `  ${i + 1}. ${t.id} — "${t.subject}" (from ${t.from.email || t.from.name}, ${t.date})`
+      ).join("\n");
+      const moreText = threads.length > 20 ? `\n  ... and ${threads.length - 20} more` : "";
+
+      return successResult(`[DRY RUN] Query '${args.query}' matched ${threads.length} thread(s):\n${preview}${moreText}`);
+    } catch (error) {
+      return actionableError("Archive-by-query dry run failed", error);
+    } finally {
+      // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
+    }
+  }
+
+  const killed = guardMutation("superhuman_archive_by_query", args as Record<string, unknown>);
+  if (killed) return killed;
+
+  let provider: ConnectionProvider | null = null;
+
+  try {
+    provider = await getMcpProvider();
+    const account = await provider.getCurrentEmail();
+
+    // Collect all matching threads via pagination
+    const threads = await paginateSearchAll(provider, args.query);
+
+    if (threads.length === 0) {
+      return errorResult(`Query matched 0 threads: '${args.query}'. Verify the query returns results with superhuman_search first.`);
+    }
+
+    if (threads.length > 500) {
+      return errorResult(
+        `Query matched ${threads.length} threads (>500). This is unusually large. ` +
+        `Add date range or sender filters to narrow the query, or pass dryRun: true to preview matches.`
+      );
+    }
+
+    const threadIds = threads.map((t) => t.id);
+
+    // Two-phase: stage unless this is a confirmed execution
+    if (!isConfirmedExecution()) {
+      const manifest = await buildManifest(provider, threadIds);
+      const preview = buildBatchPreview("archive", threadIds, manifest);
+      const token = stageOperation("superhuman_archive_by_query", { threadIds, originalQuery: args.query } as Record<string, unknown>, preview, account);
+      auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, account, successResult(preview), {
+        action: "staged", batchSize: threadIds.length, durationMs: Math.round(performance.now() - _t0),
+      });
+      return successResult(buildStagedResponse(preview, token));
+    }
+
+    // Execute: archive all threads
+    const results: { threadId: string; success: boolean }[] = [];
+    for (const threadId of threadIds) {
+      const result = await archiveThread(provider, threadId);
+      results.push({ threadId, success: result.success });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    if (failed === 0) {
+      const toolResult = successResult(`Archived ${succeeded} thread(s) matching '${args.query}'`);
+      auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, account, toolResult, {
+        batchSize: threadIds.length, durationMs: Math.round(performance.now() - _t0),
+      });
+      return toolResult;
+    } else if (succeeded === 0) {
+      const toolResult = errorResult(`Failed to archive all ${failed} thread(s)`);
+      auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, account, toolResult, {
+        batchSize: threadIds.length, durationMs: Math.round(performance.now() - _t0),
+      });
+      return toolResult;
+    } else {
+      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
+      const toolResult = successResult(`Archived ${succeeded}, failed on ${failed}: ${failedIds}`);
+      auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, account, toolResult, {
+        batchSize: threadIds.length, durationMs: Math.round(performance.now() - _t0),
+      });
+      return toolResult;
+    }
+  } catch (error) {
+    const toolResult = actionableError("Archive-by-query failed", error);
+    auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, "unknown", toolResult, {
+      durationMs: Math.round(performance.now() - _t0),
+    });
+    return toolResult;
   } finally {
     // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }

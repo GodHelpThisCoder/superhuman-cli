@@ -17,7 +17,7 @@ import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../co
 // Schemas
 // ---------------------------------------------------------------------------
 
-export const SnippetsSchema = z.object({});
+export const SnippetsSchema = z.object({}).strict();
 
 export const UseSnippetSchema = z.object({
   name: z.string().describe("Snippet name to search for (fuzzy match)"),
@@ -27,7 +27,7 @@ export const UseSnippetSchema = z.object({
   vars: z.string().optional().describe("Template variables as 'key1=val1,key2=val2'"),
   send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Private helpers
