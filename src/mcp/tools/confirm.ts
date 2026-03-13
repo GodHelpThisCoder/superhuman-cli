@@ -29,7 +29,7 @@ import { agentSessionDiscardHandler } from "./agent-sessions";
 export const ConfirmSchema = z.object({
   token: z.string().describe("Confirmation token from a staged operation"),
   force: z.boolean().optional().describe("Required for batch operations exceeding 50 items"),
-});
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Handler dispatch map

@@ -13,7 +13,7 @@ import { successResult, errorResult, type ToolResult } from "./shared";
 export const AuditLogSchema = z.object({
   limit: z.number().optional().describe("Number of recent entries to return (default: 50)"),
   tool: z.string().optional().describe("Filter to a specific tool name"),
-});
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Handler

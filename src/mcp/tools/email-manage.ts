@@ -19,36 +19,36 @@ import { isConfirmedExecution, stageOperation, buildStagedResponse, buildBatchPr
 export const ArchiveSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to archive"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const DeleteSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to delete (move to trash)"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const MarkReadSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to mark as read"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const MarkUnreadSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to mark as unread"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const StarSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to star"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const UnstarSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to unstar"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const StarredSchema = z.object({
   limit: z.number().optional().describe("Maximum number of starred threads to return (default: 50)"),
-});
+}).strict();
 
 export const SnoozeSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to snooze"),
@@ -57,16 +57,16 @@ export const SnoozeSchema = z.object({
     z.string().describe("ISO datetime (e.g., 2026-03-10T14:00:00Z)"),
   ]).describe("When to unsnooze: use a preset or provide an ISO datetime"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const UnsnoozeSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to unsnooze"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const SnoozedSchema = z.object({
   limit: z.number().optional().describe("Maximum number of snoozed threads to return (default: 50)"),
-});
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Handlers
