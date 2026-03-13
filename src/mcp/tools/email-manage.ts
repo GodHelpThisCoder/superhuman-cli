@@ -681,6 +681,8 @@ export async function archiveByQueryHandler(args: z.infer<typeof ArchiveByQueryS
         durationMs: Math.round(performance.now() - _t0),
       });
       return toolResult;
+    } finally {
+      // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
     }
   }
 
@@ -704,6 +706,8 @@ export async function archiveByQueryHandler(args: z.infer<typeof ArchiveByQueryS
       return successResult(`[DRY RUN] Query '${args.query}' matched ${threads.length} thread(s):\n${preview}${moreText}`);
     } catch (error) {
       return actionableError("Archive-by-query dry run failed", error);
+    } finally {
+      // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
     }
   }
 
@@ -779,5 +783,7 @@ export async function archiveByQueryHandler(args: z.infer<typeof ArchiveByQueryS
       durationMs: Math.round(performance.now() - _t0),
     });
     return toolResult;
+  } finally {
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }
 }
