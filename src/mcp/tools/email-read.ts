@@ -18,6 +18,16 @@ function fmtContacts(contacts: Array<{ email: string; name: string }>): string {
   return contacts.map(fmtContact).join(", ");
 }
 
+/** Format thread metadata line (messageCount, labels, unread). */
+function fmtMeta(r: { messageCount: number; labelIds: string[] }): string {
+  const parts: string[] = [];
+  if (r.messageCount > 1) parts.push(`${r.messageCount} messages`);
+  if (r.labelIds.includes("UNREAD")) parts.push("unread");
+  const labels = r.labelIds.filter((l) => l !== "UNREAD" && l !== "INBOX" && l !== "IMPORTANT");
+  if (labels.length > 0) parts.push(`labels: ${labels.join(", ")}`);
+  return parts.length > 0 ? `\n   Meta: ${parts.join(" | ")}` : "";
+}
+
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
@@ -56,7 +66,7 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
     const resultsText = threads
       .map(
         (r, i) =>
-          `${i + 1}. From: ${fmtContact(r.from)}\n   Subject: ${r.subject}\n   Date: ${r.date}\n   Thread ID: ${r.id}\n   Snippet: ${r.snippet || "(no preview)"}`
+          `${i + 1}. From: ${fmtContact(r.from)}\n   Subject: ${r.subject}\n   Date: ${r.date}\n   Thread ID: ${r.id}\n   Snippet: ${r.snippet || "(no preview)"}${fmtMeta(r)}`
       )
       .join("\n\n");
 
@@ -85,7 +95,7 @@ export async function inboxHandler(args: z.infer<typeof InboxSchema>): Promise<T
     const resultsText = results
       .map(
         (r, i) =>
-          `${i + 1}. From: ${fmtContact(r.from)}\n   Subject: ${r.subject}\n   Date: ${r.date}\n   Thread ID: ${r.id}\n   Snippet: ${r.snippet || "(no preview)"}`
+          `${i + 1}. From: ${fmtContact(r.from)}\n   Subject: ${r.subject}\n   Date: ${r.date}\n   Thread ID: ${r.id}\n   Snippet: ${r.snippet || "(no preview)"}${fmtMeta(r)}`
       )
       .join("\n\n");
 
