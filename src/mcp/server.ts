@@ -9,7 +9,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   DraftSchema, SendSchema, SearchSchema, InboxSchema, ReadSchema,
   AccountsSchema, SwitchAccountSchema, ReplySchema, ReplyAllSchema, ForwardSchema,
-  ArchiveSchema, DeleteSchema,
+  ArchiveSchema, DeleteSchema, ArchiveByQuerySchema,
   MarkReadSchema, MarkUnreadSchema, LabelsSchema, GetLabelsSchema, AddLabelSchema, RemoveLabelSchema,
   StarSchema, UnstarSchema, StarredSchema,
   SnoozeSchema, UnsnoozeSchema, SnoozedSchema,
@@ -17,7 +17,7 @@ import {
   CalendarListSchema, CalendarCreateSchema, CalendarUpdateSchema, CalendarDeleteSchema, CalendarFreeBusySchema,
   draftHandler, sendHandler, searchHandler, inboxHandler, readHandler,
   accountsHandler, switchAccountHandler, replyHandler, replyAllHandler, forwardHandler,
-  archiveHandler, deleteHandler,
+  archiveHandler, deleteHandler, archiveByQueryHandler,
   markReadHandler, markUnreadHandler, labelsHandler, getLabelsHandler, addLabelHandler, removeLabelHandler,
   starHandler, unstarHandler, starredHandler,
   snoozeHandler, unsnoozeHandler, snoozedHandler,
@@ -148,6 +148,16 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     archiveHandler
+  );
+
+  server.registerTool(
+    "superhuman_archive_by_query",
+    {
+      description: "Archive all threads matching a search query. ALWAYS run the query through superhuman_search first to verify matches. Internally paginates to collect all matches, then stages for confirmation. Use dryRun:true to preview without staging. Requires superhuman_confirm to execute.",
+      inputSchema: ArchiveByQuerySchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    archiveByQueryHandler
   );
 
   server.registerTool(
