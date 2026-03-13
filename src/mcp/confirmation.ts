@@ -137,6 +137,47 @@ function formatShortDate(rawDate: string): string {
   return SHORT_DATE_FORMAT.format(parsed);
 }
 
+/**
+ * Extract root domain (eTLD+1 heuristic) from an email address or domain string.
+ * Uses a simple heuristic: last 2 segments, or 3 if penultimate is co/com/org/net/edu/gov.
+ */
+export function extractRootDomain(sender: string): string {
+  const domain = sender.includes("@") ? sender.split("@")[1] : sender;
+  if (!domain) return sender;
+  const parts = domain.toLowerCase().split(".");
+  if (parts.length <= 2) return domain.toLowerCase();
+  const secondToLast = parts[parts.length - 2];
+  const ccSLDs = ["co", "com", "org", "net", "edu", "gov", "ac"];
+  if (secondToLast && ccSLDs.includes(secondToLast) && parts.length >= 3) {
+    return parts.slice(-3).join(".");
+  }
+  return parts.slice(-2).join(".");
+}
+
+/**
+ * Group anomalous sender emails by root domain.
+ * Returns domain-grouped strings like "*.creditkarma.com (3 threads across 3 senders)"
+ */
+function groupAnomaliesByDomain(senders: string[]): string[] {
+  if (senders.length === 0) return [];
+  const domainGroups = new Map<string, string[]>();
+  for (const sender of senders) {
+    const domain = extractRootDomain(sender);
+    const existing = domainGroups.get(domain);
+    if (existing) {
+      existing.push(sender);
+    } else {
+      domainGroups.set(domain, [sender]);
+    }
+  }
+  return Array.from(domainGroups.entries())
+    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+    .map(([domain, grouped]) => {
+      if (grouped.length === 1) return grouped[0]!;
+      return `*.${domain} (${grouped.length} senders)`;
+    });
+}
+
 function fallbackManifest(threadIds: string[]): BatchManifest {
   const count = threadIds.length;
   return {
@@ -194,16 +235,20 @@ export async function buildManifest(
   const newest = validDates.length > 0 ? formatShortDate(new Date(Math.max(...validDates)).toISOString()) : "unknown";
   const total = threads.length;
 
-  const anomalies: string[] = [];
+  // Identify anomalous senders (<5% of batch) and group by domain
+  const anomalousSenders: string[] = [];
   const senderLines = Array.from(senderCounts.entries())
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([sender, count]) => {
       const anomalous = total > 0 && count / total < 0.05;
       if (anomalous) {
-        anomalies.push(sender);
+        anomalousSenders.push(sender);
       }
       return `  ${count} from ${sender}${anomalous ? " <-- ANOMALY (<5%)" : ""}`;
     });
+
+  // Group anomalies by root domain (eTLD+1 heuristic)
+  const anomalies = groupAnomaliesByDomain(anomalousSenders);
 
   const digestHeader = `Digest: ${total} thread${total === 1 ? "" : "s"} | oldest: ${oldest} | newest: ${newest}`;
 
