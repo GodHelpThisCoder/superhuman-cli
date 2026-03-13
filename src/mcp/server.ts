@@ -61,7 +61,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "List recent emails from the Superhuman inbox. Returns thread summaries with from, subject, date, and snippet.",
       inputSchema: InboxSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     inboxHandler
   );
@@ -71,7 +71,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Search the Superhuman inbox. Returns a list of emails matching the search query.",
       inputSchema: SearchSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     searchHandler
   );
@@ -81,7 +81,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Read a specific email thread by ID. Returns all messages in the thread with full details.",
       inputSchema: ReadSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     readHandler
   );
@@ -93,7 +93,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Create an email draft via Gmail/Outlook API using cached OAuth tokens. Supports file attachments (base64-encoded).",
       inputSchema: DraftSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     draftHandler
   );
@@ -103,7 +103,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Send an email via Gmail/Outlook API using cached OAuth tokens. Supports file attachments (base64-encoded).",
       inputSchema: SendSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     sendHandler
   );
@@ -113,7 +113,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Reply to an email thread. Creates a draft by default, or sends immediately with send=true. The reply is addressed to the sender of the last message in the thread. Supports file attachments.",
       inputSchema: ReplySchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     replyHandler
   );
@@ -123,7 +123,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Reply-all to an email thread. Creates a draft by default, or sends immediately with send=true. The reply is addressed to all recipients of the last message (excluding yourself). Supports file attachments.",
       inputSchema: ReplyAllSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     replyAllHandler
   );
@@ -133,7 +133,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Forward an email thread to a new recipient. Creates a draft by default, or sends immediately with send=true. Includes the original message with forwarding headers. Supports file attachments.",
       inputSchema: ForwardSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     forwardHandler
   );
@@ -145,7 +145,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Archive one or more email threads. Removes threads from inbox without deleting them.",
       inputSchema: ArchiveSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     archiveHandler
   );
@@ -155,7 +155,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Delete (trash) one or more email threads. Moves threads to the trash folder.",
       inputSchema: DeleteSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     deleteHandler
   );
@@ -165,7 +165,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Mark one or more email threads as read. Removes the unread indicator from threads.",
       inputSchema: MarkReadSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     markReadHandler
   );
@@ -175,7 +175,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Mark one or more email threads as unread. Adds the unread indicator to threads.",
       inputSchema: MarkUnreadSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     markUnreadHandler
   );
@@ -185,7 +185,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Star one or more email threads. Adds the STARRED label to mark threads as important.",
       inputSchema: StarSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     starHandler
   );
@@ -195,7 +195,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Unstar one or more email threads. Removes the STARRED label from threads.",
       inputSchema: UnstarSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     unstarHandler
   );
@@ -205,7 +205,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "List all starred email threads. Returns thread IDs of emails marked with the STARRED label.",
       inputSchema: StarredSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     starredHandler
   );
@@ -215,7 +215,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Snooze one or more email threads until a specific time. Use presets (tomorrow, next-week, weekend, evening) or ISO datetime.",
       inputSchema: SnoozeSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     snoozeHandler
   );
@@ -225,7 +225,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Unsnooze one or more email threads. Cancels the snooze and returns threads to inbox.",
       inputSchema: UnsnoozeSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     unsnoozeHandler
   );
@@ -235,7 +235,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "List all snoozed email threads. Returns thread IDs and snooze times.",
       inputSchema: SnoozedSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     snoozedHandler
   );
@@ -247,7 +247,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "List all available labels/folders in the Superhuman account. Returns label IDs and names.",
       inputSchema: LabelsSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     labelsHandler
   );
@@ -257,7 +257,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Get all labels on a specific email thread. Returns label IDs and names for the thread.",
       inputSchema: GetLabelsSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     getLabelsHandler
   );
@@ -267,7 +267,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Add a label to one or more email threads. Use superhuman_labels first to get available label IDs.",
       inputSchema: AddLabelSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     addLabelHandler
   );
@@ -277,7 +277,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Remove a label from one or more email threads. Use superhuman_get_labels to see current labels on a thread.",
       inputSchema: RemoveLabelSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     removeLabelHandler
   );
@@ -289,7 +289,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "List all attachments in an email thread. Returns attachment names, MIME types, and IDs needed for downloading.",
       inputSchema: AttachmentsSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     attachmentsHandler
   );
@@ -299,7 +299,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Download an attachment from an email. Returns the file content as base64-encoded data along with size and MIME type. Use superhuman_attachments first to get the messageId and attachmentId.",
       inputSchema: DownloadAttachmentSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     downloadAttachmentHandler
   );
@@ -311,7 +311,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "List calendar events from Superhuman. Returns events for a date range with details including title, time, attendees, and event ID.",
       inputSchema: CalendarListSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     calendarListHandler
   );
@@ -321,7 +321,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Create a new calendar event in Superhuman. Supports timed events and all-day events with optional attendees.",
       inputSchema: CalendarCreateSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     calendarCreateHandler
   );
@@ -331,7 +331,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Update an existing calendar event in Superhuman. Can modify title, times, description, or attendees.",
       inputSchema: CalendarUpdateSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     calendarUpdateHandler
   );
@@ -341,7 +341,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Delete a calendar event from Superhuman by its event ID.",
       inputSchema: CalendarDeleteSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     calendarDeleteHandler
   );
@@ -351,7 +351,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Check free/busy availability in the calendar. Returns busy time slots within the specified time range.",
       inputSchema: CalendarFreeBusySchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     calendarFreeBusyHandler
   );
@@ -373,7 +373,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Switch to a different linked email account in Superhuman. Accepts either an email address or a 1-based index number.",
       inputSchema: SwitchAccountSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     switchAccountHandler
   );
@@ -385,7 +385,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "List all snippets (reusable email templates) in Superhuman. Returns snippet names, usage stats, and previews.",
       inputSchema: SnippetsSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     snippetsHandler
   );
@@ -395,7 +395,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Use a snippet to compose or send an email. Fuzzy-matches snippet by name, applies template variables, and creates a draft or sends immediately.",
       inputSchema: UseSnippetSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     useSnippetHandler
   );
@@ -407,7 +407,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Ask Superhuman AI to search emails, answer questions, or compose drafts. Supports natural language queries like 'find emails about the project deadline' or 'what did John say about the budget?'. Optionally provide a thread ID to ask about a specific email thread.",
       inputSchema: AskAISchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     askAIHandler
   );
@@ -461,7 +461,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
     {
       description: "Confirm a staged operation. Mutating tools may return a confirmation token instead of executing immediately. Pass the token here to execute. For batches >50 items, set force: true.",
       inputSchema: ConfirmSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     confirmHandler
   );
