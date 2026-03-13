@@ -582,7 +582,7 @@ async function paginateSearchAll(
     const { threads } = await searchInbox(provider, {
       query: currentQuery,
       limit: PAGE_SIZE,
-      includeDone: true, // search all mail, not just inbox
+      includeDone: false, // inbox-only — archive_by_query targets unarchived threads
     });
 
     if (threads.length === 0) break;
@@ -610,7 +610,9 @@ async function paginateSearchAll(
     if (!oldestDate) break;
 
     // Format as YYYY/MM/DD for Gmail query syntax
+    // Add 1 day because before: is exclusive — ensures same-day threads aren't skipped
     const d = new Date(oldestDate);
+    d.setDate(d.getDate() + 1);
     const dateStr = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
     currentQuery = `${query} before:${dateStr}`;
   }
@@ -623,6 +625,58 @@ async function paginateSearchAll(
 
 export async function archiveByQueryHandler(args: z.infer<typeof ArchiveByQuerySchema>): Promise<ToolResult> {
   const _t0 = performance.now();
+
+  // Confirmed replay: args shape is { threadIds, originalQuery } from staging,
+  // not { query, dryRun } from the original call. Archive pre-resolved threadIds directly.
+  if (isConfirmedExecution()) {
+    const replayArgs = args as unknown as { threadIds: string[]; originalQuery: string };
+    const threadIds = replayArgs.threadIds;
+
+    const killed = guardMutation("superhuman_archive_by_query", args as Record<string, unknown>);
+    if (killed) return killed;
+
+    let provider: ConnectionProvider | null = null;
+    try {
+      provider = await getMcpProvider();
+      const account = await provider.getCurrentEmail();
+
+      const results: { threadId: string; success: boolean }[] = [];
+      for (const threadId of threadIds) {
+        const result = await archiveThread(provider, threadId);
+        results.push({ threadId, success: result.success });
+      }
+
+      const succeeded = results.filter((r) => r.success).length;
+      const failed = results.filter((r) => !r.success).length;
+
+      if (failed === 0) {
+        const toolResult = successResult(`Archived ${succeeded} thread(s) matching '${replayArgs.originalQuery}'`);
+        auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, account, toolResult, {
+          batchSize: threadIds.length, durationMs: Math.round(performance.now() - _t0),
+        });
+        return toolResult;
+      } else if (succeeded === 0) {
+        const toolResult = errorResult(`Failed to archive all ${failed} thread(s)`);
+        auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, account, toolResult, {
+          batchSize: threadIds.length, durationMs: Math.round(performance.now() - _t0),
+        });
+        return toolResult;
+      } else {
+        const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
+        const toolResult = successResult(`Archived ${succeeded}, failed on ${failed}: ${failedIds}`);
+        auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, account, toolResult, {
+          batchSize: threadIds.length, durationMs: Math.round(performance.now() - _t0),
+        });
+        return toolResult;
+      }
+    } catch (error) {
+      const toolResult = actionableError("Archive-by-query confirmed execution failed", error);
+      auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, "unknown", toolResult, {
+        durationMs: Math.round(performance.now() - _t0),
+      });
+      return toolResult;
+    }
+  }
 
   if (args.dryRun) {
     // Dry run: collect matches and return preview without staging
