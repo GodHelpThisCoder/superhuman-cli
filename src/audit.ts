@@ -100,7 +100,7 @@ export async function logAudit(entry: Omit<AuditEntry, "timestamp">): Promise<vo
     };
 
     const line = JSON.stringify(fullEntry) + "\n";
-    // node:fs appendFile is atomic for small writes — intentional exception to Bun.file preference
+    // node:fs appendFile with O_APPEND avoids truncation races — intentional exception to Bun.file preference
     const { appendFile: fsAppend } = await import("node:fs/promises");
     await fsAppend(logPath, line);
 

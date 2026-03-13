@@ -41,9 +41,12 @@ function encrypt(data: string): string {
 
 function decrypt(data: string): string {
   const parts = data.split(":");
-  const ivHex = parts[0] ?? "";
-  const tagHex = parts[1] ?? "";
-  const encrypted = parts[2] ?? "";
+  if (parts.length < 3) {
+    throw new Error("Malformed encrypted token data — expected iv:tag:ciphertext format");
+  }
+  const ivHex = parts[0]!;
+  const tagHex = parts[1]!;
+  const encrypted = parts.slice(2).join(":");
   const iv = Buffer.from(ivHex, "hex");
   const decipher = createDecipheriv(ALGORITHM, KEY as Buffer, iv);
   decipher.setAuthTag(Buffer.from(tagHex, "hex"));
@@ -195,7 +198,7 @@ export async function getCachedToken(
       }
     }
     // Refresh failed or no refresh token
-    log.warn(`Token for ${email} expired. Run 'superhuman auth' to re-authenticate.`);
+    log.warn(`Token for ${email} expired. Run 'superhuman account auth' to re-authenticate.`);
     return undefined;
   }
 

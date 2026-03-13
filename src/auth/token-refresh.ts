@@ -45,7 +45,8 @@ function base64urlDecode(input: string): string {
  *
  * Google access tokens are JWTs whose payload contains an `aud` (audience)
  * claim set to the OAuth client_id, and an `azp` (authorized party) claim
- * that also holds the client_id.  Microsoft v2 tokens similarly carry `aud`.
+ * that also holds the client_id.  Microsoft Graph access tokens are opaque
+ * (not JWTs); this function returns null for non-JWT tokens.
  *
  * Returns `null` if the token is opaque or cannot be decoded.
  */

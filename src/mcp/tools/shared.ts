@@ -23,6 +23,11 @@ import { createLogger } from "../../logger";
 
 const log = createLogger("mcp");
 
+// Cache for resolved active email (avoids opening a new CDP connection per tool call)
+let _resolvedEmail: string | null = null;
+let _resolvedEmailTs = 0;
+const RESOLVED_EMAIL_TTL_MS = 30_000; // 30 seconds
+
 export const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
 
 export type TextContent = { type: "text"; text: string };
@@ -50,11 +55,18 @@ let _cachedCdpProvider: CDPConnectionProvider | null = null;
  */
 export async function getMcpProvider(): Promise<ConnectionProvider> {
   // Step 1: Determine active account from CDP (authoritative source)
+  // Use cached email resolution if fresh enough (avoids opening a new CDP connection per tool call)
   let activeEmail: string | undefined;
-  try {
-    activeEmail = await resolveCurrentAccountViaCDP();
-  } catch {
-    // CDP unavailable — will fall through to best-effort below
+  if (_resolvedEmail && Date.now() - _resolvedEmailTs < RESOLVED_EMAIL_TTL_MS) {
+    activeEmail = _resolvedEmail;
+  } else {
+    try {
+      activeEmail = await resolveCurrentAccountViaCDP();
+      _resolvedEmail = activeEmail;
+      _resolvedEmailTs = Date.now();
+    } catch {
+      // CDP unavailable — will fall through to best-effort below
+    }
   }
 
   // Step 2: If we know the active account and have cached tokens, use them
@@ -121,7 +133,12 @@ export function invalidateCdpProvider(): void {
     _cachedCdpProvider.disconnect().catch(() => {});
     _cachedCdpProvider = null;
   }
-  _cachedCdpConn = null;
+  if (_cachedCdpConn) {
+    disconnect(_cachedCdpConn).catch(() => {});
+    _cachedCdpConn = null;
+  }
+  _resolvedEmail = null;
+  _resolvedEmailTs = 0;
 }
 
 // Cached raw CDP connection — reused by handlers that need Runtime.evaluate.

@@ -17,7 +17,7 @@ import {
 import { listAccounts } from "./accounts";
 
 /**
- * Account type detection result (matches send-api.ts AccountInfo)
+ * Account type detection result.
  */
 export interface AccountInfo {
   email: string;

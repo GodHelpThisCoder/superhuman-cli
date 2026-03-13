@@ -77,6 +77,16 @@ const _cliLog = createLogger("cli");
 const VERSION = APP_VERSION;
 const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
 
+/** Guard for CLI mutation commands — exits if the kill switch is active. */
+function guardCliMutation(): void {
+  const { killed, reason } = isKilled();
+  if (killed) {
+    error(`Kill switch active: ${reason || "All mutations suspended."}`);
+    error("Remove kill-switch file to resume, or run: superhuman unkill");
+    process.exit(1);
+  }
+}
+
 // Handle --verbose flag early, before subcommand parsing
 if (process.argv.includes("--verbose") || process.env.SUPERHUMAN_LOG_LEVEL === "debug") {
   setLogLevel("debug");
@@ -3647,27 +3657,33 @@ async function main() {
       break;
 
     case "reply":
+      guardCliMutation();
       await cmdReply(options);
       break;
 
     case "reply-all":
+      guardCliMutation();
       await cmdReplyAll(options);
       break;
 
     case "forward":
+      guardCliMutation();
       await cmdForward(options);
       break;
 
     case "archive":
+      guardCliMutation();
       await cmdArchive(options);
       break;
 
     case "delete":
+      guardCliMutation();
       await cmdDelete(options);
       break;
 
     // mark read|unread
     case "mark":
+      guardCliMutation();
       switch (options.subcommand) {
         case "read":
           await cmdMarkRead(options);
@@ -3684,6 +3700,9 @@ async function main() {
 
     // label list|get|add|remove
     case "label":
+      if (options.subcommand === "add" || options.subcommand === "remove") {
+        guardCliMutation();
+      }
       switch (options.subcommand) {
         case "list":
           await cmdLabels(options);
@@ -3706,6 +3725,9 @@ async function main() {
 
     // star add|remove|list
     case "star":
+      if (options.subcommand === "add" || options.subcommand === "remove") {
+        guardCliMutation();
+      }
       switch (options.subcommand) {
         case "add":
           await cmdStar(options);
@@ -3725,6 +3747,9 @@ async function main() {
 
     // snooze set|cancel|list
     case "snooze":
+      if (options.subcommand === "set" || options.subcommand === "cancel") {
+        guardCliMutation();
+      }
       switch (options.subcommand) {
         case "set":
           await cmdSnooze(options);
@@ -3760,6 +3785,9 @@ async function main() {
 
     // calendar list|create|update|delete|free
     case "calendar":
+      if (options.subcommand === "create" || options.subcommand === "update" || options.subcommand === "delete") {
+        guardCliMutation();
+      }
       switch (options.subcommand) {
         case "list":
         case "":
@@ -3798,11 +3826,15 @@ async function main() {
       break;
 
     case "ai":
+      guardCliMutation();
       await cmdAi(options);
       break;
 
     // snippet list|use
     case "snippet":
+      if (options.subcommand === "use") {
+        guardCliMutation();
+      }
       switch (options.subcommand) {
         case "list":
           await cmdSnippets(options);
@@ -3820,6 +3852,9 @@ async function main() {
 
     // draft create|update|delete|send
     case "draft":
+      if (options.subcommand !== "list") {
+        guardCliMutation();
+      }
       switch (options.subcommand) {
         case "create":
           await cmdDraft(options);
@@ -3844,6 +3879,7 @@ async function main() {
       break;
 
     case "send":
+      guardCliMutation();
       await cmdSend(options);
       break;
 
@@ -3868,6 +3904,9 @@ async function main() {
 
     // agent-session list|read|discard|restore
     case "agent-session":
+      if (options.subcommand === "discard" || options.subcommand === "restore") {
+        guardCliMutation();
+      }
       switch (options.subcommand) {
         case "list":
         case "":

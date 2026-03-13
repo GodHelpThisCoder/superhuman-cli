@@ -360,8 +360,8 @@ export async function connectToSuperhumanChrome(
 export async function disconnectChrome(
   conn: ChromeExtConnection
 ): Promise<void> {
-  await conn.swClient.close();
-  await conn.mainClient.close();
+  await conn.swClient.close().catch(() => {});
+  await conn.mainClient.close().catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
