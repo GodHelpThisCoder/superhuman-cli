@@ -24,7 +24,7 @@ function fmtContacts(contacts: Array<{ email: string; name: string }>): string {
 
 export const SearchSchema = z.object({
   query: z.string().describe("Search query string"),
-  limit: z.number().optional().describe("Maximum number of results to return (default: 10)"),
+  limit: z.number().int().min(1).max(50).optional().describe("Maximum number of results to return (1-50). Default: 10."),
 });
 
 export const InboxSchema = z.object({
