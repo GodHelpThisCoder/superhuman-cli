@@ -16,12 +16,12 @@ import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../co
 // Schemas
 // ---------------------------------------------------------------------------
 
-export const AccountsSchema = z.object({});
+export const AccountsSchema = z.object({}).strict();
 
 export const SwitchAccountSchema = z.object({
   account: z.string().describe("Account to switch to: either an email address or 1-based index number"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Handlers

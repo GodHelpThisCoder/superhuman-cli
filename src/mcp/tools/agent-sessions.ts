@@ -49,21 +49,21 @@ interface AgentSessionPayload {
 
 export const AgentSessionsSchema = z.object({
   include_discarded: z.boolean().optional().describe("Include discarded (soft-deleted) sessions in the list. Default: false."),
-});
+}).strict();
 
 export const AgentSessionReadSchema = z.object({
   sessionId: z.string().describe("The session UUID to read. Get session IDs from superhuman_agent_sessions."),
-});
+}).strict();
 
 export const AgentSessionDiscardSchema = z.object({
   sessionId: z.string().describe("The session UUID to discard. Get session IDs from superhuman_agent_sessions."),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const AgentSessionRestoreSchema = z.object({
   sessionId: z.string().describe("The session UUID to restore. Use superhuman_agent_sessions with include_discarded=true to find discarded session IDs."),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Helpers (exported for testing)
