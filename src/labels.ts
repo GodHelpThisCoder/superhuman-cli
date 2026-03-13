@@ -285,8 +285,8 @@ export async function listStarred(
       return Array.from(conversationIds).map((id) => ({ id }));
     } else {
       // Gmail: Search for starred messages
-      const threads = await searchGmailDirect(token, "is:starred", limit);
-      return threads.map((t) => ({ id: t.id }));
+      const result = await searchGmailDirect(token, "is:starred", limit);
+      return result.threads.map((t) => ({ id: t.id }));
     }
   } catch (e) {
     return [];

@@ -24,7 +24,7 @@ import {
   MSGRAPH_API_BASE,
 } from "./http-utils";
 
-import type { InboxThread } from "../inbox";
+import type { InboxThread, SearchResult } from "../inbox";
 import type { Contact } from "../contacts";
 import { createLogger } from "../logger";
 
@@ -274,7 +274,7 @@ export async function searchGmail(
   token: TokenInfo,
   query: string,
   limit: number = 10
-): Promise<InboxThread[]> {
+): Promise<SearchResult> {
   if (token.isMicrosoft) {
     return searchMSGraph(token, query, limit);
   }
@@ -284,8 +284,11 @@ export async function searchGmail(
   const searchResult = await gmailFetch(token.accessToken, searchPath) as GmailMessagesListResponse | null;
 
   if (!searchResult || !searchResult.messages || searchResult.messages.length === 0) {
-    return [];
+    return { threads: [], totalResults: searchResult?.resultSizeEstimate };
   }
+
+  // Capture totalResults from Gmail's resultSizeEstimate (approximate)
+  const totalResults = searchResult.resultSizeEstimate;
 
   // Step 2: Get unique thread IDs (multiple messages may belong to same thread)
   const threadIdSet = new Set(searchResult.messages.map(m => m.threadId));
@@ -331,7 +334,7 @@ export async function searchGmail(
     });
   }
 
-  return threads;
+  return { threads, totalResults };
 }
 
 /**
@@ -346,13 +349,13 @@ export async function searchMSGraph(
   token: TokenInfo,
   query: string,
   limit: number
-): Promise<InboxThread[]> {
+): Promise<SearchResult> {
   // MS Graph uses $search for full-text search
   const searchPath = `/me/messages?$search="${encodeURIComponent(query)}"&$top=${limit}&$select=id,conversationId,subject,from,receivedDateTime,bodyPreview`;
   const result = await msgraphFetch(token.accessToken, searchPath) as MSGraphMessagesResponse | null;
 
   if (!result || !result.value || result.value.length === 0) {
-    return [];
+    return { threads: [] };
   }
 
   // Group messages by conversationId (MS Graph's equivalent of threadId)
@@ -395,7 +398,8 @@ export async function searchMSGraph(
     }
   }
 
-  return threads;
+  // MS Graph doesn't provide a totalResults equivalent for $search
+  return { threads };
 }
 
 // ============================================================================
@@ -614,7 +618,8 @@ export async function listInbox(
     return threads;
   } else {
     // Gmail: Search for inbox messages
-    return searchGmail(token, "label:INBOX", limit);
+    const result = await searchGmail(token, "label:INBOX", limit);
+    return result.threads;
   }
 }
 
