@@ -138,7 +138,7 @@ function sanitizeMimeFilename(filename: string): string {
   return sanitizeMimeHeaderValue(filename).replace(/"/g, "");
 }
 
-function escapeODataStringLiteral(value: string): string {
+export function escapeODataStringLiteral(value: string): string {
   // Remove control chars and escape single quotes for OData string literals.
   return value.replace(/[\u0000-\u001F\u007F]/g, "").replace(/'/g, "''");
 }

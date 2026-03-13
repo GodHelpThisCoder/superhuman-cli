@@ -6,6 +6,7 @@
 
 import type { ConnectionProvider } from "./connection-provider";
 import { gmailFetch, msgraphFetch } from "./token-api";
+import { escapeODataStringLiteral } from "./api/gmail-client";
 import { createLogger } from "./logger";
 
 const log = createLogger("read");
@@ -140,7 +141,8 @@ async function readThreadMSGraph(
 
   // Try server-side filter first (handles threads beyond the top 50 messages)
   try {
-    const serverFilterPath = `/me/messages?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,body,conversationId&$filter=conversationId eq '${conversationId}'&$orderby=receivedDateTime asc`;
+    const safeConversationId = escapeODataStringLiteral(conversationId);
+    const serverFilterPath = `/me/messages?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,body,conversationId&$filter=conversationId eq '${safeConversationId}'&$orderby=receivedDateTime asc`;
     const result = await msgraphFetch(accessToken, serverFilterPath);
     if (result?.value) {
       messages = result.value;

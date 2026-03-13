@@ -346,7 +346,7 @@ describe("error handling", () => {
       await getCachedToken(token.email);
 
       expect(captured).toContain("warn-test@example.com");
-      expect(captured).toContain("superhuman auth");
+      expect(captured).toContain("superhuman account auth");
     } finally {
       console.error = originalError;
     }

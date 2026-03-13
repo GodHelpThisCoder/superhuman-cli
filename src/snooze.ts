@@ -9,6 +9,7 @@
 
 import type { SuperhumanTokenInfo, TokenInfo } from "./token-api";
 import { superhumanFetch, gmailFetch, msgraphFetch } from "./token-api";
+import { escapeODataStringLiteral } from "./api/gmail-client";
 import type { ConnectionProvider } from "./connection-provider";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "./logger";
@@ -190,14 +191,15 @@ export async function unsnoozeThreadDirect(
  */
 export async function listSnoozedDirect(
   token: SuperhumanTokenInfo,
-  limit: number = 50
+  limit: number = 50,
+  offset: number = 0
 ): Promise<SnoozedThread[]> {
   try {
     const result = await superhumanFetch(token.token, "/v3/userdata.getThreads", {
       method: "POST",
       body: JSON.stringify({
         filter: { type: "reminder" },
-        offset: 0,
+        offset,
         limit,
       }),
     });
@@ -261,7 +263,8 @@ async function getThreadMessageIds(
   if (token.isMicrosoft) {
     // MS Graph: search messages by conversationId (server-side filter first)
     try {
-      const result = await msgraphFetch(token.accessToken, `/me/messages?$select=id,conversationId&$filter=conversationId eq '${threadId}'`);
+      const safeThreadId = escapeODataStringLiteral(threadId);
+      const result = await msgraphFetch(token.accessToken, `/me/messages?$select=id,conversationId&$filter=conversationId eq '${safeThreadId}'`);
       if (result?.value?.length > 0) {
         return result.value.map((m: any) => m.id);
       }
@@ -344,10 +347,20 @@ export async function unsnoozeThreadViaProvider(
   };
 
   // Fetch snoozed threads to find reminder IDs.
-  // NOTE: Superhuman backend rejects limit > ~50 with HTTP 400,
-  // so we cap at 50 and paginate if needed.
+  // Superhuman backend rejects limit > ~50, so paginate in batches of 50.
   log.debug(`unsnooze token present: ${!!token.idToken}, email: ${token.email}`);
-  const snoozedThreads = await listSnoozedDirect(superhumanToken, 50);
+  let snoozedThreads: SnoozedThread[] = [];
+  let offset = 0;
+  const PAGE_SIZE = 50;
+  while (true) {
+    const page = await listSnoozedDirect(superhumanToken, PAGE_SIZE, offset);
+    snoozedThreads = snoozedThreads.concat(page);
+    // Stop if we got fewer than a full page, or if we've found all target thread IDs
+    if (page.length < PAGE_SIZE) break;
+    const allFound = threadIds.every(tid => snoozedThreads.some(st => st.id === tid));
+    if (allFound) break;
+    offset += PAGE_SIZE;
+  }
   const results: SnoozeResult[] = [];
 
   for (const threadId of threadIds) {

@@ -26,8 +26,8 @@ export const SUPERHUMAN_BACKEND_BASE = "https://mail.superhuman.com/~backend";
  * @param url     - Fully-qualified URL to fetch
  * @param token   - OAuth / backend access token
  * @param options - Additional {@link RequestInit} options (method, body, extra headers, etc.)
- * @returns Parsed JSON body, or `null` when the server responds with 401 (or 403
- *          for endpoints that use 403 as an auth-failure signal).
+ * @returns Parsed JSON body, or `null` when the server responds with 401.
+ *          Throws on 403 (permission denied).
  */
 export async function authFetch(
   url: string,
@@ -42,9 +42,16 @@ export async function authFetch(
     },
   });
 
-  // Return null on auth failure so the caller can refresh the token
-  if (response.status === 401 || response.status === 403) {
+  // Return null on 401 so the caller can refresh the token.
+  // 403 is treated as a real permission error for Gmail/Graph APIs.
+  if (response.status === 401) {
     return null;
+  }
+  if (response.status === 403) {
+    const errorText = await response.text().catch(() => "Forbidden");
+    throw new Error(
+      `API error 403 Forbidden — ${errorText}`,
+    );
   }
 
   if (response.status === 204) {

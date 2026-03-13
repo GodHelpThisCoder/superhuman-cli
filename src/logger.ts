@@ -88,7 +88,7 @@ async function writeToFile(line: string): Promise<void> {
   if (!_fileLoggingEnabled) return;
   try {
     const path = logFilePath();
-    // node:fs appendFile is atomic for small writes — intentional exception to Bun.file preference
+    // node:fs appendFile with O_APPEND avoids truncation races — intentional exception to Bun.file preference
     const { appendFile: fsAppend, stat: fsStat } = await import("node:fs/promises");
     try {
       const stats = await fsStat(path);
