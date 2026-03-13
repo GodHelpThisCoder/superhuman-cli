@@ -595,6 +595,9 @@ async function paginateSearchAll(
       }
     }
 
+    // Proactive cap: stop before wasting API calls on queries that will be rejected
+    if (allThreads.size >= 501) break;
+
     // If we got fewer than PAGE_SIZE, we've reached the end
     if (threads.length < PAGE_SIZE) break;
 
