@@ -33,11 +33,13 @@ export {
   ArchiveSchema, DeleteSchema, MarkReadSchema, MarkUnreadSchema,
   StarSchema, UnstarSchema, StarredSchema,
   SnoozeSchema, UnsnoozeSchema, SnoozedSchema,
+  ArchiveByQuerySchema,
 } from "./email-manage";
 export {
   archiveHandler, deleteHandler, markReadHandler, markUnreadHandler,
   starHandler, unstarHandler, starredHandler,
   snoozeHandler, unsnoozeHandler, snoozedHandler,
+  archiveByQueryHandler,
 } from "./email-manage";
 
 // Labels

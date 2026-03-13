@@ -15,7 +15,7 @@ export const AskAISchema = z.object({
   query: z.string().describe("Natural language query — search emails, ask questions, compose drafts, etc."),
   thread_id: z.string().optional().describe("Optional thread ID to ask about a specific email thread"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Handler

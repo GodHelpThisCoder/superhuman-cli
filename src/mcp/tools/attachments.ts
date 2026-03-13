@@ -13,14 +13,14 @@ import { successResult, errorResult, actionableError, getMcpProvider, type ToolR
 
 export const AttachmentsSchema = z.object({
   threadId: z.string().describe("The thread ID to list attachments for"),
-});
+}).strict();
 
 export const DownloadAttachmentSchema = z.object({
   messageId: z.string().describe("The message ID containing the attachment"),
   attachmentId: z.string().describe("The attachment ID to download"),
   threadId: z.string().optional().describe("The thread ID (optional, helps with some providers)"),
   mimeType: z.string().optional().describe("The MIME type of the attachment (optional)"),
-});
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Handlers

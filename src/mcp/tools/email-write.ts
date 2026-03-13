@@ -91,7 +91,7 @@ export const EmailSchema = z.object({
   bcc: z.string().optional().describe("BCC recipient email address(es). Comma-separated for multiple (optional)"),
   attachments: z.array(AttachmentInput).optional().describe("File attachments. Each has filename, base64 content, and optional mimeType."),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 /** Split a comma-separated email string into an array of trimmed addresses. */
 function splitEmails(s: string): string[] {
@@ -114,7 +114,7 @@ export const ReplySchema = z.object({
   send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
   attachments: z.array(AttachmentInput).optional().describe("File attachments. Each has filename, base64 content, and optional mimeType."),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const ReplyAllSchema = z.object({
   threadId: z.string().describe("Thread ID to reply-all to"),
@@ -122,7 +122,7 @@ export const ReplyAllSchema = z.object({
   send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
   attachments: z.array(AttachmentInput).optional().describe("File attachments. Each has filename, base64 content, and optional mimeType."),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const ForwardSchema = z.object({
   threadId: z.string().describe("Thread ID to forward"),
@@ -131,7 +131,7 @@ export const ForwardSchema = z.object({
   send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
   attachments: z.array(AttachmentInput).optional().describe("File attachments. Each has filename, base64 content, and optional mimeType."),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Handlers

@@ -11,23 +11,23 @@ import { successResult, errorResult, actionableError, getMcpProvider, guardMutat
 // Schemas
 // ---------------------------------------------------------------------------
 
-export const LabelsSchema = z.object({});
+export const LabelsSchema = z.object({}).strict();
 
 export const GetLabelsSchema = z.object({
   threadId: z.string().describe("The thread ID to get labels for"),
-});
+}).strict();
 
 export const AddLabelSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to add the label to"),
   labelId: z.string().describe("The label ID to add"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 export const RemoveLabelSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to remove the label from"),
   labelId: z.string().describe("The label ID to remove"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-});
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Handlers
