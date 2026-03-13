@@ -630,6 +630,9 @@ export async function archiveByQueryHandler(args: z.infer<typeof ArchiveByQueryS
   // not { query, dryRun } from the original call. Archive pre-resolved threadIds directly.
   if (isConfirmedExecution()) {
     const replayArgs = args as unknown as { threadIds: string[]; originalQuery: string };
+    if (!Array.isArray(replayArgs.threadIds) || replayArgs.threadIds.length === 0) {
+      return errorResult("Staged operation missing threadIds. Re-stage the archive_by_query operation.");
+    }
     const threadIds = replayArgs.threadIds;
 
     const killed = guardMutation("superhuman_archive_by_query", args as Record<string, unknown>);
