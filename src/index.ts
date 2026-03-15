@@ -35,6 +35,11 @@ if (isVerbose) setLogLevel("debug");
 const log = createLogger("launcher");
 
 if (isMcpMode) {
+  // Prevent unhandled CDP WebSocket errors from crashing the MCP server process
+  process.on("unhandledRejection", (err) => {
+    log.error("Unhandled rejection (kept alive):", err);
+  });
+
   // MCP server mode — linked lifecycle with Superhuman
   (async () => {
     await initFileLogging();

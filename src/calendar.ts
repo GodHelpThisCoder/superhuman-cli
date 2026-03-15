@@ -42,7 +42,6 @@ export type { FreeBusySlot, CreateEventInput, UpdateEventInput };
  */
 export interface FreeBusyResult {
   busy: FreeBusySlot[];
-  free: FreeBusySlot[];
 }
 
 /**
@@ -199,9 +198,9 @@ export async function getFreeBusy(
       options.calendarIds
     );
 
-    return { busy, free: [] };
+    return { busy };
   } catch (e: any) {
     log.error(`getFreeBusy error: ${e.message}`);
-    return { busy: [], free: [] };
+    return { busy: [] };
   }
 }

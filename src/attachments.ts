@@ -83,8 +83,6 @@ export async function downloadAttachment(
   provider: ConnectionProvider,
   messageId: string,
   attachmentId: string,
-  _threadId?: string, // Kept for backward compatibility
-  _mimeType?: string  // Kept for backward compatibility
 ): Promise<AttachmentContent> {
   const token = await provider.getToken();
   return downloadAttachmentDirect(token, messageId, attachmentId);
