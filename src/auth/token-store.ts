@@ -5,8 +5,8 @@
  * Tokens are encrypted at rest using AES-256-GCM with a machine-bound key.
  */
 
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypto";
-import { hostname, userInfo } from "os";
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { hostname, userInfo } from "node:os";
 import { chmodSync } from "node:fs";
 import type { TokenInfo, PersistedTokens, CDPConnection } from "./types";
 import { getConfigDir } from "../config";
@@ -242,48 +242,60 @@ export function getTokensFilePath(): string {
  * The file is chmod 600 (owner read/write only).
  * Called by the `auth` command after extracting tokens via CDP.
  */
+// Write serialization lock — prevents concurrent Bun.write calls from corrupting the token file
+let _diskWriteLock: Promise<void> = Promise.resolve();
+
 export async function saveTokensToDisk(): Promise<void> {
-  const { mkdir } = await import("node:fs/promises");
-  const configDir = getConfigDir();
-  const tokensFile = getTokensFile();
+  const prev = _diskWriteLock;
+  let resolve: () => void;
+  _diskWriteLock = new Promise((r) => { resolve = r; });
+  await prev;
 
-  await mkdir(configDir, { recursive: true });
-
-  const data: PersistedTokens = {
-    version: 1,
-    accounts: {},
-    lastUpdated: Date.now(),
-  };
-
-  // Convert in-memory cache to persisted format
-  for (const [email, token] of Array.from(tokenCache.entries())) {
-    data.accounts[email] = {
-      type: token.isMicrosoft ? "microsoft" : "google",
-      accessToken: token.accessToken,
-      expires: token.expires,
-      userId: token.userId,
-      refreshToken: token.refreshToken,
-      userPrefix: token.userPrefix,
-      clientId: token.clientId,
-      superhumanToken: token.idToken
-        ? {
-            token: token.idToken,
-            expires: token.idTokenExpires,
-          }
-        : undefined,
-    };
-  }
-
-  const plaintext = JSON.stringify(data, null, 2);
-  const ciphertext = encrypt(plaintext);
-
-  await Bun.write(tokensFile, ciphertext);
-
-  // Restrict file permissions to owner only (no-op on Windows but good practice)
   try {
-    chmodSync(tokensFile, 0o600);
-  } catch (error) {
-    log.warn(`chmod token file: ${error instanceof Error ? error.message : String(error)}`);
+    const { mkdir } = await import("node:fs/promises");
+    const configDir = getConfigDir();
+    const tokensFile = getTokensFile();
+
+    await mkdir(configDir, { recursive: true });
+
+    const data: PersistedTokens = {
+      version: 1,
+      accounts: {},
+      lastUpdated: Date.now(),
+    };
+
+    // Convert in-memory cache to persisted format
+    for (const [email, token] of Array.from(tokenCache.entries())) {
+      data.accounts[email] = {
+        type: token.isMicrosoft ? "microsoft" : "google",
+        accessToken: token.accessToken,
+        expires: token.expires,
+        userId: token.userId,
+        refreshToken: token.refreshToken,
+        userPrefix: token.userPrefix,
+        clientId: token.clientId,
+        superhumanToken: token.idToken
+          ? {
+              token: token.idToken,
+              expires: token.idTokenExpires,
+            }
+          : undefined,
+      };
+    }
+
+    const plaintext = JSON.stringify(data, null, 2);
+    const ciphertext = encrypt(plaintext);
+
+    await Bun.write(tokensFile, ciphertext);
+
+    // Restrict file permissions to owner only (no-op on Windows but good practice)
+    try {
+      chmodSync(tokensFile, 0o600);
+    } catch (error) {
+      log.warn(`chmod token file: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } finally {
+    resolve!();
   }
 }
 

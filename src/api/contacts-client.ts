@@ -65,7 +65,7 @@ export async function searchContacts(
       return [];
     }
 
-    const data = (await response.json()) as { results?: any[] };
+    const data = JSON.parse(await response.text()) as { results?: any[] };
 
     if (!data.results) {
       return [];

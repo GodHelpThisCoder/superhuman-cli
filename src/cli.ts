@@ -2696,8 +2696,6 @@ async function cmdDownload(options: CliOptions) {
         provider,
         att.messageId,
         att.attachmentId,
-        att.threadId,
-        att.mimeType
       );
       const outputPath = getSafeAttachmentOutputPath(resolvedOutputDir, att.name);
       await Bun.write(outputPath, Buffer.from(content.data, "base64"));
@@ -3512,7 +3510,7 @@ async function cmdCalendarFree(options: CliOptions) {
 async function cmdAgentSessionList(options: CliOptions) {
   const conn = await connectToSuperhuman(options.port);
   if (!conn) {
-    error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    error(`Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${options.port}`);
     process.exit(1);
   }
 
@@ -3536,7 +3534,7 @@ async function cmdAgentSessionRead(options: CliOptions) {
 
   const conn = await connectToSuperhuman(options.port);
   if (!conn) {
-    error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    error(`Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${options.port}`);
     process.exit(1);
   }
 
@@ -3562,7 +3560,7 @@ async function cmdAgentSessionDiscard(options: CliOptions) {
 
   const conn = await connectToSuperhuman(options.port);
   if (!conn) {
-    error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    error(`Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${options.port}`);
     process.exit(1);
   }
 
@@ -3588,7 +3586,7 @@ async function cmdAgentSessionRestore(options: CliOptions) {
 
   const conn = await connectToSuperhuman(options.port);
   if (!conn) {
-    error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    error(`Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${options.port}`);
     process.exit(1);
   }
 

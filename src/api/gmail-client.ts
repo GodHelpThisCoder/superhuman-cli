@@ -1368,7 +1368,7 @@ export async function listDrafts(
         const timestamp = dateHeader || new Date(parseInt(message.internalDate || "0")).toISOString();
 
         drafts.push({
-          id: message.id,
+          id: detailResult.id || draft.id,
           subject: getHeader("Subject") || "(no subject)",
           from,
           to,
@@ -1652,16 +1652,16 @@ export async function createReplyDraft(
 
     if (options?.replyAll) {
       // Include original sender plus all To/Cc (excluding self)
-      if (threadInfo.from && threadInfo.from !== token.email) {
+      if (threadInfo.from && threadInfo.from.toLowerCase() !== token.email.toLowerCase()) {
         to.push(threadInfo.from);
       }
       for (const email of threadInfo.to) {
-        if (email !== token.email && !to.includes(email)) {
+        if (email.toLowerCase() !== token.email.toLowerCase() && !to.includes(email)) {
           to.push(email);
         }
       }
       for (const email of threadInfo.cc) {
-        if (email !== token.email && !cc.includes(email)) {
+        if (email.toLowerCase() !== token.email.toLowerCase() && !cc.includes(email)) {
           cc.push(email);
         }
       }
@@ -1750,16 +1750,16 @@ export async function sendReply(
     const cc: string[] = options?.cc || [];
 
     if (options?.replyAll) {
-      if (threadInfo.from && threadInfo.from !== token.email) {
+      if (threadInfo.from && threadInfo.from.toLowerCase() !== token.email.toLowerCase()) {
         to.push(threadInfo.from);
       }
       for (const email of threadInfo.to) {
-        if (email !== token.email && !to.includes(email)) {
+        if (email.toLowerCase() !== token.email.toLowerCase() && !to.includes(email)) {
           to.push(email);
         }
       }
       for (const email of threadInfo.cc) {
-        if (email !== token.email && !cc.includes(email)) {
+        if (email.toLowerCase() !== token.email.toLowerCase() && !cc.includes(email)) {
           cc.push(email);
         }
       }

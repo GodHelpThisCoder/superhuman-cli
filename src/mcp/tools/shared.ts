@@ -28,6 +28,24 @@ let _resolvedEmail: string | null = null;
 let _resolvedEmailTs = 0;
 const RESOLVED_EMAIL_TTL_MS = 30_000; // 30 seconds
 
+// Mutex for CDP email resolution — coalesces concurrent calls onto one CDP connection
+// (same pattern as refreshWithLock in token-refresh.ts)
+let _resolveEmailPromise: Promise<string> | null = null;
+
+/**
+ * Resolve the active account email with mutex protection.
+ * If a resolution is already in flight (e.g. from parallel MCP tool calls),
+ * subsequent callers await the same promise instead of opening redundant
+ * CDP connections that can cause WebSocket instability.
+ */
+async function resolveEmailWithLock(): Promise<string> {
+  if (_resolveEmailPromise) return _resolveEmailPromise;
+  _resolveEmailPromise = resolveCurrentAccountViaCDP().finally(() => {
+    _resolveEmailPromise = null;
+  });
+  return _resolveEmailPromise;
+}
+
 export const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
 
 export type TextContent = { type: "text"; text: string };
@@ -61,11 +79,19 @@ export async function getMcpProvider(): Promise<ConnectionProvider> {
     activeEmail = _resolvedEmail;
   } else {
     try {
-      activeEmail = await resolveCurrentAccountViaCDP();
+      activeEmail = await resolveEmailWithLock();
       _resolvedEmail = activeEmail;
       _resolvedEmailTs = Date.now();
     } catch {
-      // CDP unavailable — will fall through to best-effort below
+      // Retry once after brief delay (transient CDP WebSocket drop)
+      try {
+        await new Promise(r => setTimeout(r, 500));
+        activeEmail = await resolveEmailWithLock();
+        _resolvedEmail = activeEmail;
+        _resolvedEmailTs = Date.now();
+      } catch {
+        // CDP truly unavailable — will fall through to best-effort below
+      }
     }
   }
 
@@ -115,16 +141,12 @@ export async function getMcpProvider(): Promise<ConnectionProvider> {
  * cached account from disk which may not match the active UI account.
  */
 export async function resolveCurrentAccountViaCDP(): Promise<string> {
-  const conn = await connectToSuperhuman(CDP_PORT);
-  if (!conn) throw new Error("Cannot connect to Superhuman via CDP");
-  try {
-    const accounts = await listAccounts(conn);
-    const current = accounts.find((a) => a.isCurrent);
-    if (!current) throw new Error("No current account found via CDP");
-    return current.email;
-  } finally {
-    await disconnect(conn);
-  }
+  const conn = await getCdpConnection();
+  const accounts = await listAccounts(conn);
+  const current = accounts.find((a) => a.isCurrent);
+  if (!current) throw new Error("No current account found via CDP");
+  return current.email;
+  // Don't disconnect — connection is cached for reuse by getCdpConnection()
 }
 
 /** Invalidate the cached CDP provider (called on connection errors). */

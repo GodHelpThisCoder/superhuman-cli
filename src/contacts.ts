@@ -25,12 +25,9 @@ export interface Contact {
  * Options for searching contacts.
  *
  * @property limit - Maximum number of contacts to return (default: 20)
- * @property includeTeamMembers - Whether to include team members in results (default: true)
- *                                Note: This option is not supported by direct API, kept for compatibility.
  */
 export interface SearchContactsOptions {
   limit?: number;
-  includeTeamMembers?: boolean;
 }
 
 /**

@@ -18,8 +18,6 @@ export const AttachmentsSchema = z.object({
 export const DownloadAttachmentSchema = z.object({
   messageId: z.string().describe("The message ID containing the attachment"),
   attachmentId: z.string().describe("The attachment ID to download"),
-  threadId: z.string().optional().describe("The thread ID (optional, helps with some providers)"),
-  mimeType: z.string().optional().describe("The MIME type of the attachment (optional)"),
 }).strict();
 
 // ---------------------------------------------------------------------------
@@ -56,12 +54,12 @@ export async function downloadAttachmentHandler(args: z.infer<typeof DownloadAtt
 
   try {
     provider = await getMcpProvider();
-    const content = await downloadAttachment(provider, args.messageId, args.attachmentId, args.threadId, args.mimeType);
+    const content = await downloadAttachment(provider, args.messageId, args.attachmentId);
 
     return successResult(JSON.stringify({
       data: content.data,
       size: content.size,
-      mimeType: args.mimeType || "application/octet-stream",
+      mimeType: "application/octet-stream",
     }));
   } catch (error) {
     return actionableError("Failed to download attachment", error);

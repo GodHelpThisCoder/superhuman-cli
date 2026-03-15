@@ -325,15 +325,11 @@ export function confirmOperation(
     );
   }
 
-  // Account binding check
+  // Account binding check — never consume token when account can't be verified
   if (op.account === "unknown" || currentAccount === "unknown") {
-    // Don't consume token when both accounts are unknown — allow retry
-    if (op.account !== "unknown" || currentAccount !== "unknown") {
-      staged.delete(token);
-    }
     throw new Error(
       `Account binding unavailable for token ${token}. ` +
-      `Re-stage the operation with a known active account.`
+      `Retry when CDP is available, or re-stage the operation.`
     );
   }
 

@@ -577,6 +577,8 @@ async function paginateSearchAll(
   const MAX_PAGES = 100; // safety: 5,000 threads max
   const allThreads = new Map<string, InboxThread>();
   let currentQuery = query;
+  const token = await provider.getToken();
+  const isMicrosoft = token.isMicrosoft;
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const { threads } = await searchInbox(provider, {
@@ -601,7 +603,10 @@ async function paginateSearchAll(
     // If we got fewer than PAGE_SIZE, we've reached the end
     if (threads.length < PAGE_SIZE) break;
 
-    // If no new threads, we're stuck in a loop
+    // If no new threads, we're stuck in a loop.
+    // Known limitation: if >50 threads share the exact same date, pagination
+    // will exit here because date-anchored "before:" returns the same set.
+    // This is rare in practice. A full fix would require Gmail's pageToken.
     if (newCount === 0) break;
 
     // Date-anchor: use the oldest thread's date as the "before:" boundary
@@ -612,12 +617,19 @@ async function paginateSearchAll(
 
     if (!oldestDate) break;
 
-    // Format as YYYY/MM/DD for Gmail query syntax
-    // Add 1 day because before: is exclusive — ensures same-day threads aren't skipped
+    // Format date filter per provider
+    // Add 1 day because before:/received< is exclusive — ensures same-day threads aren't skipped
     const d = new Date(oldestDate);
     d.setDate(d.getDate() + 1);
-    const dateStr = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
-    currentQuery = `${query} before:${dateStr}`;
+    if (isMicrosoft) {
+      // MS Graph KQL: received<YYYY-MM-DD
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      currentQuery = `${query} received<${dateStr}`;
+    } else {
+      // Gmail query syntax: before:YYYY/MM/DD
+      const dateStr = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+      currentQuery = `${query} before:${dateStr}`;
+    }
   }
 
   // Return sorted chronologically (oldest first)
