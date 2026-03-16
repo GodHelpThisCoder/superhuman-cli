@@ -6,7 +6,7 @@
  *
  * Usage:
  *   superhuman send --to <email> --subject <subject> --body <body>
- *   superhuman draft --to <email> --subject <subject> --body <body>
+ *   superhuman draft create --to <email> --subject <subject> --body <body>
  *   superhuman status
  */
 
@@ -22,7 +22,7 @@ import {
 } from "./superhuman-api";
 import { listInbox, searchInbox } from "./inbox";
 import { listAccounts, listAccountsChrome, switchAccount, type Account } from "./accounts";
-import { replyToThread, replyAllToThread, forwardThread } from "./reply";
+import { replyToThread, replyAllToThread, forwardThread, buildForwardBody } from "./reply";
 import { archiveThread, deleteThread } from "./archive";
 import { markAsRead, markAsUnread } from "./read-status";
 import { listLabels, getThreadLabels, addLabel, removeLabel, starThread, unstarThread, listStarred } from "./labels";
@@ -522,6 +522,16 @@ function parseArgs(args: string[]): CliOptions {
       }
       // Helper to increment by correct amount based on format
       const inc = usedEqualsFormat ? 1 : 2;
+
+      // Validate that flags requiring a value actually have one
+      if (!usedEqualsFormat && (value === undefined || value?.startsWith("--"))) {
+        const needsValue = ["to", "cc", "bcc", "subject", "body", "html", "port", "limit",
+          "account", "thread-id", "query", "calendar-id", "offset", "context", "snippet"];
+        if (needsValue.includes(key)) {
+          error(`--${key} requires a value`);
+          process.exit(1);
+        }
+      }
 
       switch (key) {
         case "to":
@@ -1702,11 +1712,16 @@ async function cmdRead(options: CliOptions) {
     process.exit(1);
   }
 
-  // Fast path: use cached credentials (no CDP needed) - same pattern as cmdReply
-  const token = await resolveSuperhumanToken(options.account);
+  // Fast path: use cached credentials (no CDP needed), fall back to CDP
+  let token = await resolveSuperhumanToken(options.account);
   if (!token) {
-    error("No cached credentials found. Run 'superhuman account auth' first.");
-    process.exit(1);
+    try {
+      const provider = await getProvider(options);
+      token = await provider.getToken();
+    } catch {
+      error("No cached credentials found. Run 'superhuman account auth' first, or ensure Superhuman is running for CDP fallback.");
+      process.exit(1);
+    }
   }
 
   let messages;
@@ -1907,6 +1922,11 @@ async function cmdReplyAll(options: CliOptions) {
         // Deduplicate recipients
         const uniqueRecipients = dedupeRecipientsPreserveCase(allRecipients);
 
+        if (uniqueRecipients.length === 0) {
+          error("No recipients for reply-all — you are the only participant in this thread");
+          process.exit(1);
+        }
+
         const result = await sendEmailDirect(token, {
           to: uniqueRecipients,
           subject,
@@ -1953,6 +1973,11 @@ async function cmdReplyAll(options: CliOptions) {
 
         // Deduplicate recipients
         const uniqueRecipients = dedupeRecipientsPreserveCase(allRecipients);
+
+        if (uniqueRecipients.length === 0) {
+          error("No recipients for reply-all — you are the only participant in this thread");
+          process.exit(1);
+        }
 
         const result = await createDraftWithUserInfo(userInfo, {
           to: uniqueRecipients,
@@ -2035,12 +2060,23 @@ async function cmdForward(options: CliOptions) {
           ? threadInfo.subject
           : `Fwd: ${threadInfo.subject}`;
 
+        // Fetch original messages to include in forwarded body
+        const fwdMessages = await getThreadMessages(token, options.threadId);
+        const lastMsg = fwdMessages.length > 0 ? fwdMessages[fwdMessages.length - 1] : null;
+        const forwardBody = buildForwardBody({
+          userHtml: body ? textToHtml(body) : "",
+          from: threadInfo.from || "unknown",
+          date: lastMsg?.date || new Date().toUTCString(),
+          subject: threadInfo.subject,
+          to: threadInfo.to?.join(", ") || "unknown",
+          originalBody: lastMsg?.body || "",
+        });
+
         const result = await sendEmailDirect(token, {
           to: options.to,
           subject,
-          body: textToHtml(body),
+          body: forwardBody,
           isHtml: true,
-          // Note: forwards don't need inReplyTo/references - they're new threads
         });
 
         if (result) {
@@ -2070,10 +2106,22 @@ async function cmdForward(options: CliOptions) {
           ? threadInfo.subject
           : `Fwd: ${threadInfo.subject}`;
 
+        // Fetch original messages to include in forwarded body
+        const fwdDraftMessages = await getThreadMessages(token, options.threadId);
+        const lastDraftMsg = fwdDraftMessages.length > 0 ? fwdDraftMessages[fwdDraftMessages.length - 1] : null;
+        const forwardDraftBody = buildForwardBody({
+          userHtml: body ? textToHtml(body) : "",
+          from: threadInfo.from || "unknown",
+          date: lastDraftMsg?.date || new Date().toUTCString(),
+          subject: threadInfo.subject,
+          to: threadInfo.to?.join(", ") || "unknown",
+          originalBody: lastDraftMsg?.body || "",
+        });
+
         const result = await createDraftWithUserInfo(userInfo, {
           to: options.to,
           subject,
-          body: textToHtml(body),
+          body: forwardDraftBody,
           action: "forward",
           inReplyToThreadId: options.threadId,
         });

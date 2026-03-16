@@ -189,7 +189,7 @@ async function msgraphFetchNextLink(accessToken: string, nextLink: string): Prom
   if (nextLink.startsWith(MSGRAPH_API_BASE)) {
     return msgraphFetch(accessToken, nextLink.slice(MSGRAPH_API_BASE.length));
   }
-  return authFetch(nextLink, accessToken);
+  throw new Error(`Untrusted nextLink URL rejected: ${nextLink}`);
 }
 
 async function fetchMsGraphConversationMessages(
@@ -1656,12 +1656,12 @@ export async function createReplyDraft(
         to.push(threadInfo.from);
       }
       for (const email of threadInfo.to) {
-        if (email.toLowerCase() !== token.email.toLowerCase() && !to.includes(email)) {
+        if (email.toLowerCase() !== token.email.toLowerCase() && !to.some(e => e.toLowerCase() === email.toLowerCase())) {
           to.push(email);
         }
       }
       for (const email of threadInfo.cc) {
-        if (email.toLowerCase() !== token.email.toLowerCase() && !cc.includes(email)) {
+        if (email.toLowerCase() !== token.email.toLowerCase() && !cc.some(e => e.toLowerCase() === email.toLowerCase())) {
           cc.push(email);
         }
       }
@@ -1724,7 +1724,7 @@ export async function sendReply(
     }
 
     // Send the draft
-    const sendPath = `/me/messages/${draftResult.draftId}/send`;
+    const sendPath = `/me/messages/${encodeURIComponent(draftResult.draftId)}/send`;
     const response = await fetch(`${MSGRAPH_API_BASE}${sendPath}`, {
       method: "POST",
       headers: {
@@ -1754,12 +1754,12 @@ export async function sendReply(
         to.push(threadInfo.from);
       }
       for (const email of threadInfo.to) {
-        if (email.toLowerCase() !== token.email.toLowerCase() && !to.includes(email)) {
+        if (email.toLowerCase() !== token.email.toLowerCase() && !to.some(e => e.toLowerCase() === email.toLowerCase())) {
           to.push(email);
         }
       }
       for (const email of threadInfo.cc) {
-        if (email.toLowerCase() !== token.email.toLowerCase() && !cc.includes(email)) {
+        if (email.toLowerCase() !== token.email.toLowerCase() && !cc.some(e => e.toLowerCase() === email.toLowerCase())) {
           cc.push(email);
         }
       }
@@ -1844,7 +1844,7 @@ export async function updateDraft(
       }));
     }
 
-    const result = await msgraphFetch(token.accessToken, `/me/messages/${draftId}`, {
+    const result = await msgraphFetch(token.accessToken, `/me/messages/${encodeURIComponent(draftId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updates),
@@ -1854,7 +1854,7 @@ export async function updateDraft(
     return { draftId: result.id, messageId: result.id };
   } else {
     // Gmail: GET existing draft, merge updates, PUT back
-    const existing = await gmailFetch(token.accessToken, `/drafts/${draftId}?format=full`);
+    const existing = await gmailFetch(token.accessToken, `/drafts/${encodeURIComponent(draftId)}?format=full`);
     if (!existing?.message) return null;
 
     const existingHeaders = existing.message.payload?.headers || [];
@@ -1910,7 +1910,7 @@ export async function updateDraft(
     }
 
     const result = await fetch(
-      `${GMAIL_API_BASE}/drafts/${draftId}`,
+      `${GMAIL_API_BASE}/drafts/${encodeURIComponent(draftId)}`,
       {
         method: "PUT",
         headers: {

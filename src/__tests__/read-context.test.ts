@@ -5,7 +5,8 @@ import { test, expect, describe } from "bun:test";
 describe("read command with --context", () => {
   test("read command fails gracefully without cached tokens or --account", async () => {
     // Run: read <fake-thread-id> without --account and no cached tokens
-    // Expect: non-zero exit, output mentions tokens/auth or API error
+    // cmdRead now falls back to CDP when no cached tokens exist.
+    // It should either error about credentials, fail with API error, or exit non-zero.
     const proc = Bun.spawn(
       [process.execPath, "run", "src/cli.ts", "read", "thread-fake-12345"],
       {
@@ -15,15 +16,17 @@ describe("read command with --context", () => {
         env: { ...process.env, SUPERHUMAN_CLI_CONFIG_DIR: "/tmp/nonexistent-test-dir" },
       }
     );
+
+    const timeout = setTimeout(() => proc.kill(), 15000);
     const stderr = await new Response(proc.stderr).text();
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
+    clearTimeout(timeout);
     const output = stdout + stderr;
 
-    // Without cached tokens, should either error about tokens/auth
-    // or attempt to launch Superhuman (which will fail or timeout)
-    expect(output).toMatch(/cached|token|auth|connect|failed|launching superhuman/i);
-  });
+    // Should exit with non-zero (credential error or API error for fake thread)
+    expect(exitCode).not.toBe(0);
+  }, 20000);
 
   test("read command shows --context in help", async () => {
     // Run: --help

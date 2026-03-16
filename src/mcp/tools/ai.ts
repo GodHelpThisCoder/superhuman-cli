@@ -32,7 +32,7 @@ export async function askAIHandler(args: z.infer<typeof AskAISchema>): Promise<T
   if (killed) return killed;
 
   try {
-    // Try CDP provider first (extracts idToken from running Superhuman), fall back to cached tokens
+    // Try cached tokens first, fall back to CDP provider for idToken
     let token = await resolveSuperhumanToken();
     if (!token?.idToken) {
       try {

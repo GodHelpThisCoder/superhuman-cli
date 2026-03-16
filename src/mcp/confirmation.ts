@@ -334,10 +334,10 @@ export function confirmOperation(
   }
 
   if (op.account !== currentAccount) {
-    staged.delete(token);
+    // Don't consume the token — let the user switch accounts and retry
     throw new Error(
       `Account mismatch: operation was staged for ${op.account} but ` +
-      `current account is ${currentAccount}. Stage the operation again.`
+      `current account is ${currentAccount}. Switch to the correct account and retry.`
     );
   }
 

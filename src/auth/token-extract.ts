@@ -132,7 +132,7 @@ export function selectBestToken(
   email: string
 ): string | null {
   // Filter to tokens for the target account
-  const forAccount = tokens.filter((t) => t.email === email || !t.email);
+  const forAccount = tokens.filter((t) => t.email?.toLowerCase() === email.toLowerCase() || !t.email);
 
   // Prefer token used on /~backend/ endpoints
   const backendToken = forAccount.find((t) => t.url.includes("/~backend/"));
@@ -440,7 +440,7 @@ export async function getSuperhumanToken(
 
   if (cached) {
     // Check if token is expired (if we have expiry info)
-    if (cached.expires) {
+    if (cached.expires != null) {
       const bufferMs = 5 * 60 * 1000; // 5 minutes
       if (cached.expires < Date.now() + bufferMs) {
         // Expired, fall through to extract fresh
