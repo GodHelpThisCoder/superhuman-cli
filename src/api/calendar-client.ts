@@ -295,7 +295,7 @@ export async function updateCalendarEvent(
     if (updates.attendees) msUpdates.attendees = toMsGraphAttendees(updates.attendees);
     if (updates.location) msUpdates.location = { displayName: updates.location };
 
-    const path = `/me/events/${eventId}`;
+    const path = `/me/events/${encodeURIComponent(eventId)}`;
     const result = await msgraphFetch(token.accessToken, path, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -306,7 +306,7 @@ export async function updateCalendarEvent(
   } else {
     // Google Calendar: Patch event - field names match directly
     const calId = calendarId || "primary";
-    const path = `/calendars/${encodeURIComponent(calId)}/events/${eventId}`;
+    const path = `/calendars/${encodeURIComponent(calId)}/events/${encodeURIComponent(eventId)}`;
     const result = await gcalFetch(token.accessToken, path, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -332,7 +332,7 @@ export async function deleteCalendarEvent(
 ): Promise<boolean> {
   if (token.isMicrosoft) {
     // MS Graph: Delete event
-    const path = `/me/events/${eventId}`;
+    const path = `/me/events/${encodeURIComponent(eventId)}`;
     const response = await fetch(`${MSGRAPH_API_BASE}${path}`, {
       method: "DELETE",
       headers: {
@@ -345,7 +345,7 @@ export async function deleteCalendarEvent(
   } else {
     // Google Calendar: Delete event
     const calId = calendarId || "primary";
-    const path = `/calendars/${encodeURIComponent(calId)}/events/${eventId}`;
+    const path = `/calendars/${encodeURIComponent(calId)}/events/${encodeURIComponent(eventId)}`;
     const result = await gcalFetch(token.accessToken, path, {
       method: "DELETE",
     });

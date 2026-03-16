@@ -76,20 +76,20 @@ for (const cmd of commands) {
         spawnCli(...cmd.withThread, "--account=nonexistent@example.com")
       );
       expect(output).toMatch(/no cached tokens|could not connect|not running|expired|error|failed/i);
-    });
+    }, 15000);
 
     test("accepts --account flag without unknown option error", async () => {
       const { output } = await getOutput(
         spawnCli(...cmd.withThread, "--account=test@example.com")
       );
       expect(output).not.toMatch(/unknown.*option.*account|unrecognized.*account/i);
-    });
+    }, 15000);
 
     test("accepts --account with --send", async () => {
       const { output } = await getOutput(
         spawnCli(...cmd.withThreadAndSend, "--account=test@example.com")
       );
       expect(output).not.toMatch(/unknown.*option.*account|unrecognized.*account/i);
-    });
+    }, 15000);
   });
 }

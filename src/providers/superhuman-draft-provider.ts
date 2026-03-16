@@ -124,13 +124,13 @@ export class SuperhumanDraftProvider implements IDraftProvider {
       this.token.email.split("@")[0] // Use email prefix as display name
     );
 
-    // 3. Merge updates with existing draft
+    // 3. Merge updates with existing draft (use undefined checks, not falsy)
     const mergedDraft = {
-      to: updates.to || existingDraft.to,
-      subject: updates.subject || existingDraft.subject,
-      body: updates.preview || existingDraft.preview, // preview maps to body
-      references: updates.references || existingDraft.references,
-      rfc822Id: updates.rfc822Id || existingDraft.rfc822Id,
+      to: updates.to !== undefined ? updates.to : existingDraft.to,
+      subject: updates.subject !== undefined ? updates.subject : existingDraft.subject,
+      body: updates.preview !== undefined ? updates.preview : existingDraft.preview, // preview maps to body
+      references: updates.references !== undefined ? updates.references : existingDraft.references,
+      rfc822Id: updates.rfc822Id !== undefined ? updates.rfc822Id : existingDraft.rfc822Id,
     };
 
     // 4. Use the threadId from the existing draft (critical for correct path!)

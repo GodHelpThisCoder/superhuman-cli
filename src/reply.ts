@@ -161,7 +161,7 @@ export async function forwardThread(
 /**
  * Build the forwarded message HTML body.
  */
-function buildForwardBody(opts: {
+export function buildForwardBody(opts: {
   userHtml: string;
   from: string;
   date: string;

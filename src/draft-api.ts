@@ -217,6 +217,53 @@ export async function createDraftDirect(
 }
 
 /**
+ * Fetch an existing draft's fields from the Superhuman backend.
+ * Returns the draft value object, or null if the draft is not found.
+ */
+async function fetchExistingDraft(
+  userInfo: UserInfo,
+  threadId: string,
+  draftId: string
+): Promise<Record<string, unknown> | null> {
+  try {
+    const response = await fetch(`${SUPERHUMAN_BACKEND}/v3/userdata.getThreads`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${userInfo.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        filter: { type: "draft" },
+        offset: 0,
+        limit: 50,
+      }),
+    });
+
+    if (!response.ok) return null;
+
+    const data = JSON.parse(await response.text()) as {
+      threadList?: Array<{
+        id: string;
+        thread: { messages: Record<string, { draft: Record<string, unknown> }> };
+      }>;
+    };
+
+    for (const thread of data.threadList || []) {
+      if (thread.id !== threadId) continue;
+      const messages = thread.thread?.messages || {};
+      for (const msg of Object.values(messages)) {
+        if (msg.draft?.id === draftId) {
+          return msg.draft;
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Update an existing draft
  */
 export async function updateDraftDirect(
@@ -229,33 +276,47 @@ export async function updateDraftDirect(
     const userInfo = await getUserInfo(conn);
     const now = new Date().toISOString();
 
+    // Fetch existing draft to merge only explicitly-provided fields
+    const existing = await fetchExistingDraft(userInfo, threadId, draftId);
+    const existingTo = (existing?.to as string[]) || [];
+    const existingCc = (existing?.cc as string[]) || [];
+    const existingBcc = (existing?.bcc as string[]) || [];
+    const existingSubject = (existing?.subject as string) || "";
+    const existingBody = (existing?.body as string) || "";
+
+    const to = options.to !== undefined ? options.to : existingTo;
+    const cc = options.cc !== undefined ? options.cc : existingCc;
+    const bcc = options.bcc !== undefined ? options.bcc : existingBcc;
+    const subject = options.subject !== undefined ? options.subject : existingSubject;
+    const body = options.body !== undefined ? options.body : existingBody;
+
     const draftValue = {
       id: draftId,
       threadId: threadId,
-      action: options.action || "compose",
+      action: options.action || (existing?.action as string) || "compose",
       name: null,
       from: `${userInfo.displayName || userInfo.email.split("@")[0]} <${userInfo.email}>`,
-      to: options.to || [],
-      cc: options.cc || [],
-      bcc: options.bcc || [],
-      subject: options.subject || "",
-      body: options.body || "",
-      snippet: (options.body || "").replace(/<[^>]*>/g, "").substring(0, 100),
-      inReplyToRfc822Id: options.inReplyToRfc822Id || null,
+      to,
+      cc,
+      bcc,
+      subject,
+      body,
+      snippet: body.replace(/<[^>]*>/g, "").substring(0, 100),
+      inReplyToRfc822Id: options.inReplyToRfc822Id || (existing?.inReplyToRfc822Id as string | null) || null,
       labelIds: ["DRAFT"],
       clientCreatedAt: now,
       date: now,
       fingerprint: {
-        to: (options.to || []).join(","),
-        cc: (options.cc || []).join(","),
+        to: to.join(","),
+        cc: cc.join(","),
         attachments: "",
       },
       lastSessionId: randomUUID(),
-      quotedContent: "",
-      quotedContentInlined: false,
-      references: options.references || [],
+      quotedContent: (existing?.quotedContent as string) || "",
+      quotedContentInlined: (existing?.quotedContentInlined as boolean) || false,
+      references: options.references !== undefined ? options.references : (existing?.references as string[]) || [],
       reminder: null,
-      rfc822Id: options.rfc822Id,
+      rfc822Id: options.rfc822Id || (existing?.rfc822Id as string | undefined),
       scheduledFor: null,
       scheduledReplyInterruptedAt: null,
       schemaVersion: 3,
@@ -360,39 +421,47 @@ export async function updateDraftWithUserInfo(
   try {
     const now = new Date().toISOString();
 
-    // Format recipients
-    const formatRecipients = (emails?: string[]): string[] => {
-      if (!emails || emails.length === 0) return [];
-      return emails;
-    };
+    // Fetch existing draft to merge only explicitly-provided fields
+    const existing = await fetchExistingDraft(userInfo, threadId, draftId);
+    const existingTo = (existing?.to as string[]) || [];
+    const existingCc = (existing?.cc as string[]) || [];
+    const existingBcc = (existing?.bcc as string[]) || [];
+    const existingSubject = (existing?.subject as string) || "";
+    const existingBody = (existing?.body as string) || "";
+
+    const to = options.to !== undefined ? options.to : existingTo;
+    const cc = options.cc !== undefined ? options.cc : existingCc;
+    const bcc = options.bcc !== undefined ? options.bcc : existingBcc;
+    const subject = options.subject !== undefined ? options.subject : existingSubject;
+    const body = options.body !== undefined ? options.body : existingBody;
 
     const draftValue = {
       id: draftId,
       threadId: threadId,
-      action: options.action || "compose",
+      action: options.action || (existing?.action as string) || "compose",
       name: null,
       from: `${userInfo.displayName || userInfo.email.split("@")[0]} <${userInfo.email}>`,
-      to: formatRecipients(options.to),
-      cc: formatRecipients(options.cc),
-      bcc: formatRecipients(options.bcc),
-      subject: options.subject || "",
-      body: options.body || "",
-      snippet: (options.body || "").replace(/<[^>]*>/g, "").substring(0, 100),
-      inReplyToRfc822Id: options.inReplyToRfc822Id || null,
+      to,
+      cc,
+      bcc,
+      subject,
+      body,
+      snippet: body.replace(/<[^>]*>/g, "").substring(0, 100),
+      inReplyToRfc822Id: options.inReplyToRfc822Id || (existing?.inReplyToRfc822Id as string | null) || null,
       labelIds: ["DRAFT"],
       clientCreatedAt: now,
       date: now,
       fingerprint: {
-        to: (options.to || []).join(","),
-        cc: (options.cc || []).join(","),
+        to: to.join(","),
+        cc: cc.join(","),
         attachments: "",
       },
       lastSessionId: randomUUID(),
-      quotedContent: "",
-      quotedContentInlined: false,
-      references: options.references || [],
+      quotedContent: (existing?.quotedContent as string) || "",
+      quotedContentInlined: (existing?.quotedContentInlined as boolean) || false,
+      references: options.references !== undefined ? options.references : (existing?.references as string[]) || [],
       reminder: null,
-      rfc822Id: options.rfc822Id,
+      rfc822Id: options.rfc822Id || (existing?.rfc822Id as string | undefined),
       scheduledFor: null,
       scheduledReplyInterruptedAt: null,
       schemaVersion: 3,

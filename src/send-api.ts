@@ -2,7 +2,7 @@
  * Send API Module
  *
  * Direct email sending via Gmail API and Microsoft Graph API.
- * Uses token-based API calls through token-api.ts (no CDP needed).
+ * Uses token-based API calls via api/gmail-client.ts and api/contacts-client.ts (no CDP needed).
  *
  * Gmail: Uses POST /gmail/v1/users/me/messages/send
  * Microsoft Graph: Uses POST /me/sendMail
