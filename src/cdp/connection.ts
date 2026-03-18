@@ -225,8 +225,13 @@ export async function connectToSuperhuman(
   }
 
   const client = await CDP({ target: mainPage.id, host, port });
-  await client.Page.enable();
-  await client.Network.enable().catch(() => {});
+  try {
+    await client.Page.enable();
+    await client.Network.enable().catch(() => {});
+  } catch (error) {
+    await client.close().catch(() => {});
+    throw error;
+  }
 
   let backgroundClient: CDP.Client | undefined;
   if (backgroundPage) {

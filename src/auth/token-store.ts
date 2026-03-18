@@ -8,7 +8,8 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { hostname, userInfo } from "node:os";
 import { chmodSync } from "node:fs";
-import type { TokenInfo, PersistedTokens, CDPConnection } from "./types";
+import type { TokenInfo, PersistedTokens } from "./types";
+import type { SuperhumanConnection } from "../cdp/connection";
 import { getConfigDir } from "../config";
 import { createLogger } from "../logger";
 
@@ -102,7 +103,7 @@ function getTokensFile(): string {
  * @returns TokenInfo from cache or freshly extracted
  */
 export async function getToken(
-  conn: CDPConnection,
+  conn: SuperhumanConnection,
   email: string,
 ): Promise<TokenInfo> {
   // Lazy-import to avoid circular dependency (token-extract imports setter helpers from this module)
@@ -123,7 +124,7 @@ export async function getToken(
   }
 
   // Extract fresh token
-  const token = await extractToken(conn as any, email);
+  const token = await extractToken(conn, email);
 
   // Cache it
   tokenCache.set(email, token);

@@ -71,6 +71,8 @@ function auditLogPath(): string {
 // Public API
 // ---------------------------------------------------------------------------
 
+let _rotating = false;
+
 /**
  * Append an audit entry to the log file. Fire-and-forget — never throws.
  */
@@ -85,9 +87,14 @@ export async function logAudit(entry: Omit<AuditEntry, "timestamp">): Promise<vo
     let shouldChmod = false;
     try {
       const stats = await fsStat(logPath);
-      if (stats.size > MAX_LOG_SIZE) {
-        await rename(logPath, `${logPath}.1`);
-        shouldChmod = true;
+      if (stats.size > MAX_LOG_SIZE && !_rotating) {
+        _rotating = true;
+        try {
+          await rename(logPath, `${logPath}.1`);
+          shouldChmod = true;
+        } finally {
+          _rotating = false;
+        }
       }
     } catch {
       shouldChmod = true; // File doesn't exist yet

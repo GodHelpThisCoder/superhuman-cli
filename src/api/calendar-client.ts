@@ -105,7 +105,7 @@ export async function listCalendarEvents(
       return [];
     }
 
-    const path = `/me/calendars/${calendarId}/calendarView?startDateTime=${encodeURIComponent(timeMin)}&endDateTime=${encodeURIComponent(timeMax)}&$top=${limit}&$orderby=start/dateTime`;
+    const path = `/me/calendars/${encodeURIComponent(calendarId)}/calendarView?startDateTime=${encodeURIComponent(timeMin)}&endDateTime=${encodeURIComponent(timeMax)}&$top=${limit}&$orderby=start/dateTime`;
     const result = await msgraphFetch(token.accessToken, path);
 
     if (!result || !result.value) {
@@ -225,7 +225,7 @@ export async function createCalendarEvent(
       isAllDay: !!event.start.date && !event.start.dateTime,
     };
 
-    const path = `/me/calendars/${calendarId}/events`;
+    const path = `/me/calendars/${encodeURIComponent(calendarId)}/events`;
     const result = await msgraphFetch(token.accessToken, path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -333,15 +333,8 @@ export async function deleteCalendarEvent(
   if (token.isMicrosoft) {
     // MS Graph: Delete event
     const path = `/me/events/${encodeURIComponent(eventId)}`;
-    const response = await fetch(`${MSGRAPH_API_BASE}${path}`, {
-      method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${token.accessToken}`,
-      },
-    });
-
-    // 204 No Content = success
-    return response.status === 204 || response.ok;
+    const result = await msgraphFetch(token.accessToken, path, { method: "DELETE" });
+    return result !== null;
   } else {
     // Google Calendar: Delete event
     const calId = calendarId || "primary";

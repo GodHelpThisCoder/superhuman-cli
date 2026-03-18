@@ -22,6 +22,7 @@ import { runMcpServer } from "./mcp/server";
 import { ensureSuperhuman, isSuperhumanRunning } from "./superhuman-api";
 import { setLogLevel, initFileLogging, createLogger } from "./logger";
 import { isUpdaterRunning } from "./update-awareness";
+import { APP_VERSION } from "./version";
 
 const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
 const HEALTH_CHECK_INTERVAL_MS = 30_000;
@@ -45,7 +46,7 @@ if (isMcpMode) {
     await initFileLogging();
 
     // Version log — verifiable proof that this code is running (not a stale process)
-    log.info("superhuman-cli v0.14.4 MCP server starting");
+    log.info(`superhuman-cli v${APP_VERSION} MCP server starting`);
 
     // Ensure Superhuman is running before we start accepting tool calls
     const launched = await ensureSuperhuman(CDP_PORT);

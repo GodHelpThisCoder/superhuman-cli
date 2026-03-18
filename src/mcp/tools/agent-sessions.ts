@@ -338,6 +338,23 @@ export async function agentSessionRestoreHandler(args: z.infer<typeof AgentSessi
       // Fall through with "unknown"
     }
 
+    // Two-phase: stage unless this is a confirmed execution
+    if (!isConfirmedExecution()) {
+      let title = args.sessionId;
+      try {
+        const session = await fetchSession(conn, args.sessionId);
+        title = session.title || args.sessionId;
+      } catch {
+        // Use sessionId as fallback
+      }
+
+      const preview = `Would restore agent session: "${title}" (ID: ${args.sessionId})`;
+      const token = stageOperation("superhuman_agent_session_restore", args as Record<string, unknown>, preview, account);
+      auditMutation("superhuman_agent_session_restore", args as Record<string, unknown>, account, successResult(preview), { action: "staged", durationMs: Math.round(performance.now() - _t0) });
+      return successResult(buildStagedResponse(preview, token));
+    }
+
+    // Confirmed execution
     await restoreSessionViaCDP(conn, args.sessionId);
 
     const toolResult = successResult(`Restored agent session ${args.sessionId}`);

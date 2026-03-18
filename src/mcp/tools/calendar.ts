@@ -162,6 +162,8 @@ export async function calendarCreateHandler(args: z.infer<typeof CalendarCreateS
     let endTime: Date;
     if (args.endTime) {
       endTime = new Date(args.endTime);
+    } else if (args.allDay) {
+      endTime = new Date(startTime.getTime() + 86_400_000); // +1 day for exclusive end
     } else {
       endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
     }

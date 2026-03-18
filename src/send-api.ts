@@ -35,7 +35,7 @@ export interface SendEmailOptions {
   subject: string;
   /** Email body (plain text or HTML) */
   body: string;
-  /** Whether the body is HTML (default: false, will be converted to HTML) */
+  /** Whether the body is HTML (default: true) */
   isHtml?: boolean;
   /** Thread ID for replies (optional) */
   threadId?: string;

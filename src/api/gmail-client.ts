@@ -1512,17 +1512,14 @@ export async function sendEmail(
       }));
     }
 
-    const response = await fetch(`${MSGRAPH_API_BASE}/me/sendMail`, {
+    const result = await msgraphFetch(token.accessToken, "/me/sendMail", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token.accessToken}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
     });
 
-    // sendMail returns 202 Accepted with no body on success
-    if (response.status === 202 || response.ok) {
+    // sendMail returns 202 Accepted with no body on success — authFetch returns { success: true } for 202/204
+    if (result !== null) {
       return { messageId: "sent", threadId: options.threadId };
     }
 
@@ -1725,15 +1722,12 @@ export async function sendReply(
 
     // Send the draft
     const sendPath = `/me/messages/${encodeURIComponent(draftResult.draftId)}/send`;
-    const response = await fetch(`${MSGRAPH_API_BASE}${sendPath}`, {
+    const result = await msgraphFetch(token.accessToken, sendPath, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token.accessToken}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
     });
 
-    if (response.status === 202 || response.ok) {
+    if (result !== null) {
       return { messageId: draftResult.draftId, threadId };
     }
 
@@ -1940,14 +1934,11 @@ export async function deleteDraft(
 ): Promise<boolean> {
   if (token.isMicrosoft) {
     // MS Graph: DELETE /me/messages/{id}
-    const response = await fetch(`${MSGRAPH_API_BASE}/me/messages/${draftId}`, {
+    const result = await msgraphFetch(token.accessToken, `/me/messages/${encodeURIComponent(draftId)}`, {
       method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${token.accessToken}`,
-      },
     });
 
-    return response.status === 204 || response.ok;
+    return result !== null;
   } else {
     // Gmail: DELETE /drafts/{id}
     const response = await fetch(`${GMAIL_API_BASE}/drafts/${draftId}`, {
@@ -1974,15 +1965,12 @@ export async function sendDraft(
 ): Promise<{ messageId: string; threadId?: string } | null> {
   if (token.isMicrosoft) {
     // MS Graph: POST /me/messages/{id}/send
-    const response = await fetch(`${MSGRAPH_API_BASE}/me/messages/${draftId}/send`, {
+    const result = await msgraphFetch(token.accessToken, `/me/messages/${encodeURIComponent(draftId)}/send`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token.accessToken}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
     });
 
-    if (response.status === 202 || response.ok) {
+    if (result !== null) {
       return { messageId: draftId };
     }
 
