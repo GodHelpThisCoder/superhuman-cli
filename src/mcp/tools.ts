@@ -2,9 +2,9 @@
  * Re-export shim — the original 1603-line monolith has been split into:
  *
  *   tools/shared.ts       — types, helpers (successResult, errorResult, getMcpProvider)
- *   tools/email-read.ts   — search, inbox, read
+ *   tools/email-read.ts   — search, inbox, read, sender-summary, collect-thread-ids
  *   tools/email-write.ts  — draft, send, reply, reply-all, forward
- *   tools/email-manage.ts — archive, archive-by-query, delete, mark read/unread, star, snooze
+ *   tools/email-manage.ts — archive, unarchive, archive-by-query, delete, mark read/unread, star, snooze
  *   tools/labels.ts       — list labels, get/add/remove label
  *   tools/attachments.ts  — list/download attachments
  *   tools/calendar.ts     — list/create/update/delete events, free/busy
@@ -30,9 +30,13 @@ export {
   SearchSchema,
   InboxSchema,
   ReadSchema,
+  SenderSummarySchema,
+  CollectThreadIdsSchema,
   searchHandler,
   inboxHandler,
   readHandler,
+  senderSummaryHandler,
+  collectThreadIdsHandler,
 
   // Email — write
   EmailSchema,
@@ -49,6 +53,7 @@ export {
 
   // Email — manage
   ArchiveSchema,
+  UnarchiveSchema,
   DeleteSchema,
   MarkReadSchema,
   MarkUnreadSchema,
@@ -60,6 +65,7 @@ export {
   SnoozedSchema,
   ArchiveByQuerySchema,
   archiveHandler,
+  unarchiveHandler,
   deleteHandler,
   archiveByQueryHandler,
   markReadHandler,

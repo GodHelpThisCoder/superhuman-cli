@@ -360,6 +360,8 @@ bun src/index.ts --mcp
 | `superhuman_inbox` | List recent emails from inbox |
 | `superhuman_search` | Search emails |
 | `superhuman_read` | Read a thread |
+| `superhuman_sender_summary` | Get unique senders matching a query, grouped by email with thread counts |
+| `superhuman_collect_thread_ids` | Collect all thread IDs matching a query via pagination |
 | `superhuman_draft` | Create an email draft (supports attachments) |
 | `superhuman_send` | Send an email (supports attachments) |
 | `superhuman_reply` | Reply to a thread (supports attachments) |
@@ -367,6 +369,7 @@ bun src/index.ts --mcp
 | `superhuman_forward` | Forward a thread (supports attachments) |
 | `superhuman_archive` | Archive thread(s) |
 | `superhuman_archive_by_query` | Archive all threads matching a search query |
+| `superhuman_unarchive` | Unarchive thread(s) (move back to inbox) |
 | `superhuman_delete` | Delete thread(s) |
 | `superhuman_mark_read` | Mark thread(s) as read |
 | `superhuman_mark_unread` | Mark thread(s) as unread |

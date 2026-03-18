@@ -6,6 +6,7 @@
 import { z } from "zod";
 import { archiveThread, deleteThread } from "../../archive";
 import { markAsRead, markAsUnread } from "../../read-status";
+import { addLabel } from "../../labels";
 import { starThread, unstarThread, listStarred } from "../../labels";
 import { parseSnoozeTime, snoozeThreadViaProvider, unsnoozeThreadViaProvider, listSnoozedViaProvider } from "../../snooze";
 import { searchInbox, type InboxThread } from "../../inbox";
@@ -19,6 +20,11 @@ import { isConfirmedExecution, stageOperation, buildStagedResponse, buildBatchPr
 
 export const ArchiveSchema = z.object({
   threadIds: z.array(z.string()).describe("Thread ID(s) to archive"),
+  dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
+}).strict();
+
+export const UnarchiveSchema = z.object({
+  threadIds: z.array(z.string()).describe("Thread ID(s) to unarchive (move back to inbox)"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 }).strict();
 
@@ -71,6 +77,7 @@ export const SnoozedSchema = z.object({
 
 export const ArchiveByQuerySchema = z.object({
   query: z.string().describe("Search query whose matching threads will be staged for archive. Run this query through superhuman_search first to verify what it matches."),
+  excludeThreadIds: z.array(z.string()).optional().describe("Thread IDs to exclude from archiving. Use to protect specific threads when bulk-archiving a sender."),
   dryRun: z.boolean().optional().describe("Preview what would be archived without staging. Returns matched threads and count."),
 }).strict();
 
@@ -134,6 +141,58 @@ export async function archiveHandler(args: z.infer<typeof ArchiveSchema>): Promi
   } catch (error) {
     const toolResult = actionableError("Failed to archive", error);
     auditMutation("superhuman_archive", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
+    return toolResult;
+  } finally {
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
+  }
+}
+
+export async function unarchiveHandler(args: z.infer<typeof UnarchiveSchema>): Promise<ToolResult> {
+  const _t0 = performance.now();
+  if (args.dryRun) {
+    auditDryRun("superhuman_unarchive", args as Record<string, unknown>, Math.round(performance.now() - _t0));
+    return successResult(`[DRY RUN] Would unarchive ${args.threadIds.length} thread(s) (move back to inbox)`);
+  }
+
+  const killed = guardMutation("superhuman_unarchive", args as Record<string, unknown>);
+  if (killed) return killed;
+
+  if (args.threadIds.length === 0) {
+    return errorResult("At least one thread ID is required");
+  }
+
+  let provider: ConnectionProvider | null = null;
+
+  try {
+    provider = await getMcpProvider();
+    const account = await provider.getCurrentEmail();
+    const results: { threadId: string; success: boolean }[] = [];
+
+    for (const threadId of args.threadIds) {
+      const result = await addLabel(provider, threadId, "INBOX");
+      results.push({ threadId, success: result.success });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    if (failed === 0) {
+      const toolResult = successResult(`Unarchived ${succeeded} thread(s) successfully (moved back to inbox)`);
+      auditMutation("superhuman_unarchive", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
+      return toolResult;
+    } else if (succeeded === 0) {
+      const toolResult = errorResult(`Failed to unarchive all ${failed} thread(s)`);
+      auditMutation("superhuman_unarchive", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
+      return toolResult;
+    } else {
+      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
+      const toolResult = successResult(`Unarchived ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
+      auditMutation("superhuman_unarchive", args as Record<string, unknown>, account, toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
+      return toolResult;
+    }
+  } catch (error) {
+    const toolResult = actionableError("Failed to unarchive", error);
+    auditMutation("superhuman_unarchive", args as Record<string, unknown>, "unknown", toolResult, { batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } finally {
     // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
@@ -568,10 +627,16 @@ export async function snoozedHandler(args: z.infer<typeof SnoozedSchema>): Promi
 /**
  * Collect ALL threads matching a query via date-anchored pagination.
  * Returns deduplicated threads in chronological order.
+ *
+ * @param provider - Connection provider
+ * @param query - Search query string
+ * @param maxThreads - Maximum threads to collect (default 501 for archive_by_query's >500 check)
  */
-async function paginateSearchAll(
+export async function paginateSearchAll(
   provider: ConnectionProvider,
   query: string,
+  maxThreads: number = 501,
+  includeDone: boolean = false,
 ): Promise<InboxThread[]> {
   const PAGE_SIZE = 50;
   const MAX_PAGES = 100; // safety: 5,000 threads max
@@ -584,7 +649,7 @@ async function paginateSearchAll(
     const { threads } = await searchInbox(provider, {
       query: currentQuery,
       limit: PAGE_SIZE,
-      includeDone: false, // inbox-only — archive_by_query targets unarchived threads
+      includeDone, // default false — archive_by_query targets unarchived threads
     });
 
     if (threads.length === 0) break;
@@ -597,8 +662,8 @@ async function paginateSearchAll(
       }
     }
 
-    // Proactive cap: stop before wasting API calls on queries that will be rejected
-    if (allThreads.size >= 501) break;
+    // Proactive cap: stop before wasting API calls
+    if (allThreads.size >= maxThreads) break;
 
     // If we got fewer than PAGE_SIZE, we've reached the end
     if (threads.length < PAGE_SIZE) break;
@@ -703,19 +768,26 @@ export async function archiveByQueryHandler(args: z.infer<typeof ArchiveByQueryS
     let provider: ConnectionProvider | null = null;
     try {
       provider = await getMcpProvider();
-      const threads = await paginateSearchAll(provider, args.query);
+      const allThreads = await paginateSearchAll(provider, args.query);
       auditDryRun("superhuman_archive_by_query", args as Record<string, unknown>, Math.round(performance.now() - _t0));
 
+      // Apply exclusion filter
+      const excludeSet = new Set(args.excludeThreadIds ?? []);
+      const threads = excludeSet.size > 0 ? allThreads.filter((t) => !excludeSet.has(t.id)) : allThreads;
+      const excludedCount = allThreads.length - threads.length;
+
       if (threads.length === 0) {
-        return successResult(`[DRY RUN] Query matched 0 threads: '${args.query}'. Verify the query returns results with superhuman_search first.`);
+        const excludeNote = excludedCount > 0 ? ` (${excludedCount} excluded)` : "";
+        return successResult(`[DRY RUN] Query matched ${allThreads.length} thread(s)${excludeNote}, 0 remaining: '${args.query}'. Verify the query returns results with superhuman_search first.`);
       }
 
       const preview = threads.slice(0, 20).map((t, i) =>
         `  ${i + 1}. ${t.id} — "${t.subject}" (from ${t.from.email || t.from.name}, ${t.date})`
       ).join("\n");
       const moreText = threads.length > 20 ? `\n  ... and ${threads.length - 20} more` : "";
+      const excludeNote = excludedCount > 0 ? ` (matched ${allThreads.length}, excluded ${excludedCount}, staging ${threads.length})` : "";
 
-      return successResult(`[DRY RUN] Query '${args.query}' matched ${threads.length} thread(s):\n${preview}${moreText}`);
+      return successResult(`[DRY RUN] Query '${args.query}' matched ${threads.length} thread(s)${excludeNote}:\n${preview}${moreText}`);
     } catch (error) {
       return actionableError("Archive-by-query dry run failed", error);
     } finally {
@@ -733,15 +805,22 @@ export async function archiveByQueryHandler(args: z.infer<typeof ArchiveByQueryS
     const account = await provider.getCurrentEmail();
 
     // Collect all matching threads via pagination
-    const threads = await paginateSearchAll(provider, args.query);
+    const allThreads = await paginateSearchAll(provider, args.query);
+
+    // Apply exclusion filter
+    const excludeSet = new Set(args.excludeThreadIds ?? []);
+    const threads = excludeSet.size > 0 ? allThreads.filter((t) => !excludeSet.has(t.id)) : allThreads;
+    const excludedCount = allThreads.length - threads.length;
 
     if (threads.length === 0) {
-      return errorResult(`Query matched 0 threads: '${args.query}'. Verify the query returns results with superhuman_search first.`);
+      const excludeNote = excludedCount > 0 ? ` (${excludedCount} excluded)` : "";
+      return errorResult(`Query matched ${allThreads.length} thread(s)${excludeNote}, 0 remaining: '${args.query}'. Verify the query returns results with superhuman_search first.`);
     }
 
     if (threads.length > 500) {
+      const excludeNote = excludedCount > 0 ? ` after ${excludedCount} exclusions` : "";
       return errorResult(
-        `Query matched ${threads.length} threads (>500). This is unusually large. ` +
+        `Query matched ${threads.length} threads (>500${excludeNote}). This is unusually large. ` +
         `Add date range or sender filters to narrow the query, or pass dryRun: true to preview matches.`
       );
     }
@@ -751,7 +830,8 @@ export async function archiveByQueryHandler(args: z.infer<typeof ArchiveByQueryS
     // Two-phase: stage unless this is a confirmed execution
     if (!isConfirmedExecution()) {
       const manifest = await buildManifest(provider, threadIds);
-      const preview = buildBatchPreview("archive", threadIds, manifest);
+      const excludeNote = excludedCount > 0 ? `\n\nNote: Matched ${allThreads.length}, excluded ${excludedCount}, staging ${threads.length}.` : "";
+      const preview = buildBatchPreview("archive", threadIds, manifest) + excludeNote;
       const token = stageOperation("superhuman_archive_by_query", { threadIds, originalQuery: args.query } as Record<string, unknown>, preview, account);
       auditMutation("superhuman_archive_by_query", args as Record<string, unknown>, account, successResult(preview), {
         action: "staged", batchSize: threadIds.length, durationMs: Math.round(performance.now() - _t0),
