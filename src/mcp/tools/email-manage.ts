@@ -818,8 +818,9 @@ export async function archiveByQueryHandler(args: z.infer<typeof ArchiveByQueryS
     }
 
     if (threads.length > 500) {
+      const excludeNote = excludedCount > 0 ? ` after ${excludedCount} exclusions` : "";
       return errorResult(
-        `Query matched ${threads.length} threads (>500 after ${excludedCount} exclusions). This is unusually large. ` +
+        `Query matched ${threads.length} threads (>500${excludeNote}). This is unusually large. ` +
         `Add date range or sender filters to narrow the query, or pass dryRun: true to preview matches.`
       );
     }
