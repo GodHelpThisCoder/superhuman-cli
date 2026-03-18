@@ -50,11 +50,13 @@ export const ReadSchema = z.object({
 export const SenderSummarySchema = z.object({
   query: z.string().describe("Search query to scan (e.g. 'in:inbox before:2024/01/01')"),
   limit: z.number().int().min(1).max(500).optional().describe("Max threads to scan internally (1-500, default 500)"),
+  includeDone: z.boolean().optional().describe("Search all mail including archived/done threads. Default: false (inbox only)."),
 }).strict();
 
 export const CollectThreadIdsSchema = z.object({
   query: z.string().describe("Search query to collect thread IDs for"),
   limit: z.number().int().min(1).max(500).optional().describe("Max threads to collect (1-500, default 500)"),
+  includeDone: z.boolean().optional().describe("Search all mail including archived/done threads. Default: false (inbox only)."),
 }).strict();
 
 // ---------------------------------------------------------------------------
@@ -151,14 +153,15 @@ export async function senderSummaryHandler(args: z.infer<typeof SenderSummarySch
   try {
     provider = await getMcpProvider();
     const maxThreads = args.limit ?? 500;
-    const threads = await paginateSearchAll(provider, args.query, maxThreads);
+    const includeDone = args.includeDone ?? false;
+    const threads = await paginateSearchAll(provider, args.query, maxThreads, includeDone);
 
     if (threads.length === 0) {
       return successResult(`No threads found for query: ${args.query}`);
     }
 
     // Get totalResults estimate from a quick search
-    const { totalResults } = await searchInbox(provider, { query: args.query, limit: 1 });
+    const { totalResults } = await searchInbox(provider, { query: args.query, limit: 1, includeDone });
 
     // Group by sender email
     const groups = new Map<string, { count: number; sampleSubject: string; oldestDate: string; newestDate: string }>();
@@ -222,10 +225,11 @@ export async function collectThreadIdsHandler(args: z.infer<typeof CollectThread
   try {
     provider = await getMcpProvider();
     const maxThreads = args.limit ?? 500;
-    const threads = await paginateSearchAll(provider, args.query, maxThreads);
+    const includeDone = args.includeDone ?? false;
+    const threads = await paginateSearchAll(provider, args.query, maxThreads, includeDone);
 
     // Get totalResults estimate from a quick search
-    const { totalResults } = await searchInbox(provider, { query: args.query, limit: 1 });
+    const { totalResults } = await searchInbox(provider, { query: args.query, limit: 1, includeDone });
 
     const threadIds = threads.map((t) => t.id);
     const totalCollected = threadIds.length;

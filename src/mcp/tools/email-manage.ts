@@ -646,6 +646,7 @@ export async function paginateSearchAll(
   provider: ConnectionProvider,
   query: string,
   maxThreads: number = 501,
+  includeDone: boolean = false,
 ): Promise<InboxThread[]> {
   const PAGE_SIZE = 50;
   const MAX_PAGES = 100; // safety: 5,000 threads max
@@ -658,7 +659,7 @@ export async function paginateSearchAll(
     const { threads } = await searchInbox(provider, {
       query: currentQuery,
       limit: PAGE_SIZE,
-      includeDone: false, // inbox-only — archive_by_query targets unarchived threads
+      includeDone, // default false — archive_by_query targets unarchived threads
     });
 
     if (threads.length === 0) break;
