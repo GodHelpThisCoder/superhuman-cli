@@ -44,6 +44,9 @@ if (isMcpMode) {
   (async () => {
     await initFileLogging();
 
+    // Version log — verifiable proof that this code is running (not a stale process)
+    log.info("superhuman-cli v0.14.4 MCP server starting");
+
     // Ensure Superhuman is running before we start accepting tool calls
     const launched = await ensureSuperhuman(CDP_PORT);
     if (!launched) {
