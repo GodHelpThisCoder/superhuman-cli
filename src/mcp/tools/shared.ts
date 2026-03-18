@@ -46,6 +46,15 @@ async function resolveEmailWithLock(): Promise<string> {
   return _resolveEmailPromise;
 }
 
+/**
+ * Warm the resolved-email cache so subsequent parallel tool calls skip CDP.
+ * Called by accountsHandler after listing accounts from CDP.
+ */
+export function warmResolvedEmailCache(email: string): void {
+  _resolvedEmail = email;
+  _resolvedEmailTs = Date.now();
+}
+
 export const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
 
 export type TextContent = { type: "text"; text: string };
@@ -99,6 +108,12 @@ export async function getMcpProvider(): Promise<ConnectionProvider> {
   if (activeEmail) {
     const tokenProvider = await resolveProvider({ account: activeEmail, port: CDP_PORT });
     if (tokenProvider) return tokenProvider;
+    // Token was found but expired and couldn't be refreshed — fail fast
+    // instead of falling through to slow CDP extraction that can hang
+    throw new Error(
+      `Token for ${activeEmail} expired and could not be refreshed. ` +
+      `Restart Superhuman to re-authenticate, then retry.`
+    );
   }
 
   // Step 3: Fall back to any cached tokens (single-account or CDP unavailable)
@@ -107,31 +122,46 @@ export async function getMcpProvider(): Promise<ConnectionProvider> {
     if (tokenProvider) return tokenProvider;
   }
 
-  // Step 4: No cached tokens — use CDP connection provider directly
-  if (_cachedCdpProvider) {
-    try {
-      await _cachedCdpProvider.getCurrentEmail();
-      return _cachedCdpProvider;
-    } catch {
-      try { await _cachedCdpProvider.disconnect(); } catch { /* ignore */ }
-      _cachedCdpProvider = null;
-    }
-  }
+  // Step 4: No cached tokens at all — use CDP connection provider directly.
+  // This path is for initial setup only (no tokens on disk yet).
+  // Wrapped in a 15-second timeout to prevent indefinite hangs.
+  const CDP_FALLBACK_TIMEOUT_MS = 15_000;
 
-  let conn = await connectToSuperhuman(CDP_PORT);
-  if (!conn) {
-    log.warn("Superhuman not available, attempting launch...");
-    await ensureSuperhuman(CDP_PORT);
-    await new Promise(r => setTimeout(r, 3000));
-    conn = await connectToSuperhuman(CDP_PORT, false);
-  }
-  if (!conn) {
-    throw new Error(
-      `Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${CDP_PORT}`
-    );
-  }
-  _cachedCdpProvider = new CDPConnectionProvider(conn);
-  return _cachedCdpProvider;
+  const cdpFallback = async (): Promise<ConnectionProvider> => {
+    if (_cachedCdpProvider) {
+      try {
+        await _cachedCdpProvider.getCurrentEmail();
+        return _cachedCdpProvider;
+      } catch {
+        try { await _cachedCdpProvider.disconnect(); } catch { /* ignore */ }
+        _cachedCdpProvider = null;
+      }
+    }
+
+    let conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      log.warn("Superhuman not available, attempting launch...");
+      await ensureSuperhuman(CDP_PORT);
+      await new Promise(r => setTimeout(r, 3000));
+      conn = await connectToSuperhuman(CDP_PORT, false);
+    }
+    if (!conn) {
+      throw new Error(
+        `Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${CDP_PORT}`
+      );
+    }
+    _cachedCdpProvider = new CDPConnectionProvider(conn);
+    return _cachedCdpProvider;
+  };
+
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(
+      `CDP fallback timed out after ${CDP_FALLBACK_TIMEOUT_MS / 1000}s. ` +
+      `Restart Superhuman to refresh tokens, then retry.`
+    )), CDP_FALLBACK_TIMEOUT_MS)
+  );
+
+  return Promise.race([cdpFallback(), timeout]);
 }
 
 /**
@@ -166,12 +196,17 @@ export function invalidateCdpProvider(): void {
 // Cached raw CDP connection — reused by handlers that need Runtime.evaluate.
 let _cachedCdpConn: SuperhumanConnection | null = null;
 
+// Mutex for getCdpConnection — prevents concurrent connection creation
+let _cdpConnPromise: Promise<SuperhumanConnection> | null = null;
+
 /**
  * Get a cached raw CDP connection for handlers that need Runtime.evaluate
  * (e.g., agent sessions). Includes auto-launch and connection validation.
  * Do NOT disconnect the returned connection — it is cached for reuse.
+ * Uses mutex to prevent concurrent connection creation under parallel load.
  */
 export async function getCdpConnection(): Promise<SuperhumanConnection> {
+  // Fast path: reuse cached connection if healthy
   if (_cachedCdpConn) {
     try {
       await _cachedCdpConn.Runtime.evaluate({ expression: "1", returnByValue: true });
@@ -180,20 +215,27 @@ export async function getCdpConnection(): Promise<SuperhumanConnection> {
       _cachedCdpConn = null;
     }
   }
-  let conn = await connectToSuperhuman(CDP_PORT);
-  if (!conn) {
-    log.warn("Superhuman not available, attempting launch...");
-    await ensureSuperhuman(CDP_PORT);
-    await new Promise(r => setTimeout(r, 3000));
-    conn = await connectToSuperhuman(CDP_PORT, false);
-  }
-  if (!conn) {
-    throw new Error(
-      `Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${CDP_PORT}`
-    );
-  }
-  _cachedCdpConn = conn;
-  return conn;
+  // Coalesce concurrent connection attempts onto one promise
+  if (_cdpConnPromise) return _cdpConnPromise;
+  _cdpConnPromise = (async () => {
+    let conn = await connectToSuperhuman(CDP_PORT);
+    if (!conn) {
+      log.warn("Superhuman not available, attempting launch...");
+      await ensureSuperhuman(CDP_PORT);
+      await new Promise(r => setTimeout(r, 3000));
+      conn = await connectToSuperhuman(CDP_PORT, false);
+    }
+    if (!conn) {
+      throw new Error(
+        `Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${CDP_PORT}`
+      );
+    }
+    _cachedCdpConn = conn;
+    return conn;
+  })().finally(() => {
+    _cdpConnPromise = null;
+  });
+  return _cdpConnPromise;
 }
 
 /**

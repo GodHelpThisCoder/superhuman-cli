@@ -9,7 +9,7 @@ import {
   type SuperhumanConnection,
 } from "../../superhuman-api";
 import { listAccounts, switchAccount } from "../../accounts";
-import { successResult, errorResult, actionableError, resolveCurrentAccountViaCDP, guardMutation, auditMutation, auditDryRun, CDP_PORT, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, resolveCurrentAccountViaCDP, guardMutation, auditMutation, auditDryRun, warmResolvedEmailCache, CDP_PORT, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -37,6 +37,13 @@ export async function accountsHandler(_args: z.infer<typeof AccountsSchema>): Pr
     }
 
     const accounts = await listAccounts(conn);
+
+    // Warm the resolved-email cache so subsequent parallel tool calls
+    // (e.g. 4 concurrent searches) skip CDP resolution entirely
+    const current = accounts.find((a) => a.isCurrent);
+    if (current) {
+      warmResolvedEmailCache(current.email);
+    }
 
     if (accounts.length === 0) {
       return successResult("No linked accounts found");
