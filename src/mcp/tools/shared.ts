@@ -9,12 +9,13 @@ import {
   type SuperhumanConnection,
 } from "../../superhuman-api";
 import { listAccounts } from "../../accounts";
-import { CDPConnectionProvider, resolveProvider, type ConnectionProvider } from "../../connection-provider";
+import { CachedTokenProvider, CDPConnectionProvider, resolveProvider, type ConnectionProvider } from "../../connection-provider";
 import {
   loadTokensFromDisk,
   getCachedToken,
   getCachedAccounts,
   hasCachedSuperhumanCredentials,
+  getToken,
   type TokenInfo,
 } from "../../token-api";
 import { isKilled } from "../../kill-switch";
@@ -108,12 +109,30 @@ export async function getMcpProvider(): Promise<ConnectionProvider> {
   if (activeEmail) {
     const tokenProvider = await resolveProvider({ account: activeEmail, port: CDP_PORT });
     if (tokenProvider) return tokenProvider;
-    // Token was found but expired and couldn't be refreshed — fail fast
-    // instead of falling through to slow CDP extraction that can hang
-    throw new Error(
-      `Token for ${activeEmail} expired and could not be refreshed. ` +
-      `Restart Superhuman to re-authenticate, then retry.`
-    );
+
+    // Token expired and HTTP refresh failed — re-extract from CDP.
+    // Superhuman's renderer always has a valid Google session, so we can
+    // pull a fresh access token via Runtime.evaluate (same as `account auth`).
+    log.info(`Token for ${activeEmail} expired, re-extracting from CDP...`);
+    try {
+      const conn = await getCdpConnection();
+      const freshToken = await Promise.race([
+        getToken(conn, activeEmail),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("CDP token extraction timed out")), 15_000)
+        ),
+      ]);
+      if (freshToken) {
+        log.info(`Token for ${activeEmail} refreshed successfully via CDP`);
+        return new CachedTokenProvider(activeEmail);
+      }
+    } catch (err) {
+      log.warn(`CDP token re-extraction failed for ${activeEmail}:`, err);
+      throw new Error(
+        `Token for ${activeEmail} expired and could not be refreshed (HTTP refresh failed, ` +
+        `CDP extraction failed). Restart Superhuman to re-authenticate, then retry.`
+      );
+    }
   }
 
   // Step 3: Fall back to any cached tokens (single-account or CDP unavailable)
