@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect, beforeEach } from "bun:test";
-import { SearchSchema } from "../mcp/tools/email-read";
-import { ArchiveByQuerySchema } from "../mcp/tools/email-manage";
+import { SearchSchema, SenderSummarySchema, CollectThreadIdsSchema } from "../mcp/tools/email-read";
+import { ArchiveByQuerySchema, UnarchiveSchema } from "../mcp/tools/email-manage";
 import {
   extractRootDomain,
   buildBatchPreview,
@@ -284,5 +284,185 @@ describe("archive_by_query staging flow", () => {
     expect(confirmedInside).toBe(true);
     // Outside withConfirmation, it should be false again
     expect(isConfirmedExecution()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UnarchiveSchema validation
+// ---------------------------------------------------------------------------
+
+describe("UnarchiveSchema", () => {
+  it("accepts threadIds only", () => {
+    const result = UnarchiveSchema.safeParse({ threadIds: ["t1", "t2"] });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts threadIds with dryRun", () => {
+    const result = UnarchiveSchema.safeParse({ threadIds: ["t1"], dryRun: true });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects missing threadIds", () => {
+    expect(UnarchiveSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("rejects unknown properties (strict mode)", () => {
+    expect(UnarchiveSchema.safeParse({ threadIds: ["t1"], extra: true }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ArchiveByQuerySchema with excludeThreadIds
+// ---------------------------------------------------------------------------
+
+describe("ArchiveByQuerySchema with excludeThreadIds", () => {
+  it("accepts query with excludeThreadIds", () => {
+    const result = ArchiveByQuerySchema.safeParse({
+      query: "from:test@example.com",
+      excludeThreadIds: ["t1", "t2"],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts query without excludeThreadIds (optional)", () => {
+    const result = ArchiveByQuerySchema.safeParse({ query: "from:test@example.com" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.excludeThreadIds).toBeUndefined();
+    }
+  });
+
+  it("accepts empty excludeThreadIds array", () => {
+    const result = ArchiveByQuerySchema.safeParse({
+      query: "from:test@example.com",
+      excludeThreadIds: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects non-array excludeThreadIds", () => {
+    expect(ArchiveByQuerySchema.safeParse({
+      query: "from:test@example.com",
+      excludeThreadIds: "not-an-array",
+    }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SearchSchema with includeDone
+// ---------------------------------------------------------------------------
+
+describe("SearchSchema with includeDone", () => {
+  it("accepts includeDone: true", () => {
+    const result = SearchSchema.safeParse({ query: "test", includeDone: true });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.includeDone).toBe(true);
+    }
+  });
+
+  it("accepts includeDone: false", () => {
+    const result = SearchSchema.safeParse({ query: "test", includeDone: false });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts without includeDone (optional, defaults to undefined)", () => {
+    const result = SearchSchema.safeParse({ query: "test" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.includeDone).toBeUndefined();
+    }
+  });
+
+  it("still rejects unknown properties (strict mode)", () => {
+    expect(SearchSchema.safeParse({ query: "test", includeDone: true, bogus: 1 }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SenderSummarySchema validation
+// ---------------------------------------------------------------------------
+
+describe("SenderSummarySchema", () => {
+  it("accepts query only (limit defaults to undefined)", () => {
+    const result = SenderSummarySchema.safeParse({ query: "in:inbox before:2024/01/01" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.limit).toBeUndefined();
+    }
+  });
+
+  it("accepts query with limit", () => {
+    const result = SenderSummarySchema.safeParse({ query: "in:inbox", limit: 100 });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts limit at boundaries (1 and 500)", () => {
+    expect(SenderSummarySchema.safeParse({ query: "test", limit: 1 }).success).toBe(true);
+    expect(SenderSummarySchema.safeParse({ query: "test", limit: 500 }).success).toBe(true);
+  });
+
+  it("rejects limit above 500", () => {
+    expect(SenderSummarySchema.safeParse({ query: "test", limit: 501 }).success).toBe(false);
+  });
+
+  it("rejects limit below 1", () => {
+    expect(SenderSummarySchema.safeParse({ query: "test", limit: 0 }).success).toBe(false);
+  });
+
+  it("rejects non-integer limit", () => {
+    expect(SenderSummarySchema.safeParse({ query: "test", limit: 10.5 }).success).toBe(false);
+  });
+
+  it("rejects missing query", () => {
+    expect(SenderSummarySchema.safeParse({}).success).toBe(false);
+  });
+
+  it("rejects unknown properties (strict mode)", () => {
+    expect(SenderSummarySchema.safeParse({ query: "test", unknownProp: "foo" }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CollectThreadIdsSchema validation
+// ---------------------------------------------------------------------------
+
+describe("CollectThreadIdsSchema", () => {
+  it("accepts query only (limit defaults to undefined)", () => {
+    const result = CollectThreadIdsSchema.safeParse({ query: "from:test@example.com" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.limit).toBeUndefined();
+    }
+  });
+
+  it("accepts query with limit", () => {
+    const result = CollectThreadIdsSchema.safeParse({ query: "in:inbox", limit: 250 });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts limit at boundaries (1 and 500)", () => {
+    expect(CollectThreadIdsSchema.safeParse({ query: "test", limit: 1 }).success).toBe(true);
+    expect(CollectThreadIdsSchema.safeParse({ query: "test", limit: 500 }).success).toBe(true);
+  });
+
+  it("rejects limit above 500", () => {
+    expect(CollectThreadIdsSchema.safeParse({ query: "test", limit: 501 }).success).toBe(false);
+  });
+
+  it("rejects limit below 1", () => {
+    expect(CollectThreadIdsSchema.safeParse({ query: "test", limit: 0 }).success).toBe(false);
+  });
+
+  it("rejects non-integer limit", () => {
+    expect(CollectThreadIdsSchema.safeParse({ query: "test", limit: 10.5 }).success).toBe(false);
+  });
+
+  it("rejects missing query", () => {
+    expect(CollectThreadIdsSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("rejects unknown properties (strict mode)", () => {
+    expect(CollectThreadIdsSchema.safeParse({ query: "test", extra: 42 }).success).toBe(false);
   });
 });

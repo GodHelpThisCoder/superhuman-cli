@@ -8,16 +8,18 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   DraftSchema, SendSchema, SearchSchema, InboxSchema, ReadSchema,
+  SenderSummarySchema, CollectThreadIdsSchema,
   AccountsSchema, SwitchAccountSchema, ReplySchema, ReplyAllSchema, ForwardSchema,
-  ArchiveSchema, DeleteSchema, ArchiveByQuerySchema,
+  ArchiveSchema, UnarchiveSchema, DeleteSchema, ArchiveByQuerySchema,
   MarkReadSchema, MarkUnreadSchema, LabelsSchema, GetLabelsSchema, AddLabelSchema, RemoveLabelSchema,
   StarSchema, UnstarSchema, StarredSchema,
   SnoozeSchema, UnsnoozeSchema, SnoozedSchema,
   AttachmentsSchema, DownloadAttachmentSchema,
   CalendarListSchema, CalendarCreateSchema, CalendarUpdateSchema, CalendarDeleteSchema, CalendarFreeBusySchema,
   draftHandler, sendHandler, searchHandler, inboxHandler, readHandler,
+  senderSummaryHandler, collectThreadIdsHandler,
   accountsHandler, switchAccountHandler, replyHandler, replyAllHandler, forwardHandler,
-  archiveHandler, deleteHandler, archiveByQueryHandler,
+  archiveHandler, unarchiveHandler, deleteHandler, archiveByQueryHandler,
   markReadHandler, markUnreadHandler, labelsHandler, getLabelsHandler, addLabelHandler, removeLabelHandler,
   starHandler, unstarHandler, starredHandler,
   snoozeHandler, unsnoozeHandler, snoozedHandler,
@@ -38,21 +40,21 @@ function createMcpServer(): McpServer {
     { name: "superhuman-cli", version: APP_VERSION },
     {
       capabilities: { tools: {} },
-      instructions: `Superhuman email and calendar automation server (41 tools).
+      instructions: `Superhuman email and calendar automation server (44 tools).
 
 WORKFLOW: Use superhuman_accounts first to see available accounts. Use superhuman_inbox or superhuman_search to find emails — these return thread IDs needed by all action tools.
 
-SEARCH: superhuman_search accepts limit (1–50, default 10) and returns totalResults (approximate match count) so you can gauge result coverage without fetching everything.
+SEARCH: superhuman_search accepts limit (1–50, default 10) and returns totalResults (approximate match count) so you can gauge result coverage without fetching everything. Pass includeDone: true to search all mail (inbox + archive).
 
-READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_download_attachment, superhuman_calendar_list, superhuman_calendar_free_busy, superhuman_audit_log, superhuman_agent_sessions, superhuman_agent_session_read.
+READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_download_attachment, superhuman_calendar_list, superhuman_calendar_free_busy, superhuman_audit_log, superhuman_agent_sessions, superhuman_agent_session_read, superhuman_sender_summary, superhuman_collect_thread_ids.
 
-WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_add_label, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai, superhuman_agent_session_restore.
+WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_add_label, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai, superhuman_agent_session_restore, superhuman_unarchive.
 
 CONFIRMATION TOOL: superhuman_confirm (executes a previously staged mutation token).
 
 DESTRUCTIVE TOOLS (irreversible): superhuman_archive, superhuman_archive_by_query, superhuman_delete, superhuman_calendar_delete, superhuman_agent_session_discard.
 
-BULK ARCHIVE: superhuman_archive_by_query runs a query, collects ALL matching threads (paginated), and stages them for archive in one confirmation step. Use dryRun:true to preview. Max 500 threads per call. Ideal for sweeping entire senders (e.g. query: "from:noreply@example.com").
+BULK ARCHIVE: superhuman_archive_by_query runs a query, collects ALL matching threads (paginated), and stages them for archive in one confirmation step. Use dryRun:true to preview. Max 500 threads per call. Ideal for sweeping entire senders (e.g. query: "from:noreply@example.com"). Supports excludeThreadIds to protect specific threads from archiving.
 
 Multi-account: Most tools operate on the currently active account. Use superhuman_switch_account to change. Batch operations (archive, delete, star, etc.) accept arrays of thread IDs.`,
     }
@@ -88,6 +90,26 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     readHandler
+  );
+
+  server.registerTool(
+    "superhuman_sender_summary",
+    {
+      description: "Get a summary of unique senders matching a query, grouped by sender email with thread counts. Useful for inbox recon before bulk operations. Returns top 50 senders sorted by thread count.",
+      inputSchema: SenderSummarySchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    senderSummaryHandler
+  );
+
+  server.registerTool(
+    "superhuman_collect_thread_ids",
+    {
+      description: "Collect all thread IDs matching a query via pagination. Read-only — no mutation. Useful for building exclude lists, cross-referencing before bulk operations, or verifying post-archive state.",
+      inputSchema: CollectThreadIdsSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    collectThreadIdsHandler
   );
 
   // ---- Email write tools ----
@@ -152,6 +174,16 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     archiveHandler
+  );
+
+  server.registerTool(
+    "superhuman_unarchive",
+    {
+      description: "Unarchive one or more email threads. Moves threads back to inbox by adding the INBOX label.",
+      inputSchema: UnarchiveSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    unarchiveHandler
   );
 
   server.registerTool(

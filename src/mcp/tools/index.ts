@@ -21,8 +21,8 @@ export type { TextContent, ToolResult } from "./shared";
 export { successResult, errorResult, getMcpProvider, resolveSuperhumanToken, CDP_PORT } from "./shared";
 
 // Email — read
-export { SearchSchema, InboxSchema, ReadSchema } from "./email-read";
-export { searchHandler, inboxHandler, readHandler } from "./email-read";
+export { SearchSchema, InboxSchema, ReadSchema, SenderSummarySchema, CollectThreadIdsSchema } from "./email-read";
+export { searchHandler, inboxHandler, readHandler, senderSummaryHandler, collectThreadIdsHandler } from "./email-read";
 
 // Email — write
 export { EmailSchema, DraftSchema, SendSchema, ReplySchema, ReplyAllSchema, ForwardSchema } from "./email-write";
@@ -30,13 +30,13 @@ export { draftHandler, sendHandler, replyHandler, replyAllHandler, forwardHandle
 
 // Email — manage
 export {
-  ArchiveSchema, DeleteSchema, MarkReadSchema, MarkUnreadSchema,
+  ArchiveSchema, UnarchiveSchema, DeleteSchema, MarkReadSchema, MarkUnreadSchema,
   StarSchema, UnstarSchema, StarredSchema,
   SnoozeSchema, UnsnoozeSchema, SnoozedSchema,
   ArchiveByQuerySchema,
 } from "./email-manage";
 export {
-  archiveHandler, deleteHandler, markReadHandler, markUnreadHandler,
+  archiveHandler, unarchiveHandler, deleteHandler, markReadHandler, markUnreadHandler,
   starHandler, unstarHandler, starredHandler,
   snoozeHandler, unsnoozeHandler, snoozedHandler,
   archiveByQueryHandler,

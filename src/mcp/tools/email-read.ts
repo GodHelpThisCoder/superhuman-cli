@@ -7,6 +7,7 @@ import { listInbox, searchInbox, type SearchOptions, type ListInboxOptions } fro
 import { readThread } from "../../read";
 import type { ConnectionProvider } from "../../connection-provider";
 import { successResult, errorResult, actionableError, getMcpProvider, type ToolResult } from "./shared";
+import { paginateSearchAll } from "./email-manage";
 
 /** Format a contact for display. */
 function fmtContact(c: { email: string; name: string }): string {
@@ -35,6 +36,7 @@ function fmtMeta(r: { messageCount: number; labelIds: string[] }): string {
 export const SearchSchema = z.object({
   query: z.string().describe("Search query string"),
   limit: z.number().int().min(1).max(50).optional().describe("Maximum number of results to return (1-50). Default: 10."),
+  includeDone: z.boolean().optional().describe("Search all mail including archived/done threads. Default: false (inbox only)."),
 }).strict();
 
 export const InboxSchema = z.object({
@@ -43,6 +45,16 @@ export const InboxSchema = z.object({
 
 export const ReadSchema = z.object({
   threadId: z.string().describe("The thread ID to read"),
+}).strict();
+
+export const SenderSummarySchema = z.object({
+  query: z.string().describe("Search query to scan (e.g. 'in:inbox before:2024/01/01')"),
+  limit: z.number().int().min(1).max(500).optional().describe("Max threads to scan internally (1-500, default 500)"),
+}).strict();
+
+export const CollectThreadIdsSchema = z.object({
+  query: z.string().describe("Search query to collect thread IDs for"),
+  limit: z.number().int().min(1).max(500).optional().describe("Max threads to collect (1-500, default 500)"),
 }).strict();
 
 // ---------------------------------------------------------------------------
@@ -56,7 +68,7 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
     provider = await getMcpProvider();
     const limit = args.limit ?? 10;
 
-    const options: SearchOptions = { query: args.query, limit };
+    const options: SearchOptions = { query: args.query, limit, includeDone: args.includeDone ?? false };
     const { threads, totalResults } = await searchInbox(provider, options);
 
     if (threads.length === 0) {
@@ -128,6 +140,108 @@ export async function readHandler(args: z.infer<typeof ReadSchema>): Promise<Too
     return successResult(`Thread: ${messages[0]!.subject}\n\n${messagesText}`);
   } catch (error) {
     return actionableError("Failed to read thread", error);
+  } finally {
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
+  }
+}
+
+export async function senderSummaryHandler(args: z.infer<typeof SenderSummarySchema>): Promise<ToolResult> {
+  let provider: ConnectionProvider | null = null;
+
+  try {
+    provider = await getMcpProvider();
+    const maxThreads = args.limit ?? 500;
+    const threads = await paginateSearchAll(provider, args.query, maxThreads);
+
+    if (threads.length === 0) {
+      return successResult(`No threads found for query: ${args.query}`);
+    }
+
+    // Get totalResults estimate from a quick search
+    const { totalResults } = await searchInbox(provider, { query: args.query, limit: 1 });
+
+    // Group by sender email
+    const groups = new Map<string, { count: number; sampleSubject: string; oldestDate: string; newestDate: string }>();
+    for (const thread of threads) {
+      const sender = thread.from.email || thread.from.name || "(unknown)";
+      const existing = groups.get(sender);
+      if (existing) {
+        existing.count++;
+        const threadTime = new Date(thread.date).getTime();
+        if (threadTime < new Date(existing.oldestDate).getTime()) existing.oldestDate = thread.date;
+        if (threadTime > new Date(existing.newestDate).getTime()) existing.newestDate = thread.date;
+      } else {
+        groups.set(sender, {
+          count: 1,
+          sampleSubject: thread.subject,
+          oldestDate: thread.date,
+          newestDate: thread.date,
+        });
+      }
+    }
+
+    // Sort by count descending
+    const sorted = Array.from(groups.entries())
+      .map(([sender, data]) => ({ sender, ...data }))
+      .sort((a, b) => b.count - a.count);
+
+    const totalGroups = sorted.length;
+    const truncated = totalGroups > 50;
+    const capped = sorted.slice(0, 50);
+
+    // Format dates to YYYY-MM-DD for readability
+    const fmtDate = (d: string) => {
+      try { return new Date(d).toISOString().split("T")[0]; } catch { return d; }
+    };
+
+    const result = {
+      groups: capped.map((g) => ({
+        sender: g.sender,
+        count: g.count,
+        sampleSubject: g.sampleSubject,
+        oldestDate: fmtDate(g.oldestDate),
+        newestDate: fmtDate(g.newestDate),
+      })),
+      totalGroups,
+      truncated,
+      totalResults: totalResults ?? null,
+      threadsScanned: threads.length,
+    };
+
+    return successResult(JSON.stringify(result, null, 2));
+  } catch (error) {
+    return actionableError("Sender summary failed", error);
+  } finally {
+    // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
+  }
+}
+
+export async function collectThreadIdsHandler(args: z.infer<typeof CollectThreadIdsSchema>): Promise<ToolResult> {
+  let provider: ConnectionProvider | null = null;
+
+  try {
+    provider = await getMcpProvider();
+    const maxThreads = args.limit ?? 500;
+    const threads = await paginateSearchAll(provider, args.query, maxThreads);
+
+    // Get totalResults estimate from a quick search
+    const { totalResults } = await searchInbox(provider, { query: args.query, limit: 1 });
+
+    const threadIds = threads.map((t) => t.id);
+    const totalCollected = threadIds.length;
+    const estimatedTotal = totalResults ?? totalCollected;
+    const truncated = estimatedTotal > totalCollected;
+
+    const result = {
+      threadIds,
+      totalCollected,
+      truncated,
+      totalResults: totalResults ?? null,
+    };
+
+    return successResult(JSON.stringify(result, null, 2));
+  } catch (error) {
+    return actionableError("Collect thread IDs failed", error);
   } finally {
     // Do NOT disconnect — provider is cached by getMcpProvider() for reuse across calls
   }

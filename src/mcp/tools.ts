@@ -30,9 +30,13 @@ export {
   SearchSchema,
   InboxSchema,
   ReadSchema,
+  SenderSummarySchema,
+  CollectThreadIdsSchema,
   searchHandler,
   inboxHandler,
   readHandler,
+  senderSummaryHandler,
+  collectThreadIdsHandler,
 
   // Email — write
   EmailSchema,
@@ -49,6 +53,7 @@ export {
 
   // Email — manage
   ArchiveSchema,
+  UnarchiveSchema,
   DeleteSchema,
   MarkReadSchema,
   MarkUnreadSchema,
@@ -60,6 +65,7 @@ export {
   SnoozedSchema,
   ArchiveByQuerySchema,
   archiveHandler,
+  unarchiveHandler,
   deleteHandler,
   archiveByQueryHandler,
   markReadHandler,
