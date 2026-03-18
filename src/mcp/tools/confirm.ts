@@ -15,7 +15,7 @@ import { sendHandler } from "./email-write";
 import { replyHandler } from "./email-write";
 import { replyAllHandler } from "./email-write";
 import { forwardHandler } from "./email-write";
-import { archiveHandler, unarchiveHandler, deleteHandler, archiveByQueryHandler } from "./email-manage";
+import { archiveHandler, deleteHandler, archiveByQueryHandler } from "./email-manage";
 import { calendarCreateHandler, calendarUpdateHandler, calendarDeleteHandler } from "./calendar";
 import { switchAccountHandler } from "./accounts";
 import { useSnippetHandler } from "./snippets";
@@ -44,7 +44,6 @@ const HANDLER_MAP: Record<string, HandlerFn> = {
   superhuman_forward: forwardHandler as HandlerFn,
   superhuman_delete: deleteHandler as HandlerFn,
   superhuman_archive: archiveHandler as HandlerFn,
-  superhuman_unarchive: unarchiveHandler as HandlerFn,
   superhuman_archive_by_query: archiveByQueryHandler as HandlerFn,
   superhuman_calendar_create: calendarCreateHandler as HandlerFn,
   superhuman_calendar_update: calendarUpdateHandler as HandlerFn,

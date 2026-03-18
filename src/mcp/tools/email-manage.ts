@@ -166,16 +166,6 @@ export async function unarchiveHandler(args: z.infer<typeof UnarchiveSchema>): P
   try {
     provider = await getMcpProvider();
     const account = await provider.getCurrentEmail();
-
-    // Two-phase: stage unless this is a confirmed execution
-    if (!isConfirmedExecution()) {
-      const manifest = await buildManifest(provider, args.threadIds);
-      const preview = buildBatchPreview("unarchive", args.threadIds, manifest);
-      const token = stageOperation("superhuman_unarchive", args as Record<string, unknown>, preview, account);
-      auditMutation("superhuman_unarchive", args as Record<string, unknown>, account, successResult(preview), { action: "staged", batchSize: args.threadIds.length, durationMs: Math.round(performance.now() - _t0) });
-      return successResult(buildStagedResponse(preview, token));
-    }
-
     const results: { threadId: string; success: boolean }[] = [];
 
     for (const threadId of args.threadIds) {
