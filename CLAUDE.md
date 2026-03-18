@@ -1,7 +1,7 @@
 # superhuman-cli — Agent Instructions
 
 ## Project Identity
-superhuman-cli (v0.14.3) is a 41-tool MCP server + CLI for programmatic control of Superhuman email via Chrome DevTools Protocol. Fork of edwinhu/superhuman-cli with safety hardening.
+superhuman-cli (v0.14.4) is a 44-tool MCP server + CLI for programmatic control of Superhuman email via Chrome DevTools Protocol. Fork of edwinhu/superhuman-cli with safety hardening.
 
 ## Key Facts
 - **Runtime:** Bun 1.3.5 (not Node.js)
@@ -10,7 +10,7 @@ superhuman-cli (v0.14.3) is a 41-tool MCP server + CLI for programmatic control 
 - **Entry points:** `src/cli.ts` (CLI), `src/index.ts` (MCP server)
 
 ## Commands
-- `bun test` — Run all tests (279 tests, 29 files)
+- `bun test` — Run all tests (307 tests, 29 files)
 - `bun test src/__tests__/<file>` — Run specific test file
 - `bunx tsc --noEmit` — Type-check without emitting
 - `bun run src/cli.ts` — CLI entry point
