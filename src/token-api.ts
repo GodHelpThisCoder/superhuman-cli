@@ -97,6 +97,7 @@ export {
   listInbox as listInboxDirect,
   getThread as getThreadDirect,
   downloadAttachment as downloadAttachmentDirect,
+  createLabel as createLabelDirect,
   listLabels as listLabelsDirect,
   getThreadInfo as getThreadInfoDirect,
   createDraft as createDraftDirect,

@@ -9,6 +9,9 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { SearchSchema, SenderSummarySchema, CollectThreadIdsSchema } from "../mcp/tools/email-read";
 import { ArchiveByQuerySchema, UnarchiveSchema } from "../mcp/tools/email-manage";
+import { CreateLabelSchema, AddLabelByQuerySchema } from "../mcp/tools/labels";
+import { createLabelHandler } from "../mcp/tools/labels";
+import { isAuthError } from "../mcp/tools/shared";
 import {
   extractRootDomain,
   buildBatchPreview,
@@ -464,5 +467,168 @@ describe("CollectThreadIdsSchema", () => {
 
   it("rejects unknown properties (strict mode)", () => {
     expect(CollectThreadIdsSchema.safeParse({ query: "test", extra: 42 }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AddLabelByQuerySchema validation
+// ---------------------------------------------------------------------------
+
+describe("AddLabelByQuerySchema", () => {
+  it("accepts query and labelId", () => {
+    const result = AddLabelByQuerySchema.safeParse({
+      query: "from:chase.com",
+      labelId: "Label_18",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts with dryRun", () => {
+    const result = AddLabelByQuerySchema.safeParse({
+      query: "from:chase.com",
+      labelId: "Label_18",
+      dryRun: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts with excludeThreadIds", () => {
+    const result = AddLabelByQuerySchema.safeParse({
+      query: "from:chase.com",
+      labelId: "Label_18",
+      excludeThreadIds: ["t1", "t2"],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts empty excludeThreadIds array", () => {
+    const result = AddLabelByQuerySchema.safeParse({
+      query: "from:chase.com",
+      labelId: "Label_18",
+      excludeThreadIds: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects missing query", () => {
+    expect(AddLabelByQuerySchema.safeParse({ labelId: "Label_18" }).success).toBe(false);
+  });
+
+  it("rejects missing labelId", () => {
+    expect(AddLabelByQuerySchema.safeParse({ query: "from:chase.com" }).success).toBe(false);
+  });
+
+  it("rejects unknown properties (strict mode)", () => {
+    expect(AddLabelByQuerySchema.safeParse({
+      query: "from:chase.com",
+      labelId: "Label_18",
+      extra: true,
+    }).success).toBe(false);
+  });
+
+  it("rejects non-array excludeThreadIds", () => {
+    expect(AddLabelByQuerySchema.safeParse({
+      query: "from:chase.com",
+      labelId: "Label_18",
+      excludeThreadIds: "not-an-array",
+    }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CreateLabelSchema validation
+// ---------------------------------------------------------------------------
+
+describe("CreateLabelSchema", () => {
+  it("accepts valid name", () => {
+    const result = CreateLabelSchema.safeParse({ name: "Finance" });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts name with dryRun", () => {
+    const result = CreateLabelSchema.safeParse({ name: "Finance/Taxes", dryRun: true });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects missing name", () => {
+    expect(CreateLabelSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("rejects unknown properties (strict mode)", () => {
+    expect(CreateLabelSchema.safeParse({ name: "Test", extra: true }).success).toBe(false);
+  });
+
+  it("rejects name exceeding 225 characters", () => {
+    const longName = "a".repeat(226);
+    expect(CreateLabelSchema.safeParse({ name: longName }).success).toBe(false);
+  });
+
+  it("accepts name at exactly 225 characters", () => {
+    const maxName = "a".repeat(225);
+    expect(CreateLabelSchema.safeParse({ name: maxName }).success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createLabelHandler dry-run
+// ---------------------------------------------------------------------------
+
+describe("createLabelHandler", () => {
+  it("returns dry-run response without calling provider", async () => {
+    const result = await createLabelHandler({ name: "TestLabel", dryRun: true });
+    expect(result.content).toBeDefined();
+    const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+    expect(text).toContain("[DRY RUN]");
+    expect(text).toContain("TestLabel");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// add_label_by_query staging flow
+// ---------------------------------------------------------------------------
+
+describe("add_label_by_query staging flow", () => {
+  it("stages with threadIds, originalQuery, and labelId args", () => {
+    const threadIds = ["t1", "t2", "t3"];
+    const args = { threadIds, originalQuery: "from:chase.com", labelId: "Label_18" };
+    const preview = buildBatchPreview("add label", threadIds);
+    const token = stageOperation("superhuman_add_label_by_query", args, preview, "user@test.com");
+
+    expect(token).toMatch(/^shm_/);
+
+    const op = confirmOperation(token, "user@test.com");
+    expect(op.tool).toBe("superhuman_add_label_by_query");
+    expect(op.args.threadIds).toEqual(threadIds);
+    expect(op.args.originalQuery).toBe("from:chase.com");
+    expect(op.args.labelId).toBe("Label_18");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isAuthError helper
+// ---------------------------------------------------------------------------
+
+describe("isAuthError", () => {
+  it("detects 401 error", () => {
+    expect(isAuthError(new Error("HTTP 401 Unauthorized"))).toBe(true);
+  });
+
+  it("detects Unauthorized error", () => {
+    expect(isAuthError(new Error("Unauthorized"))).toBe(true);
+  });
+
+  it("detects Authentication error", () => {
+    expect(isAuthError(new Error("Authentication failed"))).toBe(true);
+  });
+
+  it("returns false for non-auth errors", () => {
+    expect(isAuthError(new Error("Network timeout"))).toBe(false);
+    expect(isAuthError(new Error("404 Not Found"))).toBe(false);
+  });
+
+  it("returns false for non-Error values", () => {
+    expect(isAuthError("string error")).toBe(false);
+    expect(isAuthError(42)).toBe(false);
+    expect(isAuthError(null)).toBe(false);
   });
 });

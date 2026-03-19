@@ -10,6 +10,7 @@ import {
   modifyThreadLabels,
   updateMessage,
   listLabelsDirect,
+  createLabelDirect,
   searchGmailDirect,
   getConversationMessageIds,
 } from "./token-api";
@@ -34,6 +35,31 @@ export interface LabelResult {
 export async function listLabels(provider: ConnectionProvider): Promise<Label[]> {
   const token = await provider.getToken();
   return listLabelsDirect(token);
+}
+
+/**
+ * Create a new label
+ *
+ * @param provider - The connection provider
+ * @param labelName - The name of the new label (supports `/` for nesting, e.g. "Finance/Taxes")
+ * @returns The created label with id and name
+ */
+export async function createNewLabel(
+  provider: ConnectionProvider,
+  labelName: string
+): Promise<Label> {
+  const token = await provider.getToken();
+
+  if (token.isMicrosoft) {
+    throw new Error("Creating labels not yet supported for Microsoft accounts.");
+  }
+
+  const label = await createLabelDirect(token, labelName);
+  if (!label) {
+    throw new Error(`Failed to create label "${labelName}". The label may already exist or the name may be invalid.`);
+  }
+
+  return label;
 }
 
 /**

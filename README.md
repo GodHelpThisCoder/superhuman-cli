@@ -375,7 +375,9 @@ bun src/index.ts --mcp
 | `superhuman_mark_unread` | Mark thread(s) as unread |
 | `superhuman_labels` | List all labels |
 | `superhuman_get_labels` | Get labels on a thread |
+| `superhuman_create_label` | Create a new label |
 | `superhuman_add_label` | Add label to thread(s) |
+| `superhuman_add_label_by_query` | Add label to all threads matching a search query |
 | `superhuman_remove_label` | Remove label from thread(s) |
 | `superhuman_star` | Star thread(s) |
 | `superhuman_unstar` | Unstar thread(s) |

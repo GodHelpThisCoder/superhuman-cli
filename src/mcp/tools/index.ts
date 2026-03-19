@@ -6,8 +6,8 @@
  *   tools/shared.ts       — types, helpers (successResult, errorResult, getMcpProvider)
  *   tools/email-read.ts   — search, inbox, read
  *   tools/email-write.ts  — draft, send, reply, reply-all, forward
- *   tools/email-manage.ts — archive, delete, mark read/unread, star, snooze
- *   tools/labels.ts       — list labels, get/add/remove label
+ *   tools/email-manage.ts — archive/unarchive, archive-by-query, delete, mark read/unread, star/unstar, starred, snooze/unsnooze, snoozed
+ *   tools/labels.ts       — list labels, get/create/add/add-by-query/remove label
  *   tools/attachments.ts  — list/download attachments
  *   tools/calendar.ts     — list/create/update/delete events, free/busy
  *   tools/accounts.ts     — list/switch accounts
@@ -43,8 +43,8 @@ export {
 } from "./email-manage";
 
 // Labels
-export { LabelsSchema, GetLabelsSchema, AddLabelSchema, RemoveLabelSchema } from "./labels";
-export { labelsHandler, getLabelsHandler, addLabelHandler, removeLabelHandler } from "./labels";
+export { LabelsSchema, GetLabelsSchema, CreateLabelSchema, AddLabelSchema, AddLabelByQuerySchema, RemoveLabelSchema } from "./labels";
+export { labelsHandler, getLabelsHandler, createLabelHandler, addLabelHandler, addLabelByQueryHandler, removeLabelHandler } from "./labels";
 
 // Attachments
 export { AttachmentsSchema, DownloadAttachmentSchema } from "./attachments";

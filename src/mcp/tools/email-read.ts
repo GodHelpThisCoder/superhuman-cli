@@ -168,7 +168,13 @@ export async function senderSummaryHandler(args: z.infer<typeof SenderSummarySch
     // Group by sender email
     const groups = new Map<string, { count: number; sampleSubject: string; oldestDate: string; newestDate: string }>();
     for (const thread of threads) {
-      const sender = thread.from.email || thread.from.name || "(unknown)";
+      const rawSender = thread.from.email || thread.from.name || "(unknown)";
+      // If sender looks invalid (1-2 chars or missing @), build a fallback from available fields
+      const sender = (rawSender.length <= 2 || (!rawSender.includes("@") && rawSender !== "(unknown)"))
+        ? (thread.from.name && thread.from.name.length > 2
+            ? `${thread.from.name}${thread.from.email ? ` <${thread.from.email}>` : ""}`
+            : thread.from.email || thread.from.name || "(unknown)")
+        : rawSender;
       const existing = groups.get(sender);
       if (existing) {
         existing.count++;
