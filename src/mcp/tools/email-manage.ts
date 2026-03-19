@@ -11,7 +11,7 @@ import { starThread, unstarThread, listStarred } from "../../labels";
 import { parseSnoozeTime, snoozeThreadViaProvider, unsnoozeThreadViaProvider, listSnoozedViaProvider } from "../../snooze";
 import { searchInbox, type InboxThread } from "../../inbox";
 import type { ConnectionProvider } from "../../connection-provider";
-import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, auditDryRun, type ToolResult, isAuthError } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse, buildBatchPreview, buildManifest } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -660,12 +660,28 @@ export async function paginateSearchAll(
   let currentQuery = query; // only mutated for MS Graph date-anchoring
 
   for (let page = 0; page < MAX_PAGES; page++) {
-    const result = await searchInbox(provider, {
-      query: currentQuery,
-      limit: PAGE_SIZE,
-      includeDone,
-      pageToken: isMicrosoft ? undefined : pageToken,
-    });
+    let result;
+    try {
+      result = await searchInbox(provider, {
+        query: currentQuery,
+        limit: PAGE_SIZE,
+        includeDone,
+        pageToken: isMicrosoft ? undefined : pageToken,
+      });
+    } catch (err: unknown) {
+      // On auth error mid-pagination, re-resolve provider and retry this page once
+      if (isAuthError(err)) {
+        provider = await getMcpProvider();
+        result = await searchInbox(provider, {
+          query: currentQuery,
+          limit: PAGE_SIZE,
+          includeDone,
+          pageToken: isMicrosoft ? undefined : pageToken,
+        });
+      } else {
+        throw err;
+      }
+    }
 
     if (result.threads.length === 0) break;
 

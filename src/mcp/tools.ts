@@ -5,7 +5,7 @@
  *   tools/email-read.ts   — search, inbox, read, sender-summary, collect-thread-ids
  *   tools/email-write.ts  — draft, send, reply, reply-all, forward
  *   tools/email-manage.ts — archive, unarchive, archive-by-query, delete, mark read/unread, star, snooze
- *   tools/labels.ts       — list labels, get/add/remove label
+ *   tools/labels.ts       — list labels, get/create/add/add-by-query/remove label
  *   tools/attachments.ts  — list/download attachments
  *   tools/calendar.ts     — list/create/update/delete events, free/busy
  *   tools/accounts.ts     — list/switch accounts
@@ -80,11 +80,15 @@ export {
   // Labels
   LabelsSchema,
   GetLabelsSchema,
+  CreateLabelSchema,
   AddLabelSchema,
+  AddLabelByQuerySchema,
   RemoveLabelSchema,
   labelsHandler,
   getLabelsHandler,
+  createLabelHandler,
   addLabelHandler,
+  addLabelByQueryHandler,
   removeLabelHandler,
 
   // Attachments

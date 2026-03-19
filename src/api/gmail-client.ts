@@ -320,7 +320,12 @@ export async function searchGmail(
     const fromValue = fromHeader?.value || "";
     const fromMatch = fromValue.match(/^(?:"?([^"<]*)"?\s*)?<?([^>]+)>?$/);
     const fromName = fromMatch?.[1]?.trim() || "";
-    const fromEmail = fromMatch?.[2]?.trim() || fromValue;
+    let fromEmail = fromMatch?.[2]?.trim() || fromValue;
+
+    // Validate extracted email contains @; if not, regex captured wrong group
+    if (fromEmail && !fromEmail.includes("@")) {
+      fromEmail = fromValue;
+    }
 
     threads.push({
       id: threadResult.id,
@@ -494,6 +499,38 @@ export async function moveMessageToFolder(
   });
 
   return result !== null;
+}
+
+/**
+ * Create a new label (Gmail only).
+ *
+ * @param token - Token info with accessToken
+ * @param labelName - The name of the new label (supports `/` for nesting)
+ * @returns The created label with id and name, or null on failure
+ */
+export async function createLabel(
+  token: TokenInfo,
+  labelName: string
+): Promise<Label | null> {
+  if (token.isMicrosoft) {
+    throw new Error("createLabel is Gmail-only. Use MS Graph mailFolders POST for Microsoft accounts.");
+  }
+
+  const result = await gmailFetch(token.accessToken, "/labels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: labelName }),
+  });
+
+  if (!result || !result.id) {
+    return null;
+  }
+
+  return {
+    id: result.id,
+    name: result.name,
+    type: result.type,
+  };
 }
 
 /**

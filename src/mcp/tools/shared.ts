@@ -295,6 +295,18 @@ export function actionableError(context: string, error: unknown): ToolResult {
 }
 
 /**
+ * Check if an error is an authentication/401 error.
+ * Used by paginateSearchAll for mid-pagination retry on token expiry.
+ */
+export function isAuthError(err: unknown): boolean {
+  if (err instanceof Error) {
+    const msg = err.message;
+    return msg.includes("401") || msg.includes("Unauthorized") || msg.includes("auth") || msg.includes("Authentication");
+  }
+  return false;
+}
+
+/**
  * Guard for mutating handlers — returns an error if the kill switch is active.
  * Must be called synchronously at the top of every mutating handler.
  */

@@ -11,7 +11,7 @@ import {
   SenderSummarySchema, CollectThreadIdsSchema,
   AccountsSchema, SwitchAccountSchema, ReplySchema, ReplyAllSchema, ForwardSchema,
   ArchiveSchema, UnarchiveSchema, DeleteSchema, ArchiveByQuerySchema,
-  MarkReadSchema, MarkUnreadSchema, LabelsSchema, GetLabelsSchema, AddLabelSchema, RemoveLabelSchema,
+  MarkReadSchema, MarkUnreadSchema, LabelsSchema, GetLabelsSchema, CreateLabelSchema, AddLabelSchema, AddLabelByQuerySchema, RemoveLabelSchema,
   StarSchema, UnstarSchema, StarredSchema,
   SnoozeSchema, UnsnoozeSchema, SnoozedSchema,
   AttachmentsSchema, DownloadAttachmentSchema,
@@ -20,7 +20,7 @@ import {
   senderSummaryHandler, collectThreadIdsHandler,
   accountsHandler, switchAccountHandler, replyHandler, replyAllHandler, forwardHandler,
   archiveHandler, unarchiveHandler, deleteHandler, archiveByQueryHandler,
-  markReadHandler, markUnreadHandler, labelsHandler, getLabelsHandler, addLabelHandler, removeLabelHandler,
+  markReadHandler, markUnreadHandler, labelsHandler, getLabelsHandler, createLabelHandler, addLabelHandler, addLabelByQueryHandler, removeLabelHandler,
   starHandler, unstarHandler, starredHandler,
   snoozeHandler, unsnoozeHandler, snoozedHandler,
   attachmentsHandler, downloadAttachmentHandler,
@@ -40,7 +40,7 @@ function createMcpServer(): McpServer {
     { name: "superhuman-cli", version: APP_VERSION },
     {
       capabilities: { tools: {} },
-      instructions: `Superhuman email and calendar automation server (44 tools).
+      instructions: `Superhuman email and calendar automation server (45 tools).
 
 WORKFLOW: Use superhuman_accounts first to see available accounts. Use superhuman_inbox or superhuman_search to find emails — these return thread IDs needed by all action tools.
 
@@ -48,13 +48,15 @@ SEARCH: superhuman_search accepts limit (1–50, default 10) and returns totalRe
 
 READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_download_attachment, superhuman_calendar_list, superhuman_calendar_free_busy, superhuman_audit_log, superhuman_agent_sessions, superhuman_agent_session_read, superhuman_sender_summary, superhuman_collect_thread_ids.
 
-WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_add_label, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai, superhuman_agent_session_restore, superhuman_unarchive.
+WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_add_label, superhuman_add_label_by_query, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai, superhuman_agent_session_restore, superhuman_unarchive.
 
 CONFIRMATION TOOL: superhuman_confirm (executes a previously staged mutation token).
 
 DESTRUCTIVE TOOLS (irreversible): superhuman_archive, superhuman_archive_by_query, superhuman_delete, superhuman_calendar_delete, superhuman_agent_session_discard.
 
 BULK ARCHIVE: superhuman_archive_by_query runs a query, collects ALL matching threads (paginated), and stages them for archive in one confirmation step. Use dryRun:true to preview. Max 500 threads per call. Ideal for sweeping entire senders (e.g. query: "from:noreply@example.com"). Supports excludeThreadIds to protect specific threads from archiving.
+
+BULK LABEL: superhuman_add_label_by_query runs a query, collects ALL matching threads (paginated), and applies a label. For <=50 matches, executes directly (labeling is idempotent). For >50 matches, stages for confirmation. Use dryRun:true to preview. Max 500 threads per call. Supports excludeThreadIds.
 
 Multi-account: Most tools operate on the currently active account. Use superhuman_switch_account to change. Batch operations (archive, delete, star, etc.) accept arrays of thread IDs.`,
     }
@@ -105,7 +107,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_collect_thread_ids",
     {
-      description: "Collect all thread IDs matching a query via pagination. Read-only — no mutation. Useful for building exclude lists, cross-referencing before bulk operations, or verifying post-archive state.",
+      description: "Collect all thread IDs matching a query via pagination. Read-only — no mutation. Useful for building exclude lists, cross-referencing before bulk operations, or verifying post-archive state. Note: for -label: filters with nested labels, use '/' separator (e.g. '-label:Finance/Medical'), not '-' (e.g. NOT '-label:Finance-Medical').",
       inputSchema: CollectThreadIdsSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -309,6 +311,16 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   );
 
   server.registerTool(
+    "superhuman_create_label",
+    {
+      description: "Create a new email label. Use superhuman_labels first to check existing labels. Returns the label ID needed by superhuman_add_label. Supports nested labels with '/' separator (e.g. 'Finance/Taxes').",
+      inputSchema: CreateLabelSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    createLabelHandler
+  );
+
+  server.registerTool(
     "superhuman_add_label",
     {
       description: "Add a label to one or more email threads. Use superhuman_labels first to get available label IDs.",
@@ -316,6 +328,16 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     addLabelHandler
+  );
+
+  server.registerTool(
+    "superhuman_add_label_by_query",
+    {
+      description: "Add a label to all threads matching a search query. Collects matches via pagination and applies the label. Use dryRun:true to preview. For >50 matches, requires superhuman_confirm. Max 500 threads per call. Supports excludeThreadIds to protect specific threads.",
+      inputSchema: AddLabelByQuerySchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    addLabelByQueryHandler
   );
 
   server.registerTool(
