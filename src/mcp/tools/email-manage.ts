@@ -638,7 +638,7 @@ export async function snoozedHandler(args: z.infer<typeof SnoozedSchema>): Promi
  * Collect ALL threads matching a query via date-anchored pagination.
  * Returns deduplicated threads in chronological order.
  *
- * @param provider - Connection provider
+ * @param provider - Connection provider (may be re-resolved on auth errors mid-pagination)
  * @param query - Search query string
  * @param maxThreads - Maximum threads to collect (default 501 for archive_by_query's >500 check)
  */
@@ -672,6 +672,7 @@ export async function paginateSearchAll(
       // On auth error mid-pagination, re-resolve provider and retry this page once
       if (isAuthError(err)) {
         provider = await getMcpProvider();
+        // isMicrosoft is not refreshed here — account type cannot change mid-pagination
         result = await searchInbox(provider, {
           query: currentQuery,
           limit: PAGE_SIZE,
