@@ -48,7 +48,7 @@ SEARCH: superhuman_search accepts limit (1–50, default 10) and returns totalRe
 
 READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_download_attachment, superhuman_calendar_list, superhuman_calendar_free_busy, superhuman_audit_log, superhuman_agent_sessions, superhuman_agent_session_read, superhuman_sender_summary, superhuman_collect_thread_ids.
 
-WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_add_label, superhuman_add_label_by_query, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai, superhuman_agent_session_restore, superhuman_unarchive.
+WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_create_label, superhuman_add_label, superhuman_add_label_by_query, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai, superhuman_agent_session_restore, superhuman_unarchive.
 
 CONFIRMATION TOOL: superhuman_confirm (executes a previously staged mutation token).
 
