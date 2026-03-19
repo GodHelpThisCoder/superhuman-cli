@@ -1,7 +1,7 @@
 # superhuman-cli — Agent Instructions
 
 ## Project Identity
-superhuman-cli (v0.14.4) is a 45-tool MCP server + CLI for programmatic control of Superhuman email via Chrome DevTools Protocol. Fork of edwinhu/superhuman-cli with safety hardening.
+superhuman-cli (v0.14.4) is a 46-tool MCP server + CLI for programmatic control of Superhuman email via Chrome DevTools Protocol. Fork of edwinhu/superhuman-cli with safety hardening.
 
 ## Key Facts
 - **Runtime:** Bun 1.3.5 (not Node.js)
