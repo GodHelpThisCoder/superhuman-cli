@@ -26,7 +26,7 @@ export const AddLabelSchema = z.object({
 }).strict();
 
 export const CreateLabelSchema = z.object({
-  name: z.string().describe("The name of the new label. Use '/' for nesting (e.g. 'Finance/Taxes')"),
+  name: z.string().max(225).describe("The name of the new label. Use '/' for nesting (e.g. 'Finance/Taxes')"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 }).strict();
 

@@ -557,6 +557,16 @@ describe("CreateLabelSchema", () => {
   it("rejects unknown properties (strict mode)", () => {
     expect(CreateLabelSchema.safeParse({ name: "Test", extra: true }).success).toBe(false);
   });
+
+  it("rejects name exceeding 225 characters", () => {
+    const longName = "a".repeat(226);
+    expect(CreateLabelSchema.safeParse({ name: longName }).success).toBe(false);
+  });
+
+  it("accepts name at exactly 225 characters", () => {
+    const maxName = "a".repeat(225);
+    expect(CreateLabelSchema.safeParse({ name: maxName }).success).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -567,7 +577,7 @@ describe("createLabelHandler", () => {
   it("returns dry-run response without calling provider", async () => {
     const result = await createLabelHandler({ name: "TestLabel", dryRun: true });
     expect(result.content).toBeDefined();
-    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
     expect(text).toContain("[DRY RUN]");
     expect(text).toContain("TestLabel");
   });
