@@ -117,9 +117,12 @@ describe("parseEventTime", () => {
 });
 
 describe("calendar list --start/--end CLI flags", () => {
-  test("calendar list accepts --start and --end flags without error", async () => {
+  // These tests spawn the CLI to verify flag parsing. The CLI may hang waiting
+  // for CDP/auth, so we kill it after a short grace period — we only need to
+  // see that the flag parser didn't reject the flags, not a successful API call.
+  async function runCliAndCollectStderr(args: string[]): Promise<string> {
     const proc = Bun.spawn(
-      [process.execPath, "src/cli.ts", "calendar", "list", "--start", "2026-02-10T00:00:00", "--end", "2026-02-10T23:59:59"],
+      [process.execPath, "src/cli.ts", ...args],
       {
         cwd: import.meta.dir + "/../..",
         stdout: "pipe",
@@ -127,7 +130,18 @@ describe("calendar list --start/--end CLI flags", () => {
       }
     );
 
+    // Give the flag parser time to run, then kill the process
+    // so the test doesn't block waiting for CDP/network.
+    const timeout = setTimeout(() => proc.kill(), 2000);
     const stderr = await new Response(proc.stderr).text();
+    clearTimeout(timeout);
+    return stderr;
+  }
+
+  test("calendar list accepts --start and --end flags without error", async () => {
+    const stderr = await runCliAndCollectStderr([
+      "calendar", "list", "--start", "2026-02-10T00:00:00", "--end", "2026-02-10T23:59:59",
+    ]);
     // The flags should be accepted by the parser (no "unknown" flag errors).
     // The command may fail with credential errors, but that's expected --
     // we only verify the flags are recognized and not rejected.
@@ -135,16 +149,9 @@ describe("calendar list --start/--end CLI flags", () => {
   });
 
   test("calendar list accepts --start without --end", async () => {
-    const proc = Bun.spawn(
-      [process.execPath, "src/cli.ts", "calendar", "list", "--start", "2026-02-10T00:00:00"],
-      {
-        cwd: import.meta.dir + "/../..",
-        stdout: "pipe",
-        stderr: "pipe",
-      }
-    );
-
-    const stderr = await new Response(proc.stderr).text();
+    const stderr = await runCliAndCollectStderr([
+      "calendar", "list", "--start", "2026-02-10T00:00:00",
+    ]);
     expect(stderr.toLowerCase()).not.toContain("unknown");
   });
 });

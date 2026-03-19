@@ -651,21 +651,26 @@ export async function paginateSearchAll(
   const PAGE_SIZE = 50;
   const MAX_PAGES = 100; // safety: 5,000 threads max
   const allThreads = new Map<string, InboxThread>();
-  let currentQuery = query;
   const token = await provider.getToken();
   const isMicrosoft = token.isMicrosoft;
 
+  // Gmail: use cursor-based pagination (nextPageToken) — reliable for all query types.
+  // MS Graph: use date-anchored pagination ($search doesn't support page tokens).
+  let pageToken: string | undefined;
+  let currentQuery = query; // only mutated for MS Graph date-anchoring
+
   for (let page = 0; page < MAX_PAGES; page++) {
-    const { threads } = await searchInbox(provider, {
+    const result = await searchInbox(provider, {
       query: currentQuery,
       limit: PAGE_SIZE,
-      includeDone, // default false — archive_by_query targets unarchived threads
+      includeDone,
+      pageToken: isMicrosoft ? undefined : pageToken,
     });
 
-    if (threads.length === 0) break;
+    if (result.threads.length === 0) break;
 
     let newCount = 0;
-    for (const thread of threads) {
+    for (const thread of result.threads) {
       if (!allThreads.has(thread.id)) {
         allThreads.set(thread.id, thread);
         newCount++;
@@ -675,35 +680,26 @@ export async function paginateSearchAll(
     // Proactive cap: stop before wasting API calls
     if (allThreads.size >= maxThreads) break;
 
-    // If we got fewer than PAGE_SIZE, we've reached the end
-    if (threads.length < PAGE_SIZE) break;
-
-    // If no new threads, we're stuck in a loop.
-    // Known limitation: if >50 threads share the exact same date, pagination
-    // will exit here because date-anchored "before:" returns the same set.
-    // This is rare in practice. A full fix would require Gmail's pageToken.
-    if (newCount === 0) break;
-
-    // Date-anchor: use the oldest thread's date as the "before:" boundary
-    const oldestDate = threads
-      .map((t) => new Date(t.date).getTime())
-      .filter((ts) => !Number.isNaN(ts))
-      .sort((a, b) => a - b)[0];
-
-    if (!oldestDate) break;
-
-    // Format date filter per provider
-    // Add 1 day because before:/received< is exclusive — ensures same-day threads aren't skipped
-    const d = new Date(oldestDate);
-    d.setDate(d.getDate() + 1);
     if (isMicrosoft) {
-      // MS Graph KQL: received<YYYY-MM-DD
+      // MS Graph: date-anchored pagination (no page token for $search)
+      if (result.threads.length < PAGE_SIZE) break;
+      if (newCount === 0) break;
+
+      const oldestDate = result.threads
+        .map((t) => new Date(t.date).getTime())
+        .filter((ts) => !Number.isNaN(ts))
+        .sort((a, b) => a - b)[0];
+
+      if (!oldestDate) break;
+
+      const d = new Date(oldestDate);
+      d.setDate(d.getDate() + 1);
       const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       currentQuery = `${query} received<${dateStr}`;
     } else {
-      // Gmail query syntax: before:YYYY/MM/DD
-      const dateStr = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
-      currentQuery = `${query} before:${dateStr}`;
+      // Gmail: cursor-based pagination via nextPageToken
+      if (!result.nextPageToken) break; // no more pages
+      pageToken = result.nextPageToken;
     }
   }
 

@@ -273,14 +273,16 @@ async function fetchMsGraphConversationMessages(
 export async function searchGmail(
   token: TokenInfo,
   query: string,
-  limit: number = 10
+  limit: number = 10,
+  pageToken?: string,
 ): Promise<SearchResult> {
   if (token.isMicrosoft) {
     return searchMSGraph(token, query, limit);
   }
 
   // Step 1: Search for messages matching the query
-  const searchPath = `/messages?q=${encodeURIComponent(query)}&maxResults=${limit}`;
+  let searchPath = `/messages?q=${encodeURIComponent(query)}&maxResults=${limit}`;
+  if (pageToken) searchPath += `&pageToken=${encodeURIComponent(pageToken)}`;
   const searchResult = await gmailFetch(token.accessToken, searchPath) as GmailMessagesListResponse | null;
 
   if (!searchResult || !searchResult.messages || searchResult.messages.length === 0) {
@@ -334,7 +336,7 @@ export async function searchGmail(
     });
   }
 
-  return { threads, totalResults };
+  return { threads, totalResults, nextPageToken: searchResult.nextPageToken };
 }
 
 /**

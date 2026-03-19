@@ -37,6 +37,7 @@ export const SearchSchema = z.object({
   query: z.string().describe("Search query string"),
   limit: z.number().int().min(1).max(50).optional().describe("Maximum number of results to return (1-50). Default: 10."),
   includeDone: z.boolean().optional().describe("Search all mail including archived/done threads. Default: false (inbox only)."),
+  pageToken: z.string().optional().describe("Gmail pagination token from a previous search's nextPageToken. Pass this to get the next page of results."),
 }).strict();
 
 export const InboxSchema = z.object({
@@ -70,8 +71,8 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
     provider = await getMcpProvider();
     const limit = args.limit ?? 10;
 
-    const options: SearchOptions = { query: args.query, limit, includeDone: args.includeDone ?? false };
-    const { threads, totalResults } = await searchInbox(provider, options);
+    const options: SearchOptions = { query: args.query, limit, includeDone: args.includeDone ?? false, pageToken: args.pageToken };
+    const { threads, totalResults, nextPageToken } = await searchInbox(provider, options);
 
     if (threads.length === 0) {
       return successResult(`No results found for: ${args.query}`);
@@ -85,7 +86,8 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
       .join("\n\n");
 
     const totalStr = totalResults != null ? ` (~${totalResults} total)` : "";
-    return successResult(`Search results for "${args.query}" (${threads.length} returned${totalStr}):\n\n${resultsText}`);
+    const pageStr = nextPageToken ? `\n\nnextPageToken: ${nextPageToken}` : "";
+    return successResult(`Search results for "${args.query}" (${threads.length} returned${totalStr}):\n\n${resultsText}${pageStr}`);
   } catch (error) {
     return actionableError("Search failed", error);
   } finally {

@@ -39,6 +39,8 @@ export interface SearchOptions {
    * The difference is that includeDone=true removes label:INBOX filter.
    */
   includeDone?: boolean;
+  /** Gmail pageToken for cursor-based pagination. Ignored for MS Graph. */
+  pageToken?: string;
 }
 
 /** Search results with optional total count metadata. */
@@ -46,6 +48,8 @@ export interface SearchResult {
   threads: InboxThread[];
   /** Approximate total matching threads (Gmail's resultSizeEstimate). May be absent. */
   totalResults?: number;
+  /** Gmail pagination token for the next page. Absent on the last page or for MS Graph. */
+  nextPageToken?: string;
 }
 
 /**
@@ -70,12 +74,12 @@ export async function searchInbox(
   provider: ConnectionProvider,
   options: SearchOptions
 ): Promise<SearchResult> {
-  const { query, limit = 10, includeDone = false } = options;
+  const { query, limit = 10, includeDone = false, pageToken } = options;
   const token = await provider.getToken();
 
   if (includeDone) {
     // Search all emails (no inbox filter)
-    return searchGmailDirect(token, query, limit);
+    return searchGmailDirect(token, query, limit, pageToken);
   } else {
     // Search only inbox threads
     // For Gmail, add label:INBOX to query
@@ -148,7 +152,7 @@ export async function searchInbox(
     } else {
       // Gmail: Add label:INBOX to the query
       const inboxQuery = `label:INBOX ${query}`;
-      return searchGmailDirect(token, inboxQuery, limit);
+      return searchGmailDirect(token, inboxQuery, limit, pageToken);
     }
   }
 }
