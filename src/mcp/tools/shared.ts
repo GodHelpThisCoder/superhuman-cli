@@ -301,7 +301,7 @@ export function actionableError(context: string, error: unknown): ToolResult {
 export function isAuthError(err: unknown): boolean {
   if (err instanceof Error) {
     const msg = err.message;
-    return msg.includes("401") || msg.includes("Unauthorized") || msg.includes("auth") || msg.includes("Authentication");
+    return msg.includes("401") || msg.includes("Unauthorized") || msg.includes("Authentication");
   }
   return false;
 }
