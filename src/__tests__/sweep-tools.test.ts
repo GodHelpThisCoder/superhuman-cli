@@ -9,7 +9,8 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { SearchSchema, SenderSummarySchema, CollectThreadIdsSchema } from "../mcp/tools/email-read";
 import { ArchiveByQuerySchema, UnarchiveSchema } from "../mcp/tools/email-manage";
-import { AddLabelByQuerySchema } from "../mcp/tools/labels";
+import { CreateLabelSchema, AddLabelByQuerySchema } from "../mcp/tools/labels";
+import { createLabelHandler } from "../mcp/tools/labels";
 import { isAuthError } from "../mcp/tools/shared";
 import {
   extractRootDomain,
@@ -531,6 +532,44 @@ describe("AddLabelByQuerySchema", () => {
       labelId: "Label_18",
       excludeThreadIds: "not-an-array",
     }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CreateLabelSchema validation
+// ---------------------------------------------------------------------------
+
+describe("CreateLabelSchema", () => {
+  it("accepts valid name", () => {
+    const result = CreateLabelSchema.safeParse({ name: "Finance" });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts name with dryRun", () => {
+    const result = CreateLabelSchema.safeParse({ name: "Finance/Taxes", dryRun: true });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects missing name", () => {
+    expect(CreateLabelSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("rejects unknown properties (strict mode)", () => {
+    expect(CreateLabelSchema.safeParse({ name: "Test", extra: true }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createLabelHandler dry-run
+// ---------------------------------------------------------------------------
+
+describe("createLabelHandler", () => {
+  it("returns dry-run response without calling provider", async () => {
+    const result = await createLabelHandler({ name: "TestLabel", dryRun: true });
+    expect(result.content).toBeDefined();
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("[DRY RUN]");
+    expect(text).toContain("TestLabel");
   });
 });
 
