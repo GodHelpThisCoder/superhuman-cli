@@ -21,6 +21,7 @@ import { switchAccountHandler } from "./accounts";
 import { useSnippetHandler } from "./snippets";
 import { askAIHandler } from "./ai";
 import { agentSessionDiscardHandler, agentSessionRestoreHandler } from "./agent-sessions";
+import { addLabelByQueryHandler } from "./labels";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -54,6 +55,7 @@ const HANDLER_MAP: Record<string, HandlerFn> = {
   superhuman_agent_session_discard: agentSessionDiscardHandler as HandlerFn,
   superhuman_agent_session_restore: agentSessionRestoreHandler as HandlerFn,
   superhuman_unarchive: unarchiveHandler as HandlerFn,
+  superhuman_add_label_by_query: addLabelByQueryHandler as HandlerFn,
 };
 
 // ---------------------------------------------------------------------------
