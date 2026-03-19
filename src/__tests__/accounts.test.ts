@@ -6,9 +6,9 @@ import { formatAccountsList, formatAccountsJson } from "../cli";
 
 describe("CLI formatting functions", () => {
   const mockAccounts: Account[] = [
-    { email: "eddyhu@gmail.com", isCurrent: false },
-    { email: "ehu@law.virginia.edu", isCurrent: true },
-    { email: "eh2889@nyu.edu", isCurrent: false },
+    { email: "user1@example.com", isCurrent: false },
+    { email: "user2@example.com", isCurrent: true },
+    { email: "user3@example.com", isCurrent: false },
   ];
 
   describe("formatAccountsList", () => {
@@ -17,9 +17,9 @@ describe("CLI formatting functions", () => {
       const lines = output.split("\n");
 
       expect(lines.length).toBe(3);
-      expect(lines[0]).toBe("  1. eddyhu@gmail.com");
-      expect(lines[1]).toBe("* 2. ehu@law.virginia.edu (current)");
-      expect(lines[2]).toBe("  3. eh2889@nyu.edu");
+      expect(lines[0]).toBe("  1. user1@example.com");
+      expect(lines[1]).toBe("* 2. user2@example.com (current)");
+      expect(lines[2]).toBe("  3. user3@example.com");
     });
 
     test("handles empty accounts array", () => {
@@ -40,9 +40,9 @@ describe("CLI formatting functions", () => {
 
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed.length).toBe(3);
-      expect(parsed[0]).toEqual({ email: "eddyhu@gmail.com", isCurrent: false });
-      expect(parsed[1]).toEqual({ email: "ehu@law.virginia.edu", isCurrent: true });
-      expect(parsed[2]).toEqual({ email: "eh2889@nyu.edu", isCurrent: false });
+      expect(parsed[0]).toEqual({ email: "user1@example.com", isCurrent: false });
+      expect(parsed[1]).toEqual({ email: "user2@example.com", isCurrent: true });
+      expect(parsed[2]).toEqual({ email: "user3@example.com", isCurrent: false });
     });
 
     test("handles empty accounts array", () => {

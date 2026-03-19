@@ -2,7 +2,7 @@
 
 ## Context
 
-~5,000-6,000 threads remain in shawnmsorrell@gmail.com inbox (Jul 2014–Mar 2026).
+~5,000-6,000 threads remain in the primary inbox (Jul 2014–Mar 2026).
 Strategy: 12 subagents scan annual date windows, write categorized results to files,
 main thread consolidates and presents for human-approved archiving across 3 sessions.
 

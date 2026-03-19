@@ -6,7 +6,7 @@ superhuman-cli (v0.14.4) is a 44-tool MCP server + CLI for programmatic control 
 ## Key Facts
 - **Runtime:** Bun 1.3.5 (not Node.js)
 - **CDP port:** 9333 (default)
-- **Accounts:** shawnmsorrell@gmail.com (primary), cv.ssorrell@gmail.com (secondary)
+- **Accounts:** Two Gmail accounts configured (primary + secondary)
 - **Entry points:** `src/cli.ts` (CLI), `src/index.ts` (MCP server)
 
 ## Commands
