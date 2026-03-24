@@ -404,6 +404,58 @@ bun src/index.ts --mcp
 | `superhuman_confirm` | Confirm a staged destructive operation using its `shm_` token |
 | `superhuman_audit_log` | View the JSONL mutation audit log with optional filters |
 
+### MCP Agent Guide
+
+Patterns learned from production use with Claude Code agents:
+
+#### CDP Stability Protocol
+
+The MCP server uses CDP for initial account resolution. Under concurrent load, the WebSocket can drop.
+
+```
+1. Call superhuman_accounts FIRST (warms 30s CDP cache)
+2. Verify the correct account is active; switch if needed
+3. Up to 4 parallel tool calls are safe within 30s of step 1
+4. On "WebSocket connection closed" or "No current account found":
+   STOP → wait 5s → call superhuman_accounts → retry
+```
+
+#### Two-Phase Confirmation
+
+All destructive operations (archive, delete, calendar delete) return a confirmation token instead of executing immediately:
+
+```
+Stage:   superhuman_archive({threadIds: ["a","b","c"]})
+         → Returns: "shm_abc123..." (expires in 120s)
+Confirm: superhuman_confirm({token: "shm_abc123..."})
+         → Executes the archive
+```
+
+For batches >50 items, pass `force: true` to `superhuman_confirm`.
+
+#### Search Features
+
+- **`limit`** (1-50, default 10): Control result count per query
+- **`totalResults`**: Approximate match count returned with every search — use `limit: 1` for cheap recon counts
+- **`includeDone: true`**: Search all mail including archived (for verification and recovery)
+
+#### Bulk Operations
+
+**`archive_by_query`**: Accepts a search query, internally paginates all matches (up to 500), and stages them for two-phase confirmation. Supports `dryRun: true` for preview and `excludeThreadIds: string[]` to protect specific threads.
+
+**Mixed-sender workflow** (sender has both KEEP and ARCHIVE content):
+1. `sender_summary({query: "from:sender@example.com in:inbox"})` — assess volume
+2. `collect_thread_ids({query: "from:sender@example.com in:inbox"})` — get all IDs
+3. `search` to identify the KEEP threads
+4. `archive_by_query({query: "from:sender@example.com in:inbox", excludeThreadIds: [keepIds]})` — bulk archive minus KEEPs
+
+**`add_label_by_query`**: Same pattern as `archive_by_query` but for labeling. Up to 500 threads, supports `excludeThreadIds`.
+
+#### Recon Tools
+
+- **`sender_summary`**: Returns top 50 senders matching a query, grouped by email with thread counts. Use before bulk operations.
+- **`collect_thread_ids`**: Read-only — returns all thread IDs matching a query. Use for building exclude lists.
+
 ### Claude Desktop Configuration
 
 Add to your Claude Desktop config:
