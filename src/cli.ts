@@ -206,6 +206,7 @@ ${colors.bold}COMMANDS${colors.reset}
   ${colors.cyan}kill${colors.reset} [reason]        Activate kill switch — suspend all mutations
   ${colors.cyan}unkill${colors.reset}              Deactivate kill switch — resume mutations
   ${colors.cyan}status${colors.reset}              Check Superhuman connection status
+  ${colors.cyan}doctor${colors.reset}              Run full diagnostics (CDP, process, lock, updates, tokens, shortcuts)
   ${colors.cyan}help${colors.reset}                Show this help message
 
 ${colors.bold}SUBCOMMAND GROUPS${colors.reset}
@@ -253,8 +254,16 @@ ${colors.bold}OPTIONS${colors.reset}
   --title <text>     Event title (for calendar create/update)
   --event <id>       Event ID (for calendar update/delete)
   --port <number>    CDP port (default: ${CDP_PORT})
+  --fix-port         (doctor) Gracefully restart Superhuman with the debug port — never force-kills
+  --patch-shortcut   (doctor) Add the debug-port flag to Windows shortcuts (app updates revert this)
 
 ${colors.bold}EXAMPLES${colors.reset}
+  ${colors.dim}# Diagnostics${colors.reset}
+  superhuman status
+  superhuman doctor
+  superhuman doctor --fix-port
+  superhuman doctor --patch-shortcut
+
   ${colors.dim}# Account management${colors.reset}
   superhuman account auth
   superhuman account list
@@ -448,6 +457,9 @@ interface CliOptions {
   native: boolean; // use native Superhuman draft operations (for update/delete)
   // dry-run flag
   dryRun: boolean; // preview without executing
+  // doctor options
+  fixPort: boolean; // doctor --fix-port: gracefully restart Superhuman with the debug port
+  patchShortcut: boolean; // doctor --patch-shortcut: add debug port flag to Windows shortcuts
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -500,6 +512,8 @@ function parseArgs(args: string[]): CliOptions {
     provider: "superhuman",
     native: false,
     dryRun: false,
+    fixPort: false,
+    patchShortcut: false,
   };
 
   let i = 0;
@@ -697,6 +711,14 @@ function parseArgs(args: string[]): CliOptions {
           options.dryRun = true;
           i += 1;
           break;
+        case "fix-port":
+          options.fixPort = true;
+          i += 1;
+          break;
+        case "patch-shortcut":
+          options.patchShortcut = true;
+          i += 1;
+          break;
         default:
           error(`Unknown option: ${arg}`);
           process.exit(1);
@@ -881,6 +903,37 @@ async function cmdStatus(options: CliOptions) {
   success("Connected to Superhuman");
 
   await disconnect(conn);
+}
+
+async function cmdDoctor(options: CliOptions) {
+  const { collectDoctorReport, formatDoctorReport, fixPort, patchShortcuts } = await import("./doctor");
+
+  if (options.fixPort) {
+    info(`Restarting Superhuman gracefully with --remote-debugging-port=${options.port}...`);
+    const result = await fixPort(options.port);
+    if (result.ok) {
+      success(result.message);
+    } else {
+      error(result.message);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (options.patchShortcut) {
+    const result = await patchShortcuts(options.port);
+    for (const message of result.messages) {
+      info(message);
+    }
+    if (result.patched.length > 0) {
+      success(`Patched ${result.patched.length} shortcut(s)`);
+    }
+    return;
+  }
+
+  info(`Running diagnostics (port ${options.port})...`);
+  const report = await collectDoctorReport(options.port);
+  console.log(formatDoctorReport(report));
 }
 
 /**
@@ -3671,6 +3724,10 @@ async function main() {
 
     case "status":
       await cmdStatus(options);
+      break;
+
+    case "doctor":
+      await cmdDoctor(options);
       break;
 
     // account list|switch|auth

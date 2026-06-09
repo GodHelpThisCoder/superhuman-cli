@@ -180,6 +180,12 @@ export function hasValidCachedTokens(): boolean {
  * @param email - Account email
  * @returns Token info if valid/refreshed, undefined otherwise
  */
+// Negative-result cooldown: after a failed refresh, don't re-fire HTTP refresh
+// attempts for the same account on every tool call (the expired entry stays in
+// the cache, so without this each call retries the same doomed refresh).
+const REFRESH_FAILURE_COOLDOWN_MS = 60_000;
+const refreshFailureAt = new Map<string, number>();
+
 export async function getCachedToken(
   email: string,
 ): Promise<TokenInfo | undefined> {
@@ -189,16 +195,23 @@ export async function getCachedToken(
   const bufferMs = 5 * 60 * 1000; // 5 minutes
   if (token.expires < Date.now() + bufferMs) {
     // Token expired or expiring soon — try to refresh
+    const lastFailure = refreshFailureAt.get(email);
+    if (lastFailure && Date.now() - lastFailure < REFRESH_FAILURE_COOLDOWN_MS) {
+      // Recent refresh failure — don't hammer the token endpoint
+      return undefined;
+    }
     if (token.refreshToken) {
       const { refreshWithLock } = await import("./token-refresh");
       const refreshed = await refreshWithLock(email, token);
       if (refreshed) {
+        refreshFailureAt.delete(email);
         tokenCache.set(email, refreshed);
         await saveTokensToDisk();
         return refreshed;
       }
     }
     // Refresh failed or no refresh token
+    refreshFailureAt.set(email, Date.now());
     log.warn(`Token for ${email} expired. Run 'superhuman account auth' to re-authenticate.`);
     return undefined;
   }

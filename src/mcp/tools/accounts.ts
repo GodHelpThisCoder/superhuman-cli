@@ -3,13 +3,8 @@
  */
 
 import { z } from "zod";
-import {
-  connectToSuperhuman,
-  disconnect,
-  type SuperhumanConnection,
-} from "../../superhuman-api";
 import { listAccounts, switchAccount } from "../../accounts";
-import { successResult, errorResult, actionableError, resolveCurrentAccountViaCDP, guardMutation, auditMutation, auditDryRun, warmResolvedEmailCache, CDP_PORT, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, resolveCurrentAccountViaCDP, guardMutation, auditMutation, auditDryRun, warmResolvedEmailCache, getCdpConnection, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -28,14 +23,10 @@ export const SwitchAccountSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export async function accountsHandler(_args: z.infer<typeof AccountsSchema>): Promise<ToolResult> {
-  let conn: SuperhumanConnection | null = null;
-
   try {
-    conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
-    }
-
+    // Shared cached connection — launch policy delegated to the lifecycle
+    // manager; do NOT disconnect (it is reused by subsequent tool calls).
+    const conn = await getCdpConnection();
     const accounts = await listAccounts(conn);
 
     // Warm the resolved-email cache so subsequent parallel tool calls
@@ -60,8 +51,6 @@ export async function accountsHandler(_args: z.infer<typeof AccountsSchema>): Pr
     return successResult(`Linked accounts:\n\n${accountsText}`);
   } catch (error) {
     return actionableError("Failed to list accounts", error);
-  } finally {
-    if (conn) await disconnect(conn);
   }
 }
 
@@ -94,14 +83,9 @@ export async function switchAccountHandler(args: z.infer<typeof SwitchAccountSch
   }
 
   const account = args.account;
-  let conn: SuperhumanConnection | null = null;
 
   try {
-    conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
-    }
-
+    const conn = await getCdpConnection();
     const accounts = await listAccounts(conn);
 
     if (accounts.length === 0) {
@@ -134,6 +118,10 @@ export async function switchAccountHandler(args: z.infer<typeof SwitchAccountSch
     const result = await switchAccount(conn, targetEmail);
 
     if (result.success) {
+      // Warm the resolved-email cache immediately — otherwise getMcpProvider()
+      // keeps returning the PREVIOUS account's tokens for up to 30s after a
+      // switch (wrong-account operations).
+      warmResolvedEmailCache(result.email);
       const toolResult = successResult(`Switched to ${result.email}`);
       auditMutation("superhuman_switch_account", args as Record<string, unknown>, account, toolResult);
       return toolResult;
@@ -146,7 +134,5 @@ export async function switchAccountHandler(args: z.infer<typeof SwitchAccountSch
     const toolResult = actionableError("Failed to switch account", error);
     auditMutation("superhuman_switch_account", args as Record<string, unknown>, "unknown", toolResult);
     return toolResult;
-  } finally {
-    if (conn) await disconnect(conn);
   }
 }
