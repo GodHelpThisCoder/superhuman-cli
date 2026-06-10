@@ -10,7 +10,6 @@
  *   src/api/http-utils.ts      — authenticated fetch helpers
  *   src/api/gmail-client.ts    — Gmail / MS Graph email operations
  *   src/api/calendar-client.ts — Google Calendar / MS Graph calendar
- *   src/api/contacts-client.ts — People API contact search
  *   src/api/superhuman-backend.ts — Superhuman AI endpoints
  *
  * Existing consumers continue to work via these re-exports.
@@ -25,7 +24,6 @@ export type {
   Label,
   AttachmentInfo,
   ThreadInfoDirect,
-  DraftMessage,
   CalendarEventDirect,
   CreateCalendarEventInput,
   UpdateCalendarEventInput,
@@ -104,10 +102,7 @@ export {
   sendEmail as sendEmailDirect,
   createReplyDraft as createReplyDraftDirect,
   sendReply as sendReplyDirect,
-  updateDraft as updateDraftDirect,
-  deleteDraft as deleteDraftDirect,
   sendDraft as sendDraftDirect,
-  listDrafts as listDraftsDirect,
   modifyThreadLabels,
   updateMessage,
   moveMessageToFolder,
@@ -130,10 +125,6 @@ export {
   getFreeBusy as getFreeBusyDirect,
 } from "./api/calendar-client";
 
-// ---- Contacts --------------------------------------------------------------
-
-export { searchContacts as searchContactsDirect } from "./api/contacts-client";
-
 // ---- Superhuman AI ---------------------------------------------------------
 
-export { askAI, askAISearch } from "./api/superhuman-backend";
+export { askAISearch } from "./api/superhuman-backend";

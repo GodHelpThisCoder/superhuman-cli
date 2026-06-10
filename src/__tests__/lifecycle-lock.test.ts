@@ -189,6 +189,105 @@ describe("lifecycle lock (unit, injected deps)", () => {
   });
 });
 
+describe("tryAcquireLock — verify-after-create (TOCTOU guard)", () => {
+  // WHY THERE IS NO FULL INTERLEAVING TEST: the race this guard closes lives
+  // INSIDE a single synchronous tryAcquireLock call — a rival candidate
+  // holding the same stale snapshot unlinks OUR just-created lock between our
+  // tryCreate and our return. lock.ts deliberately exposes no fs-level
+  // injection seam (LockDeps injects clock/pid/path, not fs operations), so
+  // the interleaving cannot be reproduced deterministically in-process.
+  // Instead we pin BOTH halves of the fix's contract:
+  //   1. the observable invariant — takeover success implies the on-disk lock
+  //      names this process at return time (verify-after-create passed), and
+  //   2. a source-level tripwire — the takeover path's return value IS the
+  //      ownership verification, not the blind result of the create.
+  // The multi-process contention suite below exercises the real create race.
+  let tl: TestLock;
+
+  beforeEach(() => {
+    tl = makeTestLock();
+  });
+
+  afterEach(() => {
+    rmSync(tl.dir, { recursive: true, force: true });
+  });
+
+  test("invariant: stale-takeover success implies verified on-disk ownership", () => {
+    const mtimeMs = writeForeignLock(tl.lockPath);
+    tl.clock.t = mtimeMs + 1_000;
+    tl.alive.value = false; // dead owner -> stale -> takeover (unlink + create) path
+
+    expect(tryAcquireLock(tl.deps)).toBe(true);
+    // The fix guarantees: a true return means the file on disk names US.
+    expect(verifyLockOwnership(tl.deps)).toBe(true);
+    expect(JSON.parse(readFileSync(tl.lockPath, "utf8")).pid).toBe(process.pid);
+
+    // And the moment a rival overwrites the file, ownership is gone — the
+    // exact post-create check the takeover path performs before claiming
+    // leadership.
+    writeForeignLock(tl.lockPath);
+    expect(verifyLockOwnership(tl.deps)).toBe(false);
+  });
+
+  test("source tripwire: takeover path returns verifyLockOwnership(deps), not a blind create result", () => {
+    const src = readFileSync(join(import.meta.dir, "..", "lifecycle", "lock.ts"), "utf8");
+    const fnStart = src.indexOf("export function tryAcquireLock");
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = src.indexOf("export function", fnStart + 1);
+    const body = src.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
+
+    // The takeover path starts at the unlink of the stale lock.
+    const unlinkIdx = body.indexOf("unlinkSync");
+    expect(unlinkIdx).toBeGreaterThan(-1);
+    const takeoverTail = body.slice(unlinkIdx);
+
+    // Post-takeover-create, the function must claim leadership ONLY via the
+    // ownership re-read. If this trips after an intentional refactor, make
+    // sure the verify-after-create semantics survived, then update this test.
+    expect(takeoverTail).toContain("return verifyLockOwnership(deps);");
+    // The pre-fix shape — trusting the create alone — must not come back.
+    expect(takeoverTail).not.toContain("return tryCreate");
+    expect(takeoverTail).not.toContain("return true");
+  });
+});
+
+describe("defaultLockDeps — SUPERHUMAN_LOCK_STALE_MS clamp", () => {
+  const ORIG = process.env.SUPERHUMAN_LOCK_STALE_MS;
+
+  afterEach(() => {
+    if (ORIG === undefined) {
+      delete process.env.SUPERHUMAN_LOCK_STALE_MS;
+    } else {
+      process.env.SUPERHUMAN_LOCK_STALE_MS = ORIG;
+    }
+  });
+
+  test('negative override ("-5") is clamped to the 90s default', () => {
+    process.env.SUPERHUMAN_LOCK_STALE_MS = "-5";
+    expect(defaultLockDeps().staleAfterMs).toBe(STALE_AFTER_MS);
+  });
+
+  test('zero override ("0") is clamped to the 90s default (would cause leader churn)', () => {
+    process.env.SUPERHUMAN_LOCK_STALE_MS = "0";
+    expect(defaultLockDeps().staleAfterMs).toBe(STALE_AFTER_MS);
+  });
+
+  test('sub-floor override ("999") is clamped to the 90s default', () => {
+    process.env.SUPERHUMAN_LOCK_STALE_MS = "999";
+    expect(defaultLockDeps().staleAfterMs).toBe(STALE_AFTER_MS);
+  });
+
+  test('sane override ("5000") is honored', () => {
+    process.env.SUPERHUMAN_LOCK_STALE_MS = "5000";
+    expect(defaultLockDeps().staleAfterMs).toBe(5_000);
+  });
+
+  test("non-numeric override falls back to the default", () => {
+    process.env.SUPERHUMAN_LOCK_STALE_MS = "ninety seconds";
+    expect(defaultLockDeps().staleAfterMs).toBe(STALE_AFTER_MS);
+  });
+});
+
 describe("lifecycle lock (multi-process contention)", () => {
   const FIXTURE = join(import.meta.dir, "fixtures", "acquire-lock.ts");
   const CANDIDATES = 5;

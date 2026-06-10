@@ -28,8 +28,8 @@ import {
   SnippetsSchema, UseSnippetSchema,
   snippetsHandler, useSnippetHandler,
   AskAISchema, askAIHandler,
-  AgentSessionsSchema, AgentSessionReadSchema, AgentSessionDiscardSchema, AgentSessionRestoreSchema,
-  agentSessionsHandler, agentSessionReadHandler, agentSessionDiscardHandler, agentSessionRestoreHandler,
+  AgentSessionsSchema, AgentSessionReadSchema,
+  agentSessionsHandler, agentSessionReadHandler,
 } from "./tools";
 import { AuditLogSchema, auditLogHandler } from "./tools/audit";
 import { StatusSchema, statusHandler } from "./tools/status";
@@ -41,7 +41,7 @@ function createMcpServer(): McpServer {
     { name: "superhuman-cli", version: APP_VERSION },
     {
       capabilities: { tools: {} },
-      instructions: `Superhuman email and calendar automation server (47 tools).
+      instructions: `Superhuman email and calendar automation server (45 tools).
 
 WORKFLOW: Use superhuman_accounts first to see available accounts. Use superhuman_inbox or superhuman_search to find emails — these return thread IDs needed by all action tools.
 
@@ -49,11 +49,13 @@ SEARCH: superhuman_search accepts limit (1–50, default 10) and returns totalRe
 
 READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_download_attachment, superhuman_calendar_list, superhuman_calendar_free_busy, superhuman_audit_log, superhuman_agent_sessions, superhuman_agent_session_read, superhuman_sender_summary, superhuman_collect_thread_ids, superhuman_status.
 
-WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_create_label, superhuman_add_label, superhuman_add_label_by_query, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai, superhuman_agent_session_restore, superhuman_unarchive.
+WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_create_label, superhuman_add_label, superhuman_add_label_by_query, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai, superhuman_unarchive.
+
+DRAFTS: superhuman_draft creates drafts in Superhuman's own draft store, so they appear in the app's Drafts view. Drafts do not support programmatic attachments — use superhuman_send (full attachment support) or attach in the app. NOTE: reply/reply_all/forward in default (no-send) mode create PROVIDER drafts (Gmail/Outlook), which do NOT appear in Superhuman's Drafts view — for user-reviewable replies, present the text in conversation and use send=true after approval.
 
 CONFIRMATION TOOL: superhuman_confirm (executes a previously staged mutation token).
 
-DESTRUCTIVE TOOLS (irreversible): superhuman_archive, superhuman_archive_by_query, superhuman_delete, superhuman_calendar_delete, superhuman_agent_session_discard.
+DESTRUCTIVE TOOLS (irreversible): superhuman_archive, superhuman_archive_by_query, superhuman_delete, superhuman_calendar_delete.
 
 BULK ARCHIVE: superhuman_archive_by_query runs a query, collects ALL matching threads (paginated), and stages them for archive in one confirmation step. Use dryRun:true to preview. Max 500 threads per call. Ideal for sweeping entire senders (e.g. query: "from:noreply@example.com"). Supports excludeThreadIds to protect specific threads from archiving.
 
@@ -120,7 +122,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_draft",
     {
-      description: "Create an email draft via Gmail/Outlook API using cached OAuth tokens. Supports file attachments (base64-encoded).",
+      description: "Create an email draft in Superhuman's own draft store — it appears in the app's Drafts view for review before sending. No attachment support (use superhuman_send for attachments, or attach in the app).",
       inputSchema: DraftSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -140,7 +142,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_reply",
     {
-      description: "Reply to an email thread. Creates a draft by default, or sends immediately with send=true. The reply is addressed to the sender of the last message in the thread. Supports file attachments.",
+      description: "Reply to an email thread. Sends immediately with send=true; without it, creates a PROVIDER (Gmail/Outlook) draft that will NOT appear in Superhuman's Drafts view — for user review, present the reply text in conversation first. The reply is addressed to the sender of the last message in the thread. Supports file attachments.",
       inputSchema: ReplySchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
@@ -150,7 +152,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_reply_all",
     {
-      description: "Reply-all to an email thread. Creates a draft by default, or sends immediately with send=true. The reply is addressed to all recipients of the last message (excluding yourself). Supports file attachments.",
+      description: "Reply-all to an email thread. Sends immediately with send=true; without it, creates a PROVIDER (Gmail/Outlook) draft that will NOT appear in Superhuman's Drafts view — for user review, present the reply text in conversation first. The reply is addressed to all recipients of the last message (excluding yourself). Supports file attachments.",
       inputSchema: ReplyAllSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
@@ -160,7 +162,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_forward",
     {
-      description: "Forward an email thread to a new recipient. Creates a draft by default, or sends immediately with send=true. Includes the original message with forwarding headers. Supports file attachments.",
+      description: "Forward an email thread to a new recipient. Sends immediately with send=true; without it, creates a PROVIDER (Gmail/Outlook) draft that will NOT appear in Superhuman's Drafts view. Includes the original message with forwarding headers. Supports file attachments.",
       inputSchema: ForwardSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
@@ -501,26 +503,6 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     agentSessionReadHandler
-  );
-
-  server.registerTool(
-    "superhuman_agent_session_discard",
-    {
-      description: "Discard (soft-delete) an AI sidebar conversation. The session can be restored later with superhuman_agent_session_restore. Requires a session ID from superhuman_agent_sessions.",
-      inputSchema: AgentSessionDiscardSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    agentSessionDiscardHandler
-  );
-
-  server.registerTool(
-    "superhuman_agent_session_restore",
-    {
-      description: "Restore a previously discarded AI sidebar conversation. Use superhuman_agent_sessions with include_discarded=true to find discarded sessions.",
-      inputSchema: AgentSessionRestoreSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    agentSessionRestoreHandler
   );
 
   // ---- Confirm (two-phase commit) ----

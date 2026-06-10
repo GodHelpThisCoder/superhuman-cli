@@ -1,6 +1,10 @@
 /**
  * MCP tool handlers for composing emails: draft, send, reply, reply-all, forward.
- * Supports optional file attachments via a two-step flow (create draft → add attachments).
+ *
+ * send/reply/reply-all/forward support optional file attachments via a
+ * two-step flow (create provider draft → add attachments → send).
+ * superhuman_draft is the exception: it writes to Superhuman's NATIVE draft
+ * store (so drafts appear in the app) and takes no attachments.
  */
 
 import { z } from "zod";
@@ -12,8 +16,9 @@ import {
   sendDraftByIdViaProvider,
 } from "../../send-api";
 import { addAttachmentToDraft } from "../../token-api";
+import { createDraftWithUserInfo } from "../../draft-api";
 import type { ConnectionProvider } from "../../connection-provider";
-import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, getMcpProvider, getUserInfoFromProvider, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -105,7 +110,11 @@ function splitEmailsOpt(s: string | undefined): string[] | undefined {
   return result.length > 0 ? result : undefined;
 }
 
-export const DraftSchema = EmailSchema;
+// Drafts are created in SUPERHUMAN'S OWN draft store (so they appear in the
+// app's Drafts view — Gmail API drafts never do). That store has no
+// programmatic attachment support, so the draft tool takes no attachments;
+// superhuman_send keeps full attachment support via the Gmail draft+send flow.
+export const DraftSchema = EmailSchema.omit({ attachments: true });
 export const SendSchema = EmailSchema;
 
 export const ReplySchema = z.object({
@@ -151,7 +160,13 @@ export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<T
     const provider = await getMcpProvider();
     const account = await provider.getCurrentEmail();
     const htmlBody = textToHtml(args.body);
-    const result = await createDraftViaProvider(provider, {
+
+    // Create the draft in Superhuman's OWN draft store (same proven path the
+    // snippet tool uses). Gmail-API drafts (the old createDraftViaProvider
+    // path) reported success but never appeared in Superhuman's Drafts view —
+    // the app only reads its own store.
+    const userInfo = await getUserInfoFromProvider(provider);
+    const result = await createDraftWithUserInfo(userInfo, {
       to: splitEmails(args.to),
       subject: args.subject,
       body: htmlBody,
@@ -165,18 +180,10 @@ export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<T
       return toolResult;
     }
 
-    // Add attachments if provided
-    if (args.attachments && args.attachments.length > 0) {
-      const attError = await addAttachments(provider, result.draftId, args.attachments);
-      if (attError) {
-        const toolResult = errorResult(`Draft created (${result.draftId}) but ${attError}`);
-        auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
-        return toolResult;
-      }
-    }
-
-    const attSuffix = args.attachments?.length ? `\nAttachments: ${args.attachments.length}` : "";
-    const toolResult = successResult(`Draft created successfully\nDraft ID: ${result.draftId}${attSuffix}`);
+    // threadId is included because it's the only moment it is known — the
+    // Superhuman store addresses drafts by (threadId, draftId), and there is
+    // no programmatic delete/update, so this is the manual-recovery handle.
+    const toolResult = successResult(`Draft created in Superhuman's Drafts view\nDraft ID: ${result.draftId}\nThread ID: ${result.threadId}\nTo: ${args.to}\nSubject: ${args.subject}`);
     auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } catch (error) {

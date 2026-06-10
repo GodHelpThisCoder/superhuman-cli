@@ -13,7 +13,7 @@
  */
 
 import { test, expect, describe, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -342,5 +342,185 @@ describe("LifecycleManager — ensureReady (tool-call gate)", () => {
 
     expect(await h.mgr.requestLaunch(PORT)).toBe(true);
     expect(h.launchCalls.length).toBe(1);
+  });
+});
+
+/**
+ * Drive a fresh leader to gave_up: launch always fails; advance the clock past
+ * each backoff step until MAX_RELAUNCH_FAILURES is hit.
+ */
+async function driveToGaveUp(h: Harness): Promise<void> {
+  h.setLaunch(async () => false);
+
+  await h.mgr.tickOnce(); // become leader, classify down, launch #1 fails
+  for (let i = 0; i < MAX_RELAUNCH_FAILURES - 1; i++) {
+    h.clock.t += BACKOFF_SCHEDULE_MS[i]! + 1_000;
+    await h.mgr.tickOnce(); // launch #(i+2) fails
+  }
+
+  expect(h.launchCalls.length).toBe(MAX_RELAUNCH_FAILURES);
+  expect(h.mgr.getStatus().state).toBe("gave_up");
+}
+
+describe("LifecycleManager — launch-in-flight classification guard", () => {
+  test("processProbe TRUE during our own launch never misclassifies as down_no_debug_port", async () => {
+    const h = makeManager({ readyWaitMs: 50 });
+    h.flags.cdp = false;
+    h.flags.proc = false; // nothing running yet — classification allows a launch
+    let resolveLaunch: ((ok: boolean) => void) | undefined;
+    h.setLaunch(() => new Promise<boolean>((r) => { resolveLaunch = r; }));
+
+    // KEEP-ALIVE QUIRK: ensureReady's readyWait timer is unref()ed (see the
+    // "launch hangs" test above) — a ref'ed interval keeps Bun's test event
+    // loop live while the only pending work is that timer + our held launch.
+    const keepAlive = setInterval(() => {}, 10);
+    try {
+      // Start the launch via ensureReady (a tick would AWAIT the held launch
+      // and block). It times out after readyWaitMs, leaving the launch in
+      // flight — exactly the window the guard protects.
+      const first = await h.mgr.ensureReady();
+      expect(first.ok).toBe(false);
+      expect(first.reason).toContain("still starting");
+      expect(h.launchCalls.length).toBe(1);
+      expect(h.mgr.getStatus().isLeader).toBe(true);
+
+      // The spawned process appears in the process table BEFORE CDP opens.
+      h.flags.proc = true;
+
+      // (a) Health tick: must report "down (launch in progress)" — NOT
+      // down_no_debug_port, whose message tells the user to restart the very
+      // app we are in the middle of starting.
+      await h.mgr.tickOnce();
+      const status = h.mgr.getStatus();
+      expect(status.state).toBe("down");
+      expect(status.state).not.toBe("down_no_debug_port");
+      expect(status.detail).toBe("launch in progress");
+
+      // (b) ensureReady joins the in-flight launch (no classification, no
+      // second launch) and returns the "still starting" reason — never the
+      // no-debug-port advice.
+      const second = await h.mgr.ensureReady();
+      expect(second.ok).toBe(false);
+      expect(second.reason).toContain("still starting");
+      expect(second.reason).not.toContain("--remote-debugging-port");
+      expect(h.launchCalls.length).toBe(1); // coalesced — no second spawn
+
+      // Launch completes and CDP comes up — full recovery.
+      h.flags.cdp = true;
+      resolveLaunch!(true);
+      await Bun.sleep(10); // let the launch continuation clear launchInFlight
+      h.flags.proc = false;
+      await h.mgr.tickOnce();
+      expect(h.mgr.getStatus().state).toBe("ready");
+      expect((await h.mgr.ensureReady()).ok).toBe(true);
+      expect(h.launchCalls.length).toBe(1);
+    } finally {
+      clearInterval(keepAlive);
+    }
+  });
+});
+
+describe("LifecycleManager — gave_up does not survive re-election", () => {
+  test("demotion then takeover resets the failure counter and re-enables launching", async () => {
+    // pidAlive is mutable per-pid: the foreign leader is alive during the
+    // demotion phase, then dies so its lock goes stale.
+    const foreignAlive = { value: true };
+    const h = makeManager({
+      pidAlive: (pid) => (pid === FOREIGN_PID ? foreignAlive.value : true),
+    });
+
+    await driveToGaveUp(h);
+
+    // Another instance takes over the lock (e.g. after sleep/resume) — demote.
+    writeForeignLock(h.lockPath);
+    await h.mgr.tickOnce(); // leaderTick -> verifyLockOwnership false -> demote
+    expect(h.mgr.getStatus().isLeader).toBe(false);
+    expect(h.launchCalls.length).toBe(MAX_RELAUNCH_FAILURES); // followers never launch
+
+    // The foreign leader dies -> its lock is stale (dead pid) -> takeover.
+    foreignAlive.value = false;
+    await h.mgr.tickOnce(); // followerTick -> tryAcquireLock -> becomeLeader -> leaderTick
+
+    const status = h.mgr.getStatus();
+    expect(status.isLeader).toBe(true);
+    // becomeLeader() must reset the terminal state: a re-elected leader stuck
+    // in gave_up would never launch again.
+    expect(status.state).not.toBe("gave_up");
+    // The failure counter was reset, so the SAME re-election tick already
+    // attempted a fresh launch (which failed -> "down" with fresh backoff).
+    expect(h.launchCalls.length).toBe(MAX_RELAUNCH_FAILURES + 1);
+    expect(status.state).toBe("down");
+
+    // And launching keeps working on subsequent down-state ticks.
+    h.clock.t += BACKOFF_SCHEDULE_MS[0]! + 1_000;
+    await h.mgr.tickOnce();
+    expect(h.launchCalls.length).toBe(MAX_RELAUNCH_FAILURES + 2);
+  });
+});
+
+describe("LifecycleManager — gave_up keyed on the failure counter, not the state label", () => {
+  test("a down_no_debug_port excursion does not re-enable launching", async () => {
+    const h = makeManager();
+    await driveToGaveUp(h);
+
+    // Excursion: the user starts Superhuman WITHOUT the debug port. The state
+    // label leaves "gave_up"...
+    h.flags.proc = true;
+    await h.mgr.tickOnce();
+    expect(h.mgr.getStatus().state).toBe("down_no_debug_port");
+    expect(h.launchCalls.length).toBe(MAX_RELAUNCH_FAILURES);
+
+    // ...then the app closes again. If give-up were keyed on the state label,
+    // the excursion would have erased it and (with every backoff window long
+    // expired) this tick would launch. The counter (still >= max) must keep
+    // launching disabled.
+    h.flags.proc = false;
+    h.clock.t += 100 * BACKOFF_SCHEDULE_MS[BACKOFF_SCHEDULE_MS.length - 1]!;
+    await h.mgr.tickOnce();
+    expect(h.launchCalls.length).toBe(MAX_RELAUNCH_FAILURES); // NO new launch
+    expect(h.mgr.getStatus().state).toBe("gave_up"); // re-enters gave_up
+
+    // ensureReady is equally passive.
+    const result = await h.mgr.ensureReady();
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("paused");
+    expect(h.launchCalls.length).toBe(MAX_RELAUNCH_FAILURES);
+  });
+});
+
+describe("LifecycleManager — heartbeatIfLeader", () => {
+  test("leader with a fresh owned lock: heartbeat bumps mtime to the injected clock", async () => {
+    const h = makeManager();
+    h.flags.cdp = true;
+    await h.mgr.tickOnce(); // become leader + ready (leaderTick heartbeats to clock.t)
+    expect(h.mgr.getStatus().isLeader).toBe(true);
+
+    const before = statSync(h.lockPath).mtimeMs;
+    h.clock.t += 45_000;
+    h.mgr.heartbeatIfLeader();
+
+    const after = statSync(h.lockPath).mtimeMs;
+    expect(after).toBeGreaterThan(before);
+    // utimesSync sets mtime to the injected lockDeps.now (FS-resolution slack)
+    expect(Math.abs(after - h.clock.t)).toBeLessThan(10);
+    expect(h.mgr.getStatus().isLeader).toBe(true); // still leader
+  });
+
+  test("lock stolen by a foreign pid: heartbeat demotes and does NOT touch the file", async () => {
+    const h = makeManager();
+    h.flags.cdp = true;
+    await h.mgr.tickOnce();
+    expect(h.mgr.getStatus().isLeader).toBe(true);
+
+    writeForeignLock(h.lockPath); // rival took over
+    const stolenMtime = statSync(h.lockPath).mtimeMs;
+    h.clock.t += 45_000;
+    h.mgr.heartbeatIfLeader();
+
+    expect(h.mgr.getStatus().isLeader).toBe(false); // demoted
+    // Freshening a rival's lock would extend its lease after a takeover —
+    // the heartbeat must verify ownership FIRST and leave the file alone.
+    expect(statSync(h.lockPath).mtimeMs).toBe(stolenMtime);
+    expect(JSON.parse(readFileSync(h.lockPath, "utf8")).pid).toBe(FOREIGN_PID);
   });
 });

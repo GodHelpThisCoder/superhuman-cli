@@ -11,7 +11,7 @@
  *   tools/accounts.ts     — list/switch accounts
  *   tools/snippets.ts     — list/use snippets
  *   tools/ai.ts           — ask AI
- *   tools/agent-sessions.ts — list/read/discard/restore agent sessions
+ *   tools/agent-sessions.ts — list/read agent sessions (discard/restore dropped in v0.16.0)
  *
  * Existing consumers continue to work via these re-exports.
  */
@@ -125,13 +125,9 @@ export {
   AskAISchema,
   askAIHandler,
 
-  // Agent Sessions
+  // Agent Sessions (read-only; discard/restore dropped in v0.16.0)
   AgentSessionsSchema,
   AgentSessionReadSchema,
-  AgentSessionDiscardSchema,
-  AgentSessionRestoreSchema,
   agentSessionsHandler,
   agentSessionReadHandler,
-  agentSessionDiscardHandler,
-  agentSessionRestoreHandler,
 } from "./tools/index";

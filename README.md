@@ -1,6 +1,8 @@
 # superhuman-cli
 
-CLI and MCP server to control [Superhuman](https://superhuman.com) email client via Chrome DevTools Protocol (CDP).
+MCP server (45 tools) plus a diagnostics-only CLI to control [Superhuman](https://superhuman.com) email client via Chrome DevTools Protocol (CDP).
+
+All email, label, calendar, snippet, and compose operations are exposed through the **MCP server**. The CLI is a small companion for connection diagnostics, log inspection, and the safety kill switch.
 
 ## Requirements
 
@@ -21,81 +23,42 @@ bun install
 "%LOCALAPPDATA%\Programs\Superhuman\Superhuman.exe" --remote-debugging-port=9333
 ```
 
-## CLI Usage
+## CLI Usage (diagnostics only)
 
 ```bash
 # Check connection status
 superhuman status
 
-# Account management
-superhuman account auth
+# Full diagnostics: CDP, process, lock, pending updates, tokens, shortcuts
+superhuman doctor
+superhuman doctor --fix-port        # Gracefully restart Superhuman with the debug port
+superhuman doctor --patch-shortcut  # Add the debug-port flag to Windows shortcuts
+
+# Ensure Superhuman is running with the CDP debug port
+superhuman launch
+
+# Inspect the MCP server log file
+superhuman logs              # Last 50 lines
+superhuman logs -n 200       # Last 200 lines
+superhuman logs --follow     # Poll for new lines (Ctrl+C to stop)
+
+# Accounts (connection repair)
 superhuman account list
-superhuman account switch 2
-superhuman account switch user@example.com
+superhuman account list --json
+superhuman account auth      # Extract and cache OAuth tokens
 ```
 
-### Reading Email
+### Safety (kill switch)
 
 ```bash
-# List recent inbox emails
-superhuman inbox
-superhuman inbox --limit 20 --json
+# Activate kill switch — blocks all mutations until deactivated
+superhuman kill "reason for suspension"
 
-# Search emails
-superhuman search "from:john subject:meeting"
-superhuman search "project update" --limit 20
-superhuman search "from:anthropic" --include-done    # Search all including archived
-
-# Read a specific thread (requires --account)
-superhuman read <thread-id> --account user@gmail.com
-superhuman read <thread-id> --account user@gmail.com --context 3   # Full body for last 3 only
-superhuman read <thread-id> --account user@gmail.com --json
+# Deactivate kill switch
+superhuman unkill
 ```
 
-### Ask AI
-
-Use Superhuman's AI to search emails, answer questions, or ask about specific threads:
-
-```bash
-# Search emails with natural language
-superhuman ai "find emails about the Stanford cover letter"
-superhuman ai "what did John say about the deadline?"
-
-# Compose with AI
-superhuman ai "Write an email inviting the team to a planning meeting"
-
-# Ask about a specific thread
-superhuman ai <thread-id> "summarize this thread"
-superhuman ai <thread-id> "what are the action items?"
-superhuman ai <thread-id> "draft a professional reply"
-```
-
-The AI automatically determines whether to search, compose, or answer based on your prompt.
-
-### Contacts
-
-```bash
-# Search contacts by name
-superhuman contact search "john"
-superhuman contact search "john" --limit 5 --json
-
-# Search contacts in a specific account (without switching UI)
-superhuman contact search "john" --account user@gmail.com
-```
-
-### Multi-Account Support
-
-The `--account` flag allows operations on any linked account without switching the Superhuman UI:
-
-```bash
-# Search contacts in a specific account
-superhuman contact search "john" --account user@gmail.com
-
-# Works with both Gmail and Microsoft/Outlook accounts
-superhuman contact search "john" --account user@company.com
-```
-
-**How it works:** The CLI extracts OAuth tokens directly from Superhuman and makes API calls to Gmail or Microsoft Graph. Tokens are cached to disk with automatic background refresh when expiring.
+The audit log of mutations is available through the MCP `superhuman_audit_log` tool.
 
 ### Token Management
 
@@ -109,232 +72,18 @@ superhuman account auth
 
 Tokens are stored in `~/.config/superhuman-cli/tokens.json` and automatically refreshed using OAuth refresh tokens when they expire (within 5 minutes of expiry). No CDP connection is needed for token refresh.
 
-### Composing Email
-
-Recipients can be specified as email addresses or contact names. Names are automatically resolved to email addresses via contact search. All compose tools (draft, send, reply, reply-all, forward) support file attachments via MCP.
-
-> **Dry-run mode:** All mutating tools accept `--dry-run` (CLI) or `dryRun: true` (MCP) to preview the operation without executing it.
-
-```bash
-# Create a draft (using email or name)
-superhuman draft create --to user@example.com --subject "Hello" --body "Hi there!"
-superhuman draft create --to "john" --subject "Hello" --body "Hi there!"
-
-# List drafts (shows both provider and native Superhuman drafts)
-superhuman draft list
-superhuman draft list --account user@example.com
-superhuman draft list --to jon@example.com        # Filter by recipient
-superhuman draft list --subject "Meeting notes"   # Filter by subject
-superhuman draft list --json                      # JSON output for scripting
-
-# Open compose window (keeps it open for editing)
-superhuman compose --to user@example.com --subject "Meeting"
-superhuman compose --to "john" --cc "jane" --subject "Meeting"
-
-# Send an email
-superhuman send --to user@example.com --subject "Quick note" --body "FYI"
-
-# Reply to a thread
-superhuman reply <thread-id> --body "Thanks!"
-superhuman reply <thread-id> --body "Thanks!" --send
-
-# Reply-all
-superhuman reply-all <thread-id> --body "Thanks everyone!"
-
-# Forward
-superhuman forward <thread-id> --to colleague@example.com --body "FYI"
-
-# Update a draft
-superhuman draft update <draft-id> --body "Updated content"
-
-# Delete drafts
-superhuman draft delete <draft-id>
-superhuman draft delete <draft-id1> <draft-id2>
-
-# Send a draft by ID
-superhuman send --draft <draft-id>
-
-# Send a Superhuman draft with content
-superhuman draft send <draft-id> --account=user@example.com --to=recipient@example.com --subject="Subject" --body="Body"
-```
-
-#### Attachments on Compose (MCP)
-
-When using MCP tools, all compose operations accept an optional `attachments` array. Each attachment requires:
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `filename` | Yes | Filename (e.g., `"report.pdf"`) |
-| `content` | Yes | Base64-encoded file content |
-| `mimeType` | No | MIME type (auto-detected from extension if omitted) |
-
-The two-step flow is handled internally: draft is created, attachments are added via Gmail/MS Graph API, then optionally sent. Auto-detected MIME types include: pdf, docx, xlsx, pptx, png, jpg, gif, csv, json, zip, mp3, mp4, and more.
-
-#### Draft Sources
-
-The `draft list` command shows drafts from multiple sources with a "Source" column:
-
-| Source | Description | Example ID |
-|--------|-------------|------------|
-| `native` | Superhuman-only drafts | `draft00ce4679cc58a64c` |
-| `gmail` | Synced to Gmail | Gmail message ID |
-| `outlook` | Synced to Outlook | Outlook message ID |
-
-Native Superhuman drafts (IDs starting with `draft00...`) are fetched from Superhuman's backend API and only exist in Superhuman. Provider-synced drafts are fetched from Gmail/Outlook APIs and are visible in native email clients.
-
-#### Drafts Limitation
-
-Drafts created via `draft create` use **native Gmail/Outlook APIs**, not Superhuman's proprietary draft system. This means:
-
-| Where | Visible? |
-|-------|----------|
-| Native Gmail/Outlook web | Yes |
-| Native mobile apps | Yes |
-| Superhuman UI | No |
-
-This is acceptable for CLI workflows where you iterate on drafts with LLMs and send via `--send` flag. If you need to edit in Superhuman UI, open the draft in native Gmail/Outlook first.
-
-### Managing Threads
-
-```bash
-# Archive
-superhuman archive <thread-id>
-superhuman archive <thread-id1> <thread-id2>
-
-# Delete (trash)
-superhuman delete <thread-id>
-
-# Mark as read/unread
-superhuman mark read <thread-id>
-superhuman mark unread <thread-id>
-
-# Star / Unstar
-superhuman star add <thread-id>
-superhuman star remove <thread-id>
-superhuman star list
-
-# Snooze / Unsnooze
-superhuman snooze set <thread-id> --until tomorrow
-superhuman snooze set <thread-id> --until next-week
-superhuman snooze set <thread-id> --until "2024-02-15T14:00:00Z"
-superhuman snooze cancel <thread-id>
-superhuman snooze list
-```
-
-### Safety
-
-```bash
-# Activate kill switch — blocks all mutations until deactivated
-bun run src/cli.ts kill
-
-# Deactivate kill switch
-bun run src/cli.ts unkill
-
-# View recent audit log entries
-bun run src/cli.ts audit
-```
-
-### Snippets
-
-Reusable email templates stored in Superhuman. Snippets support template variables like `{first_name}`.
-
-```bash
-# List all snippets
-superhuman snippet list
-superhuman snippet list --json
-
-# Use a snippet to create a draft (fuzzy name matching)
-superhuman snippet use "zoom link" --to user@example.com
-
-# Substitute template variables
-superhuman snippet use "share recordings" --to user@example.com --vars "date=Feb 5,student_name=Jane"
-
-# Send immediately using a snippet
-superhuman snippet use "share recordings" --to user@example.com --vars "date=Feb 5" --send
-```
-
-### Labels
-
-```bash
-# List all labels
-superhuman label list
-
-# Get labels on a thread
-superhuman label get <thread-id>
-
-# Add/remove labels
-superhuman label add <thread-id> --label Label_123
-superhuman label remove <thread-id> --label Label_123
-```
-
-### Attachments
-
-```bash
-# List attachments in a thread
-superhuman attachment list <thread-id>
-
-# Download all attachments from a thread
-superhuman attachment download <thread-id>
-superhuman attachment download <thread-id> --output ./downloads
-
-# Download specific attachment
-superhuman attachment download --attachment <attachment-id> --message <message-id> --output ./file.pdf
-```
-
-### Calendar
-
-> **Note:** For Claude Code workflows, use the `morgen` CLI for calendar operations instead — it supports proper calendar filtering. See the `/morgen` skill.
-
-```bash
-# List events
-superhuman calendar list
-superhuman calendar list --date tomorrow --range 7 --json
-
-# Create event
-superhuman calendar create --title "Meeting" --start "2pm" --duration 30
-superhuman calendar create --title "All Day" --date 2026-02-05
-
-# Update/delete event
-superhuman calendar update --event <event-id> --title "New Title"
-superhuman calendar delete --event <event-id>
-
-# Check availability
-superhuman calendar free
-superhuman calendar free --date tomorrow --range 7
-```
-
-### Options
+### CLI Options
 
 | Option | Description |
 |--------|-------------|
-| `--account <email>` | Account to operate on (default: current account) |
-| `--to <email\|name>` | Recipient email or name (names auto-resolved via contacts) |
-| `--cc <email\|name>` | CC recipient (can be used multiple times) |
-| `--bcc <email\|name>` | BCC recipient (can be used multiple times) |
-| `--subject <text>` | Email subject |
-| `--body <text>` | Email body (plain text, converted to HTML) |
-| `--html <text>` | Email body as raw HTML |
-| `--send` | Send immediately instead of saving draft (for reply/reply-all/forward/snippet) |
-| `--vars <pairs>` | Template variable substitution: `"key1=val1,key2=val2"` (for snippet use) |
-| `--draft <id>` | Draft ID to send (for send command) |
-| `--label <id>` | Label ID (for label add/remove) |
-| `--until <time>` | Snooze until time: preset or ISO datetime |
-| `--output <path>` | Output path for downloads |
-| `--attachment <id>` | Specific attachment ID |
-| `--message <id>` | Message ID (required with --attachment) |
-| `--limit <number>` | Number of results (default: 10) |
-| `--include-done` | Search all emails including archived (for search) |
-| `--context <number>` | Number of messages to show full body (default: all, for read) |
-| `--date <date>` | Date for calendar (YYYY-MM-DD or "today", "tomorrow") |
-| `--range <days>` | Days to show for calendar (default: 1) |
-| `--start <time>` | Event start time (ISO datetime or natural: "2pm", "tomorrow 3pm") |
-| `--end <time>` | Event end time (ISO datetime) |
-| `--duration <mins>` | Event duration in minutes (default: 30) |
-| `--title <text>` | Event title (for calendar create/update) |
-| `--event <id>` | Event ID (for calendar update/delete) |
-| `--calendar <name>` | Calendar name or ID (default: primary) |
-| `--json` | Output as JSON |
 | `--port <number>` | CDP port (default: 9333) |
+| `--json` | Output as JSON (for `account list`) |
+| `-n <number>` | Number of log lines to print (for `logs`, default: 50) |
+| `--follow` | Keep printing new log lines, 1s poll (for `logs`) |
+| `--fix-port` | (doctor) Gracefully restart Superhuman with the debug port |
+| `--patch-shortcut` | (doctor) Add the debug-port flag to Windows shortcuts |
+| `--verbose` | Enable debug logging |
+| `--version`, `-v` | Print version |
 
 ## Environment Variables
 
@@ -353,7 +102,7 @@ Run as an MCP server for Claude integration:
 bun src/index.ts --mcp
 ```
 
-### MCP Tools
+### MCP Tools (45)
 
 | Tool | Description |
 |------|-------------|
@@ -362,7 +111,7 @@ bun src/index.ts --mcp
 | `superhuman_read` | Read a thread |
 | `superhuman_sender_summary` | Get unique senders matching a query, grouped by email with thread counts |
 | `superhuman_collect_thread_ids` | Collect all thread IDs matching a query via pagination |
-| `superhuman_draft` | Create an email draft (supports attachments) |
+| `superhuman_draft` | Create a draft in Superhuman's native Drafts view (no attachments) |
 | `superhuman_send` | Send an email (supports attachments) |
 | `superhuman_reply` | Reply to a thread (supports attachments) |
 | `superhuman_reply_all` | Reply-all to a thread (supports attachments) |
@@ -399,10 +148,25 @@ bun src/index.ts --mcp
 | `superhuman_ask_ai` | Ask AI to search emails, answer questions, or compose |
 | `superhuman_agent_sessions` | List AI sidebar conversations (agent sessions) |
 | `superhuman_agent_session_read` | Read a specific agent session transcript |
-| `superhuman_agent_session_discard` | Discard (soft-delete) an agent session |
-| `superhuman_agent_session_restore` | Restore a discarded agent session |
+| `superhuman_status` | Report server version, lifecycle state, Superhuman process/CDP status, pending updates |
 | `superhuman_confirm` | Confirm a staged destructive operation using its `shm_` token |
 | `superhuman_audit_log` | View the JSONL mutation audit log with optional filters |
+
+> **Dry-run mode:** All mutating tools accept `dryRun: true` to preview the operation without executing it.
+
+#### Attachments on Compose
+
+The send, reply, reply-all, and forward tools accept an optional `attachments` array. Each attachment requires:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `filename` | Yes | Filename (e.g., `"report.pdf"`) |
+| `content` | Yes | Base64-encoded file content |
+| `mimeType` | No | MIME type (auto-detected from extension if omitted) |
+
+The two-step flow is handled internally: a provider draft is created, attachments are added via Gmail/MS Graph API, then the draft is sent. Auto-detected MIME types include: pdf, docx, xlsx, pptx, png, jpg, gif, csv, json, zip, mp3, mp4, and more.
+
+`superhuman_draft` is the exception: it writes to Superhuman's native draft store (so drafts appear in Superhuman's Drafts view) and does **not** support attachments.
 
 ### MCP Agent Guide
 
@@ -456,6 +220,10 @@ For batches >50 items, pass `force: true` to `superhuman_confirm`.
 - **`sender_summary`**: Returns top 50 senders matching a query, grouped by email with thread counts. Use before bulk operations.
 - **`collect_thread_ids`**: Read-only — returns all thread IDs matching a query. Use for building exclude lists.
 
+#### Calendar Note
+
+For Claude Code workflows, prefer the `morgen` CLI for calendar operations — it supports proper calendar filtering. See the `/morgen` skill.
+
 ### Claude Desktop Configuration
 
 Add to your Claude Desktop config:
@@ -489,9 +257,9 @@ Most operations use **direct Gmail API and Microsoft Graph API** calls with cach
 | Star | Add STARRED label | `PATCH /messages/{id}` with `flag` |
 | Attachments (read) | `GET /messages/{id}/attachments/{id}` | `GET /messages/{id}/attachments/{id}` |
 | Attachments (write) | MIME rebuild on draft | `POST /messages/{id}/attachments` |
-| Contacts | Google People API | MS Graph People API |
 | Calendar events | Google Calendar API | MS Graph Calendar API |
 | Free/busy | `POST /freeBusy` | `POST /me/calendar/getSchedule` |
+| Drafts (native) | Superhuman backend API | Superhuman backend API |
 | Snippets | Superhuman backend API | Superhuman backend API |
 
 OAuth tokens (including refresh tokens) are extracted from Superhuman and cached to disk. When tokens expire, they are automatically refreshed via OAuth endpoints without requiring CDP connection.
@@ -501,11 +269,12 @@ OAuth tokens (including refresh tokens) are extracted from Superhuman and cached
 Chrome DevTools Protocol is only needed for:
 
 - `account auth` — One-time token extraction from `window.GoogleAccount` (also stores AI user prefix)
-- `status` — Check Superhuman connection
-- `compose` — Open Superhuman's compose UI
+- `status` / `doctor` / `launch` — Connection diagnostics and app lifecycle
+- Account resolution — Determining which account is active in the Superhuman UI
+- Agent sessions — Reading AI sidebar conversations via Superhuman's portal API
 - `search` / `inbox` (when no cached tokens) — Fallback via Superhuman's portal API
 
-All other operations (read, reply, forward, draft, archive, delete, labels, star, snooze, attachments, calendar, contacts, snippets) use direct API with cached tokens.
+All other operations (read, reply, forward, draft, archive, delete, labels, star, snooze, attachments, calendar, snippets) use direct API with cached tokens.
 
 ### Benefits
 
@@ -514,7 +283,7 @@ All other operations (read, reply, forward, draft, archive, delete, labels, star
 - **Offline from CDP**: After initial `account auth`, most operations work without CDP
 - **Multi-account**: Cached tokens enable operating on any linked account
 
-Supports both Gmail and Microsoft/Outlook accounts.
+Supports both Gmail and Microsoft/Outlook accounts. Note for Outlook accounts: `superhuman_draft` writes to Superhuman's own draft store (drafts appear in the Superhuman app, not in the native Outlook/OWA Drafts folder), and this path has only been live-verified against Gmail accounts.
 
 ## License
 

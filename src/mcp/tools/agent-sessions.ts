@@ -1,12 +1,12 @@
 /**
  * MCP tool handlers for AI sidebar conversations (agent sessions):
- * list, read, discard, restore.
+ * list, read. (Discard/restore were dropped in v0.16.0 as unused —
+ * housekeeping happens in-app.)
  */
 
 import { z } from "zod";
 import type { SuperhumanConnection } from "../../superhuman-api";
-import { successResult, errorResult, actionableError, resolveCurrentAccountViaCDP, guardMutation, auditMutation, auditDryRun, getCdpConnection, type ToolResult } from "./shared";
-import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
+import { successResult, errorResult, actionableError, getCdpConnection, type ToolResult } from "./shared";
 
 // ---------------------------------------------------------------------------
 // Types (matching Superhuman internal shapes)
@@ -53,16 +53,6 @@ export const AgentSessionsSchema = z.object({
 
 export const AgentSessionReadSchema = z.object({
   sessionId: z.string().describe("The session UUID to read. Get session IDs from superhuman_agent_sessions."),
-}).strict();
-
-export const AgentSessionDiscardSchema = z.object({
-  sessionId: z.string().describe("The session UUID to discard. Get session IDs from superhuman_agent_sessions."),
-  dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
-}).strict();
-
-export const AgentSessionRestoreSchema = z.object({
-  sessionId: z.string().describe("The session UUID to restore. Use superhuman_agent_sessions with include_discarded=true to find discarded session IDs."),
-  dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 }).strict();
 
 // ---------------------------------------------------------------------------
@@ -199,34 +189,6 @@ export async function fetchSession(conn: SuperhumanConnection, sessionId: string
   return session;
 }
 
-/** Discard a session via CDP backend API. */
-export async function discardSessionViaCDP(conn: SuperhumanConnection, sessionId: string): Promise<void> {
-  await evalInRenderer<void>(conn, `
-    (async () => {
-      try {
-        const backend = window.GoogleAccount.di.get("backend");
-        await backend.discardAgentSession(${JSON.stringify(sessionId)});
-      } catch (e) {
-        throw new Error("Failed to discard agent session: " + (e.message || String(e)));
-      }
-    })()
-  `);
-}
-
-/** Restore a session via CDP backend API. */
-export async function restoreSessionViaCDP(conn: SuperhumanConnection, sessionId: string): Promise<void> {
-  await evalInRenderer<void>(conn, `
-    (async () => {
-      try {
-        const backend = window.GoogleAccount.di.get("backend");
-        await backend.restoreAgentSession(${JSON.stringify(sessionId)});
-      } catch (e) {
-        throw new Error("Failed to restore agent session: " + (e.message || String(e)));
-      }
-    })()
-  `);
-}
-
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -257,112 +219,3 @@ export async function agentSessionReadHandler(args: z.infer<typeof AgentSessionR
   }
 }
 
-export async function agentSessionDiscardHandler(args: z.infer<typeof AgentSessionDiscardSchema>): Promise<ToolResult> {
-  const _t0 = performance.now();
-
-  if (args.dryRun) {
-    auditDryRun("superhuman_agent_session_discard", args as Record<string, unknown>, Math.round(performance.now() - _t0));
-    return successResult(`[DRY RUN] Would discard agent session ${args.sessionId}`);
-  }
-
-  const killed = guardMutation("superhuman_agent_session_discard", args as Record<string, unknown>);
-  if (killed) return killed;
-
-  if (!args.sessionId) {
-    return errorResult("sessionId is required. Use superhuman_agent_sessions to list available sessions and their IDs.");
-  }
-
-  try {
-    const conn = await getCdpConnection();
-
-    // Resolve account for staging
-    let account = "unknown";
-    try {
-      account = await resolveCurrentAccountViaCDP();
-    } catch {
-      // Fall through with "unknown"
-    }
-
-    // Two-phase: stage unless this is a confirmed execution
-    if (!isConfirmedExecution()) {
-      // Fetch session title for the confirmation preview
-      let title = args.sessionId;
-      try {
-        const session = await fetchSession(conn, args.sessionId);
-        title = session.title || args.sessionId;
-      } catch {
-        // Use sessionId as fallback
-      }
-
-      const preview = `Would discard agent session: "${title}" (ID: ${args.sessionId})`;
-      const token = stageOperation("superhuman_agent_session_discard", args as Record<string, unknown>, preview, account);
-      auditMutation("superhuman_agent_session_discard", args as Record<string, unknown>, account, successResult(preview), { action: "staged", durationMs: Math.round(performance.now() - _t0) });
-      return successResult(buildStagedResponse(preview, token));
-    }
-
-    // Confirmed execution
-    await discardSessionViaCDP(conn, args.sessionId);
-
-    const toolResult = successResult(`Discarded agent session ${args.sessionId}`);
-    auditMutation("superhuman_agent_session_discard", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
-    return toolResult;
-  } catch (error) {
-    const toolResult = actionableError(`Failed to discard agent session ${args.sessionId}`, error);
-    auditMutation("superhuman_agent_session_discard", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
-    return toolResult;
-  }
-}
-
-export async function agentSessionRestoreHandler(args: z.infer<typeof AgentSessionRestoreSchema>): Promise<ToolResult> {
-  const _t0 = performance.now();
-
-  if (args.dryRun) {
-    auditDryRun("superhuman_agent_session_restore", args as Record<string, unknown>, Math.round(performance.now() - _t0));
-    return successResult(`[DRY RUN] Would restore agent session ${args.sessionId}`);
-  }
-
-  const killed = guardMutation("superhuman_agent_session_restore", args as Record<string, unknown>);
-  if (killed) return killed;
-
-  if (!args.sessionId) {
-    return errorResult("sessionId is required. Use superhuman_agent_sessions with include_discarded=true to find discarded session IDs.");
-  }
-
-  try {
-    const conn = await getCdpConnection();
-
-    let account = "unknown";
-    try {
-      account = await resolveCurrentAccountViaCDP();
-    } catch {
-      // Fall through with "unknown"
-    }
-
-    // Two-phase: stage unless this is a confirmed execution
-    if (!isConfirmedExecution()) {
-      let title = args.sessionId;
-      try {
-        const session = await fetchSession(conn, args.sessionId);
-        title = session.title || args.sessionId;
-      } catch {
-        // Use sessionId as fallback
-      }
-
-      const preview = `Would restore agent session: "${title}" (ID: ${args.sessionId})`;
-      const token = stageOperation("superhuman_agent_session_restore", args as Record<string, unknown>, preview, account);
-      auditMutation("superhuman_agent_session_restore", args as Record<string, unknown>, account, successResult(preview), { action: "staged", durationMs: Math.round(performance.now() - _t0) });
-      return successResult(buildStagedResponse(preview, token));
-    }
-
-    // Confirmed execution
-    await restoreSessionViaCDP(conn, args.sessionId);
-
-    const toolResult = successResult(`Restored agent session ${args.sessionId}`);
-    auditMutation("superhuman_agent_session_restore", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
-    return toolResult;
-  } catch (error) {
-    const toolResult = actionableError(`Failed to restore agent session ${args.sessionId}`, error);
-    auditMutation("superhuman_agent_session_restore", args as Record<string, unknown>, "unknown", toolResult, { durationMs: Math.round(performance.now() - _t0) });
-    return toolResult;
-  }
-}

@@ -2,7 +2,7 @@
  * Send API Module
  *
  * Direct email sending via Gmail API and Microsoft Graph API.
- * Uses token-based API calls via api/gmail-client.ts and api/contacts-client.ts (no CDP needed).
+ * Uses token-based API calls via api/gmail-client.ts (no CDP needed).
  *
  * Gmail: Uses POST /gmail/v1/users/me/messages/send
  * Microsoft Graph: Uses POST /me/sendMail
@@ -15,10 +15,8 @@ import {
   createDraftDirect,
   sendReplyDirect,
   createReplyDraftDirect,
-  deleteDraftDirect,
   sendDraftDirect,
   getThreadInfoDirect,
-  updateDraftDirect,
 } from "./token-api";
 
 /**
@@ -63,24 +61,6 @@ export interface DraftResult {
   draftId?: string;
   messageId?: string;
   error?: string;
-}
-
-/**
- * Options for updating a draft
- */
-export interface UpdateDraftOptions {
-  /** Recipient email addresses (optional - keep existing if not provided) */
-  to?: string[];
-  /** CC recipients (optional) */
-  cc?: string[];
-  /** BCC recipients (optional) */
-  bcc?: string[];
-  /** Email subject (optional) */
-  subject?: string;
-  /** Email body (plain text or HTML) */
-  body?: string;
-  /** Whether the body is HTML (default: true) */
-  isHtml?: boolean;
 }
 
 /**
@@ -241,59 +221,6 @@ export async function createReplyDraftWithToken(
 }
 
 /**
- * Update a draft using direct API (no CDP).
- *
- * @param token - Token info from token-api.ts
- * @param draftId - Draft ID to update
- * @param options - Fields to update
- * @returns Result with draftId on success
- */
-export async function updateDraftWithToken(
-  token: TokenInfo,
-  draftId: string,
-  options: UpdateDraftOptions
-): Promise<DraftResult> {
-  const result = await updateDraftDirect(token, draftId, {
-    to: options.to,
-    cc: options.cc,
-    bcc: options.bcc,
-    subject: options.subject,
-    body: options.body,
-    isHtml: options.isHtml,
-  });
-
-  if (!result) {
-    return { success: false, error: "Failed to update draft via direct API" };
-  }
-
-  return {
-    success: true,
-    draftId: result.draftId,
-    messageId: result.messageId,
-  };
-}
-
-/**
- * Delete a draft using direct API (no CDP).
- *
- * @param token - Token info from token-api.ts
- * @param draftId - Draft ID to delete
- * @returns Result with success status
- */
-export async function deleteDraftWithToken(
-  token: TokenInfo,
-  draftId: string
-): Promise<{ success: boolean; error?: string }> {
-  const success = await deleteDraftDirect(token, draftId);
-
-  if (!success) {
-    return { success: false, error: "Failed to delete draft via direct API" };
-  }
-
-  return { success: true };
-}
-
-/**
  * Send a draft by ID using direct API (no CDP).
  *
  * @param token - Token info from token-api.ts
@@ -376,18 +303,6 @@ export async function createDraftViaProvider(
 }
 
 /**
- * Update a draft using ConnectionProvider (no CDP).
- */
-export async function updateDraftViaProvider(
-  provider: ConnectionProvider,
-  draftId: string,
-  options: UpdateDraftOptions
-): Promise<DraftResult> {
-  const token = await provider.getToken();
-  return updateDraftWithToken(token, draftId, options);
-}
-
-/**
  * Send a draft by ID using a ConnectionProvider (no CDP needed).
  */
 export async function sendDraftByIdViaProvider(
@@ -396,15 +311,4 @@ export async function sendDraftByIdViaProvider(
 ): Promise<SendResult> {
   const token = await provider.getToken();
   return sendDraftByIdWithToken(token, draftId);
-}
-
-/**
- * Delete a draft using a ConnectionProvider (no CDP needed).
- */
-export async function deleteDraftViaProvider(
-  provider: ConnectionProvider,
-  draftId: string
-): Promise<{ success: boolean; error?: string }> {
-  const token = await provider.getToken();
-  return deleteDraftWithToken(token, draftId);
 }
