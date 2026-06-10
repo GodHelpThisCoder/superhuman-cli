@@ -279,42 +279,46 @@ export async function listStarred(
   provider: ConnectionProvider,
   limit: number = 50
 ): Promise<Array<{ id: string }>> {
-  try {
-    const token = await provider.getToken();
+  const token = await provider.getToken();
 
-    if (token.isMicrosoft) {
-      // MS Graph: Search for flagged messages
-      const response = await fetch(
-        `https://graph.microsoft.com/v1.0/me/messages?$filter=flag/flagStatus eq 'flagged'&$top=${limit}&$select=conversationId`,
-        {
-          headers: { Authorization: `Bearer ${token.accessToken}` },
-        }
+  if (token.isMicrosoft) {
+    // MS Graph: Search for flagged messages
+    const response = await fetch(
+      `https://graph.microsoft.com/v1.0/me/messages?$filter=flag/flagStatus eq 'flagged'&$top=${limit}&$select=conversationId`,
+      {
+        headers: { Authorization: `Bearer ${token.accessToken}` },
+      }
+    );
+
+    if (!response.ok) {
+      // Throw (don't return empty): an empty return here is
+      // indistinguishable from "no starred threads", so a swallowed
+      // 401/500 makes the starred tool report an empty list when the real
+      // problem is an expired token. A 401 message matches isAuthError.
+      const errorText = await response.text().catch(() => "");
+      throw new Error(
+        `MS Graph API error ${response.status} ${response.statusText}${response.status === 401 ? " Unauthorized" : ""} — ${errorText || "starred lookup failed"}`,
       );
-
-      if (!response.ok) {
-        return [];
-      }
-
-      const result = JSON.parse(await response.text()) as { value?: Array<{ conversationId?: string }> };
-      if (!result.value) {
-        return [];
-      }
-
-      // Get unique conversation IDs
-      const conversationIds = new Set<string>();
-      for (const msg of result.value) {
-        if (msg.conversationId) {
-          conversationIds.add(msg.conversationId);
-        }
-      }
-
-      return Array.from(conversationIds).map((id) => ({ id }));
-    } else {
-      // Gmail: Search for starred messages
-      const result = await searchGmailDirect(token, "is:starred", limit);
-      return result.threads.map((t) => ({ id: t.id }));
     }
-  } catch (e) {
-    return [];
+
+    const result = JSON.parse(await response.text()) as { value?: Array<{ conversationId?: string }> };
+    if (!result.value) {
+      return [];
+    }
+
+    // Get unique conversation IDs
+    const conversationIds = new Set<string>();
+    for (const msg of result.value) {
+      if (msg.conversationId) {
+        conversationIds.add(msg.conversationId);
+      }
+    }
+
+    return Array.from(conversationIds).map((id) => ({ id }));
+  } else {
+    // Gmail: Search for starred messages. searchGmailDirect throws an
+    // isAuthError-matching error on 401 — let it propagate.
+    const result = await searchGmailDirect(token, "is:starred", limit);
+    return result.threads.map((t) => ({ id: t.id }));
   }
 }
