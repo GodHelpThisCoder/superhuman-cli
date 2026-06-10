@@ -113,9 +113,9 @@ bun src/index.ts --mcp
 | `superhuman_collect_thread_ids` | Collect all thread IDs matching a query via pagination |
 | `superhuman_draft` | Create a draft in Superhuman's native Drafts view (no attachments) |
 | `superhuman_send` | Send an email (supports attachments) |
-| `superhuman_reply` | Reply to a thread (supports attachments) |
-| `superhuman_reply_all` | Reply-all to a thread (supports attachments) |
-| `superhuman_forward` | Forward a thread (supports attachments) |
+| `superhuman_reply` | Reply to a thread — drafts land in Superhuman on the thread; attachments require `send:true` |
+| `superhuman_reply_all` | Reply-all to a thread — drafts land in Superhuman on the thread; attachments require `send:true` |
+| `superhuman_forward` | Forward a thread — drafts land in Superhuman; attachments require `send:true` |
 | `superhuman_archive` | Archive thread(s) |
 | `superhuman_archive_by_query` | Archive all threads matching a search query |
 | `superhuman_unarchive` | Unarchive thread(s) (move back to inbox) |
@@ -156,7 +156,7 @@ bun src/index.ts --mcp
 
 #### Attachments on Compose
 
-The send, reply, reply-all, and forward tools accept an optional `attachments` array. Each attachment requires:
+The send, reply, reply-all, and forward tools accept an optional `attachments` array (reply/reply-all/forward only together with `send: true` — attachment drafts would land in the provider store, invisible in Superhuman). Each attachment requires:
 
 | Field | Required | Description |
 |-------|----------|-------------|
@@ -166,7 +166,7 @@ The send, reply, reply-all, and forward tools accept an optional `attachments` a
 
 The two-step flow is handled internally: a provider draft is created, attachments are added via Gmail/MS Graph API, then the draft is sent. Auto-detected MIME types include: pdf, docx, xlsx, pptx, png, jpg, gif, csv, json, zip, mp3, mp4, and more.
 
-`superhuman_draft` is the exception: it writes to Superhuman's native draft store (so drafts appear in Superhuman's Drafts view) and does **not** support attachments.
+Draft modes write to Superhuman's native draft store so they appear in the app: `superhuman_draft` in the Drafts view, and reply/reply-all/forward (without `send: true`) as drafts on the original thread. Native drafts do **not** support attachments. Microsoft accounts fall back to provider drafts in draft mode (not visible in Superhuman).
 
 ### MCP Agent Guide
 

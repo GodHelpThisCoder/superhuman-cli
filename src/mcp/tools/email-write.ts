@@ -1,10 +1,12 @@
 /**
  * MCP tool handlers for composing emails: draft, send, reply, reply-all, forward.
  *
- * send/reply/reply-all/forward support optional file attachments via a
- * two-step flow (create provider draft → add attachments → send).
- * superhuman_draft is the exception: it writes to Superhuman's NATIVE draft
- * store (so drafts appear in the app) and takes no attachments.
+ * Draft modes (superhuman_draft, and reply/reply_all/forward without send)
+ * write to Superhuman's NATIVE draft store so drafts appear in the app —
+ * native drafts take no attachments. Send paths (send:true) go through
+ * provider (Gmail/Outlook) APIs and support attachments via a two-step flow
+ * (create provider draft → add attachments → send). Microsoft accounts fall
+ * back to provider drafts in draft mode (native store unverified on MS).
  */
 
 import { z } from "zod";
@@ -302,8 +304,19 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
     const hasAttachments = args.attachments && args.attachments.length > 0;
     const wantSend = args.send ?? false;
 
+    // Attachments require the provider send path; a no-send attachment draft
+    // would be a provider draft invisible in Superhuman — refuse honestly.
+    if (hasAttachments && !wantSend) {
+      const toolResult = errorResult(
+        "Reply drafts with attachments are not supported: the draft would be created in the provider store, " +
+        "invisible in Superhuman. Use send:true (full attachment support) or attach in the app."
+      );
+      auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
+      return toolResult;
+    }
+
     if (hasAttachments) {
-      // Two-step: create reply draft → add attachments → optionally send
+      // Two-step: create reply draft → add attachments → send
       const result = await replyToThread(provider, args.threadId, args.body, false);
       if (!result.success || !result.draftId) {
         const toolResult = errorResult(`Failed to create reply draft: ${result.error || "no draft ID"}`);
@@ -318,25 +331,22 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
         return toolResult;
       }
 
-      if (wantSend) {
-        const sendResult = await sendDraftByIdViaProvider(provider, result.draftId);
-        if (sendResult.success) {
-          const toolResult = successResult(`Reply sent to thread ${args.threadId} with ${args.attachments!.length} attachment(s)`);
-          auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
-          return toolResult;
-        }
-        const toolResult = errorResult(`Reply with attachments created but send failed: ${sendResult.error}. Draft ID: ${result.draftId}`);
+      // wantSend is always true here (no-send + attachments returns above)
+      const sendResult = await sendDraftByIdViaProvider(provider, result.draftId);
+      if (sendResult.success) {
+        const toolResult = successResult(`Reply sent to thread ${args.threadId} with ${args.attachments!.length} attachment(s)`);
         auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
-
-      const toolResult = successResult(`Reply draft created for thread ${args.threadId}\nDraft ID: ${result.draftId}\nAttachments: ${args.attachments!.length}`);
+      const toolResult = errorResult(`Reply with attachments created but send failed: ${sendResult.error}. Draft ID: ${result.draftId}`);
       auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
 
-    // No attachments — existing path
-    const result = await replyToThread(provider, args.threadId, args.body, wantSend);
+    // No attachments — draft mode resolves Superhuman credentials so the
+    // draft lands in the native store (visible in-app on the thread)
+    const userInfo = wantSend ? undefined : await getUserInfoFromProvider(provider);
+    const result = await replyToThread(provider, args.threadId, args.body, wantSend, userInfo);
     if (!result.success) {
       throw new Error(result.error || "Failed to create reply");
     }
@@ -346,7 +356,11 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
       auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
-    const toolResult = successResult(`Reply draft created for thread ${args.threadId}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
+    const toolResult = successResult(
+      result.threadId
+        ? `Reply draft created in Superhuman on thread ${args.threadId}\nDraft ID: ${result.draftId}`
+        : `Reply draft created for thread ${args.threadId} (provider store — not visible in Superhuman)${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`
+    );
     auditMutation("superhuman_reply", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } catch (error) {
@@ -385,6 +399,16 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
     const hasAttachments = args.attachments && args.attachments.length > 0;
     const wantSend = args.send ?? false;
 
+    // Attachments require the provider send path (see replyHandler)
+    if (hasAttachments && !wantSend) {
+      const toolResult = errorResult(
+        "Reply drafts with attachments are not supported: the draft would be created in the provider store, " +
+        "invisible in Superhuman. Use send:true (full attachment support) or attach in the app."
+      );
+      auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
+      return toolResult;
+    }
+
     if (hasAttachments) {
       const result = await replyAllToThread(provider, args.threadId, args.body, false);
       if (!result.success || !result.draftId) {
@@ -400,25 +424,22 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
         return toolResult;
       }
 
-      if (wantSend) {
-        const sendResult = await sendDraftByIdViaProvider(provider, result.draftId);
-        if (sendResult.success) {
-          const toolResult = successResult(`Reply-all sent to thread ${args.threadId} with ${args.attachments!.length} attachment(s)`);
-          auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
-          return toolResult;
-        }
-        const toolResult = errorResult(`Reply-all with attachments created but send failed: ${sendResult.error}. Draft ID: ${result.draftId}`);
+      // wantSend is always true here (no-send + attachments returns above)
+      const sendResult = await sendDraftByIdViaProvider(provider, result.draftId);
+      if (sendResult.success) {
+        const toolResult = successResult(`Reply-all sent to thread ${args.threadId} with ${args.attachments!.length} attachment(s)`);
         auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
-
-      const toolResult = successResult(`Reply-all draft created for thread ${args.threadId}\nDraft ID: ${result.draftId}\nAttachments: ${args.attachments!.length}`);
+      const toolResult = errorResult(`Reply-all with attachments created but send failed: ${sendResult.error}. Draft ID: ${result.draftId}`);
       auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
 
-    // No attachments — existing path
-    const result = await replyAllToThread(provider, args.threadId, args.body, wantSend);
+    // No attachments — draft mode resolves Superhuman credentials so the
+    // draft lands in the native store (visible in-app on the thread)
+    const userInfo = wantSend ? undefined : await getUserInfoFromProvider(provider);
+    const result = await replyAllToThread(provider, args.threadId, args.body, wantSend, userInfo);
     if (!result.success) {
       throw new Error(result.error || "Failed to create reply-all");
     }
@@ -428,7 +449,11 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
       auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
-    const toolResult = successResult(`Reply-all draft created for thread ${args.threadId}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
+    const toolResult = successResult(
+      result.threadId
+        ? `Reply-all draft created in Superhuman on thread ${args.threadId}\nDraft ID: ${result.draftId}`
+        : `Reply-all draft created for thread ${args.threadId} (provider store — not visible in Superhuman)${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`
+    );
     auditMutation("superhuman_reply_all", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } catch (error) {
@@ -467,6 +492,16 @@ export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promi
     const hasAttachments = args.attachments && args.attachments.length > 0;
     const wantSend = args.send ?? false;
 
+    // Attachments require the provider send path (see replyHandler)
+    if (hasAttachments && !wantSend) {
+      const toolResult = errorResult(
+        "Forward drafts with attachments are not supported: the draft would be created in the provider store, " +
+        "invisible in Superhuman. Use send:true (full attachment support) or attach in the app."
+      );
+      auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
+      return toolResult;
+    }
+
     if (hasAttachments) {
       const result = await forwardThread(provider, args.threadId, args.toEmail, args.body, false);
       if (!result.success || !result.draftId) {
@@ -482,25 +517,22 @@ export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promi
         return toolResult;
       }
 
-      if (wantSend) {
-        const sendResult = await sendDraftByIdViaProvider(provider, result.draftId);
-        if (sendResult.success) {
-          const toolResult = successResult(`Email forwarded to ${args.toEmail} with ${args.attachments!.length} attachment(s)`);
-          auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
-          return toolResult;
-        }
-        const toolResult = errorResult(`Forward with attachments created but send failed: ${sendResult.error}. Draft ID: ${result.draftId}`);
+      // wantSend is always true here (no-send + attachments returns above)
+      const sendResult = await sendDraftByIdViaProvider(provider, result.draftId);
+      if (sendResult.success) {
+        const toolResult = successResult(`Email forwarded to ${args.toEmail} with ${args.attachments!.length} attachment(s)`);
         auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
         return toolResult;
       }
-
-      const toolResult = successResult(`Forward draft created for ${args.toEmail}\nDraft ID: ${result.draftId}\nAttachments: ${args.attachments!.length}`);
+      const toolResult = errorResult(`Forward with attachments created but send failed: ${sendResult.error}. Draft ID: ${result.draftId}`);
       auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
 
-    // No attachments — existing path
-    const result = await forwardThread(provider, args.threadId, args.toEmail, args.body, wantSend);
+    // No attachments — draft mode resolves Superhuman credentials so the
+    // draft lands in the native store (visible in-app on the thread)
+    const userInfo = wantSend ? undefined : await getUserInfoFromProvider(provider);
+    const result = await forwardThread(provider, args.threadId, args.toEmail, args.body, wantSend, userInfo);
     if (!result.success) {
       throw new Error(result.error || "Failed to create forward");
     }
@@ -510,7 +542,11 @@ export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promi
       auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
       return toolResult;
     }
-    const toolResult = successResult(`Forward draft created for ${args.toEmail}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
+    const toolResult = successResult(
+      result.threadId
+        ? `Forward draft created in Superhuman for ${args.toEmail} (on thread ${args.threadId})\nDraft ID: ${result.draftId}`
+        : `Forward draft created for ${args.toEmail} (provider store — not visible in Superhuman)${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`
+    );
     auditMutation("superhuman_forward", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } catch (error) {

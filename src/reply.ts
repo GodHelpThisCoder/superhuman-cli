@@ -13,14 +13,53 @@ import {
   createReplyDraftWithToken,
   createDraftWithToken,
   getThreadInfoForReplyWithToken,
+  type ThreadInfoForReply,
 } from "./send-api.js";
 import { getThreadMessages } from "./token-api";
+import { createDraftWithUserInfo, type UserInfo } from "./draft-api";
 
 export interface ReplyResult {
   success: boolean;
   draftId?: string;
+  /** Set only for Superhuman-native drafts (the thread the draft is attached to). */
+  threadId?: string;
   messageId?: string;
   error?: string;
+}
+
+/**
+ * Build reply recipients from thread info, mirroring the provider-path
+ * semantics in gmail-client's createReplyDraft: plain reply targets the
+ * last sender (even if self — replying to your own thread is valid);
+ * reply-all adds all To/Cc minus self, case-insensitively deduped.
+ */
+function buildReplyRecipients(
+  info: ThreadInfoForReply,
+  replyAll: boolean,
+): { to: string[]; cc: string[] } {
+  const me = (info.myEmail || "").toLowerCase();
+  const to: string[] = [];
+  const cc: string[] = [];
+
+  if (replyAll) {
+    if (info.replyTo && info.replyTo.toLowerCase() !== me) {
+      to.push(info.replyTo);
+    }
+    for (const email of info.allTo) {
+      if (email.toLowerCase() !== me && !to.some((e) => e.toLowerCase() === email.toLowerCase())) {
+        to.push(email);
+      }
+    }
+    for (const email of info.allCc) {
+      if (email.toLowerCase() !== me && !cc.some((e) => e.toLowerCase() === email.toLowerCase())) {
+        cc.push(email);
+      }
+    }
+  } else if (info.replyTo) {
+    to.push(info.replyTo);
+  }
+
+  return { to, cc };
 }
 
 /**
@@ -32,9 +71,10 @@ export async function replyToThread(
   provider: ConnectionProvider,
   threadId: string,
   body: string,
-  send: boolean = false
+  send: boolean = false,
+  userInfo?: UserInfo
 ): Promise<ReplyResult> {
-  return replyImpl(provider, threadId, body, send, false);
+  return replyImpl(provider, threadId, body, send, false, userInfo);
 }
 
 /**
@@ -46,9 +86,10 @@ export async function replyAllToThread(
   provider: ConnectionProvider,
   threadId: string,
   body: string,
-  send: boolean = false
+  send: boolean = false,
+  userInfo?: UserInfo
 ): Promise<ReplyResult> {
-  return replyImpl(provider, threadId, body, send, true);
+  return replyImpl(provider, threadId, body, send, true, userInfo);
 }
 
 /**
@@ -59,7 +100,8 @@ async function replyImpl(
   threadId: string,
   body: string,
   send: boolean,
-  replyAll: boolean
+  replyAll: boolean,
+  userInfo?: UserInfo
 ): Promise<ReplyResult> {
   const token = await provider.getToken();
   const htmlBody = textToHtml(body);
@@ -69,6 +111,42 @@ async function replyImpl(
     const result = await sendReplyWithToken(token, threadId, htmlBody, opts);
     if (result.success) {
       return { success: true, messageId: result.messageId };
+    }
+    return { success: false, error: result.error };
+  }
+
+  // Draft mode — prefer Superhuman's native store so the draft is visible
+  // (and editable/sendable) on the thread in the app; provider drafts are
+  // never shown by Superhuman. Microsoft accounts keep the provider path:
+  // the native store is unverified against MS conversation IDs.
+  if (userInfo && !token.isMicrosoft) {
+    const info = await getThreadInfoForReplyWithToken(token, threadId);
+    if (!info) {
+      return { success: false, error: "Could not get thread information for reply" };
+    }
+
+    const { to, cc } = buildReplyRecipients(info, replyAll);
+    if (to.length === 0) {
+      return { success: false, error: "Could not determine reply recipients" };
+    }
+
+    const subject = info.subject.startsWith("Re:") ? info.subject : `Re: ${info.subject}`;
+
+    // info.references already ends with the last message's Message-ID
+    // (getThreadInfo appends it), so it is the complete RFC 5322 chain.
+    const result = await createDraftWithUserInfo(userInfo, {
+      action: "reply",
+      inReplyToThreadId: threadId,
+      inReplyToRfc822Id: info.lastMessageId || undefined,
+      references: info.references,
+      to,
+      cc,
+      subject,
+      body: htmlBody,
+    });
+
+    if (result.success) {
+      return { success: true, draftId: result.draftId, threadId: result.threadId };
     }
     return { success: false, error: result.error };
   }
@@ -99,7 +177,8 @@ export async function forwardThread(
   threadId: string,
   toEmail: string,
   body: string,
-  send: boolean = false
+  send: boolean = false,
+  userInfo?: UserInfo
 ): Promise<ReplyResult> {
   const token = await provider.getToken();
 
@@ -144,7 +223,25 @@ export async function forwardThread(
     return { success: false, error: result.error };
   }
 
-  // Draft mode
+  // Draft mode — same native-store preference as replyImpl (visible in-app;
+  // provider drafts are not). MS accounts keep the provider path.
+  if (userInfo && !token.isMicrosoft) {
+    const result = await createDraftWithUserInfo(userInfo, {
+      action: "forward",
+      inReplyToThreadId: threadId,
+      inReplyToRfc822Id: threadInfo.lastMessageId || undefined,
+      references: threadInfo.references,
+      to: [toEmail],
+      subject,
+      body: forwardBody,
+    });
+
+    if (result.success) {
+      return { success: true, draftId: result.draftId, threadId: result.threadId };
+    }
+    return { success: false, error: result.error };
+  }
+
   const result = await createDraftWithToken(token, {
     to: [toEmail],
     subject,

@@ -51,7 +51,7 @@ READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_re
 
 WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_create_label, superhuman_add_label, superhuman_add_label_by_query, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai, superhuman_unarchive.
 
-DRAFTS: superhuman_draft creates drafts in Superhuman's own draft store, so they appear in the app's Drafts view. Drafts do not support programmatic attachments — use superhuman_send (full attachment support) or attach in the app. NOTE: reply/reply_all/forward in default (no-send) mode create PROVIDER drafts (Gmail/Outlook), which do NOT appear in Superhuman's Drafts view — for user-reviewable replies, present the text in conversation and use send=true after approval.
+DRAFTS: superhuman_draft and the default (no-send) mode of reply/reply_all/forward create drafts in Superhuman's own draft store, so they appear in the app (drafts on the original thread for replies/forwards) where the user can review, edit, and send them. Drafts do not support programmatic attachments — use send:true (full attachment support) or attach in the app. Microsoft accounts: reply/forward no-send mode falls back to provider drafts, which are NOT visible in Superhuman.
 
 CONFIRMATION TOOL: superhuman_confirm (executes a previously staged mutation token).
 
@@ -142,7 +142,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_reply",
     {
-      description: "Reply to an email thread. Sends immediately with send=true; without it, creates a PROVIDER (Gmail/Outlook) draft that will NOT appear in Superhuman's Drafts view — for user review, present the reply text in conversation first. The reply is addressed to the sender of the last message in the thread. Supports file attachments.",
+      description: "Reply to an email thread. By default creates a draft in Superhuman's own store, visible on the thread in the app for user review/edit/send; sends immediately with send=true. The reply is addressed to the sender of the last message in the thread. Attachments require send=true.",
       inputSchema: ReplySchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
@@ -152,7 +152,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_reply_all",
     {
-      description: "Reply-all to an email thread. Sends immediately with send=true; without it, creates a PROVIDER (Gmail/Outlook) draft that will NOT appear in Superhuman's Drafts view — for user review, present the reply text in conversation first. The reply is addressed to all recipients of the last message (excluding yourself). Supports file attachments.",
+      description: "Reply-all to an email thread. By default creates a draft in Superhuman's own store, visible on the thread in the app for user review/edit/send; sends immediately with send=true. The reply is addressed to all recipients of the last message (excluding yourself). Attachments require send=true.",
       inputSchema: ReplyAllSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
@@ -162,7 +162,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_forward",
     {
-      description: "Forward an email thread to a new recipient. Sends immediately with send=true; without it, creates a PROVIDER (Gmail/Outlook) draft that will NOT appear in Superhuman's Drafts view. Includes the original message with forwarding headers. Supports file attachments.",
+      description: "Forward an email thread to a new recipient. By default creates a draft in Superhuman's own store, visible in the app for user review/edit/send; sends immediately with send=true. Includes the original message with forwarding headers. Attachments require send=true.",
       inputSchema: ForwardSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
