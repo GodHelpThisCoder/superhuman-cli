@@ -21,6 +21,7 @@ import {
 import { isKilled } from "../../kill-switch";
 import { logAudit } from "../../audit";
 import { createLogger } from "../../logger";
+import { getLifecycleManager } from "../../lifecycle/manager";
 
 const log = createLogger("mcp");
 
@@ -68,9 +69,6 @@ export function successResult(text: string): ToolResult {
 export function errorResult(message: string): ToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
 }
-
-// Cached CDP provider — reused across tool calls, invalidated on error.
-let _cachedCdpProvider: CDPConnectionProvider | null = null;
 
 /**
  * Get a ConnectionProvider for MCP tools.
@@ -143,35 +141,10 @@ export async function getMcpProvider(): Promise<ConnectionProvider> {
 
   // Step 4: No cached tokens at all — use CDP connection provider directly.
   // This path is for initial setup only (no tokens on disk yet).
+  // The provider is a stateless wrapper around the single cached CDP
+  // connection (getCdpConnection), so constructing one per call is cheap.
   // Wrapped in a 15-second timeout to prevent indefinite hangs.
   const CDP_FALLBACK_TIMEOUT_MS = 15_000;
-
-  const cdpFallback = async (): Promise<ConnectionProvider> => {
-    if (_cachedCdpProvider) {
-      try {
-        await _cachedCdpProvider.getCurrentEmail();
-        return _cachedCdpProvider;
-      } catch {
-        try { await _cachedCdpProvider.disconnect(); } catch { /* ignore */ }
-        _cachedCdpProvider = null;
-      }
-    }
-
-    let conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      log.warn("Superhuman not available, attempting launch...");
-      await ensureSuperhuman(CDP_PORT);
-      await new Promise(r => setTimeout(r, 3000));
-      conn = await connectToSuperhuman(CDP_PORT, false);
-    }
-    if (!conn) {
-      throw new Error(
-        `Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${CDP_PORT}`
-      );
-    }
-    _cachedCdpProvider = new CDPConnectionProvider(conn);
-    return _cachedCdpProvider;
-  };
 
   const timeout = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error(
@@ -180,7 +153,10 @@ export async function getMcpProvider(): Promise<ConnectionProvider> {
     )), CDP_FALLBACK_TIMEOUT_MS)
   );
 
-  return Promise.race([cdpFallback(), timeout]);
+  return Promise.race([
+    getCdpConnection().then((conn) => new CDPConnectionProvider(conn)),
+    timeout,
+  ]);
 }
 
 /**
@@ -198,12 +174,8 @@ export async function resolveCurrentAccountViaCDP(): Promise<string> {
   // Don't disconnect — connection is cached for reuse by getCdpConnection()
 }
 
-/** Invalidate the cached CDP provider (called on connection errors). */
+/** Invalidate the cached CDP connection (called on connection errors). */
 export function invalidateCdpProvider(): void {
-  if (_cachedCdpProvider) {
-    _cachedCdpProvider.disconnect().catch(() => {});
-    _cachedCdpProvider = null;
-  }
   if (_cachedCdpConn) {
     disconnect(_cachedCdpConn).catch(() => {});
     _cachedCdpConn = null;
@@ -212,15 +184,53 @@ export function invalidateCdpProvider(): void {
   _resolvedEmailTs = 0;
 }
 
-// Cached raw CDP connection — reused by handlers that need Runtime.evaluate.
+// Cached raw CDP connection — the SINGLE shared connection for all tool calls.
 let _cachedCdpConn: SuperhumanConnection | null = null;
 
 // Mutex for getCdpConnection — prevents concurrent connection creation
 let _cdpConnPromise: Promise<SuperhumanConnection> | null = null;
 
 /**
+ * Connect to Superhuman, consulting the LifecycleManager when one is
+ * registered (MCP mode): the leader triggers/coalesces a launch and waits a
+ * bounded time; followers and blocked states (updating, no-debug-port,
+ * gave-up) fail fast with a status-rich, retryable error. In CLI mode
+ * (no manager) it falls back to a direct launch — an explicit user action.
+ */
+async function connectWithPolicy(): Promise<SuperhumanConnection> {
+  // Fast path — Superhuman may already be up
+  let conn = await connectToSuperhuman(CDP_PORT, false).catch(() => null);
+  if (conn) return conn;
+
+  const manager = getLifecycleManager();
+  if (manager) {
+    const ready = await manager.ensureReady();
+    if (ready.ok) {
+      conn = await connectToSuperhuman(CDP_PORT, false).catch(() => null);
+      if (conn) return conn;
+      throw new Error(
+        `Superhuman reports ready but the CDP connection on port ${CDP_PORT} failed. Retry shortly.`
+      );
+    }
+    throw new Error(ready.reason);
+  }
+
+  // No manager (CLI context) — legacy direct-launch behavior
+  log.warn("Superhuman not available, attempting launch...");
+  await ensureSuperhuman(CDP_PORT);
+  await new Promise(r => setTimeout(r, 3000));
+  conn = await connectToSuperhuman(CDP_PORT, false).catch(() => null);
+  if (!conn) {
+    throw new Error(
+      `Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${CDP_PORT}`
+    );
+  }
+  return conn;
+}
+
+/**
  * Get a cached raw CDP connection for handlers that need Runtime.evaluate
- * (e.g., agent sessions). Includes auto-launch and connection validation.
+ * (e.g., agent sessions). Launch policy is delegated to the LifecycleManager.
  * Do NOT disconnect the returned connection — it is cached for reuse.
  * Uses mutex to prevent concurrent connection creation under parallel load.
  */
@@ -237,18 +247,7 @@ export async function getCdpConnection(): Promise<SuperhumanConnection> {
   // Coalesce concurrent connection attempts onto one promise
   if (_cdpConnPromise) return _cdpConnPromise;
   _cdpConnPromise = (async () => {
-    let conn = await connectToSuperhuman(CDP_PORT);
-    if (!conn) {
-      log.warn("Superhuman not available, attempting launch...");
-      await ensureSuperhuman(CDP_PORT);
-      await new Promise(r => setTimeout(r, 3000));
-      conn = await connectToSuperhuman(CDP_PORT, false);
-    }
-    if (!conn) {
-      throw new Error(
-        `Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=${CDP_PORT}`
-      );
-    }
+    const conn = await connectWithPolicy();
     _cachedCdpConn = conn;
     return conn;
   })().finally(() => {
@@ -278,12 +277,21 @@ export async function resolveSuperhumanToken(): Promise<TokenInfo | null> {
  */
 export function actionableError(context: string, error: unknown): ToolResult {
   const msg = error instanceof Error ? error.message : String(error);
+  // Auth classification runs FIRST — our own auth-failure messages end in
+  // "...then retry.", so a retry-substring pass-through ahead of this branch
+  // would swallow the re-auth guidance.
   if (msg.includes("401") || msg.includes("auth") || msg.includes("Authentication")) {
     return errorResult(
       `Authentication failed: ${context}. Token may be expired. ` +
       `Use superhuman_accounts to verify account status, or restart Superhuman ` +
       `with --remote-debugging-port=${CDP_PORT} to re-authenticate.`
     );
+  }
+  // Lifecycle-manager errors are already actionable and state-specific
+  // (updating / no-debug-port / backoff / follower) — pass them through
+  // instead of burying them under generic connection advice.
+  if (msg.includes("Retry") || msg.includes("retry") || msg.includes("superhuman doctor")) {
+    return errorResult(`${context}: ${msg}`);
   }
   if (msg.includes("Could not connect") || msg.includes("ECONNREFUSED")) {
     return errorResult(

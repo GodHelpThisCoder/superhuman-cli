@@ -21,6 +21,12 @@ const log = createLogger("token-extract");
 // Superhuman backend token cache is local to this module
 const superhumanTokenCache = new Map<string, SuperhumanTokenInfo>();
 
+// Insertion timestamps for cache entries with no expiry info — without this,
+// "assume valid" entries live forever and a long-running server keeps using
+// tokens long after the underlying OAuth session rotated.
+const superhumanTokenInsertedAt = new Map<string, number>();
+const NO_EXPIRY_STALE_AFTER_MS = 50 * 60 * 1000; // 50 minutes
+
 // ============================================================================
 // OAuth Token Extraction (Electron desktop app)
 // ============================================================================
@@ -448,8 +454,12 @@ export async function getSuperhumanToken(
         return cached;
       }
     } else {
-      // No expiry info, assume valid
-      return cached;
+      // No expiry info — assume valid only until the staleness window passes
+      const insertedAt = superhumanTokenInsertedAt.get(email) ?? 0;
+      if (Date.now() - insertedAt < NO_EXPIRY_STALE_AFTER_MS) {
+        return cached;
+      }
+      // Stale, fall through to extract fresh
     }
   }
 
@@ -458,6 +468,7 @@ export async function getSuperhumanToken(
 
   // Cache it
   superhumanTokenCache.set(email, token);
+  superhumanTokenInsertedAt.set(email, Date.now());
 
   return token;
 }
@@ -467,6 +478,7 @@ export async function getSuperhumanToken(
  */
 export function clearSuperhumanTokenCache(): void {
   superhumanTokenCache.clear();
+  superhumanTokenInsertedAt.clear();
 }
 
 // ============================================================================

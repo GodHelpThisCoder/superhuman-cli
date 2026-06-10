@@ -6,27 +6,29 @@
  * CLI + MCP server to control Superhuman.app via Chrome DevTools Protocol (CDP)
  *
  * In MCP mode (--mcp):
- * - Ensures Superhuman is running before accepting tool calls
- * - Monitors Superhuman health every 30s and relaunches if needed
- * - Cleans up on exit
+ * - Connects the stdio transport IMMEDIATELY (the MCP handshake never waits on
+ *   Superhuman — launching can take 30-120s during app updates, and a blocked
+ *   handshake makes the client time out and respawn the server in a loop)
+ * - Starts a LifecycleManager: leader-elected across concurrent server
+ *   instances, the leader warm-launches Superhuman in the background and
+ *   health-monitors it; followers never launch/kill the app
+ * - Exits when the client disconnects (stdin EOF) so dead sessions never
+ *   leave orphaned server processes behind
  *
  * Usage:
- *   superhuman compose --to <email> --subject <subject> --body <body>
- *   superhuman draft --to <email> --subject <subject> --body <body>
- *   superhuman send --to <email> --subject <subject> --body <body>
  *   superhuman status
- *   superhuman --mcp        # Run as MCP server (auto-launches Superhuman)
+ *   superhuman doctor
+ *   superhuman --mcp        # Run as MCP server
  */
 
 import { runMcpServer } from "./mcp/server";
-import { ensureSuperhuman, isSuperhumanRunning } from "./superhuman-api";
+import { flushAuditLog } from "./audit";
 import { setLogLevel, initFileLogging, createLogger } from "./logger";
-import { isUpdaterRunning } from "./update-awareness";
+import { LifecycleManager, setLifecycleManager } from "./lifecycle/manager";
+import { setLaunchBroker } from "./cdp/connection";
 import { APP_VERSION } from "./version";
 
 const CDP_PORT = parseInt(process.env.CDP_PORT || "9333", 10);
-const HEALTH_CHECK_INTERVAL_MS = 30_000;
-const RELAUNCH_COOLDOWN_MS = 60_000;
 
 const args = process.argv.slice(2);
 const isMcpMode = args.includes("--mcp");
@@ -41,67 +43,47 @@ if (isMcpMode) {
     log.error("Unhandled rejection (kept alive):", err);
   });
 
-  // MCP server mode — linked lifecycle with Superhuman
   (async () => {
     await initFileLogging();
 
     // Version log — verifiable proof that this code is running (not a stale process)
     log.info(`superhuman-cli v${APP_VERSION} MCP server starting`);
 
-    // Ensure Superhuman is running before we start accepting tool calls
-    const launched = await ensureSuperhuman(CDP_PORT);
-    if (!launched) {
-      log.warn("Superhuman not available at startup. Tools will attempt auto-launch on first call.");
-    } else {
-      log.info("Superhuman is running on CDP port " + CDP_PORT);
-    }
+    // 1. Connect the stdio transport FIRST — the handshake must be instant.
+    //    Superhuman availability is handled lazily by the lifecycle manager
+    //    and surfaced through tool errors, never through a stalled handshake.
+    await runMcpServer();
 
-    // Start MCP server (blocks on stdio transport)
-    const serverPromise = runMcpServer();
+    // 2. Lifecycle management: leader election + background warm launch +
+    //    health monitoring. Not awaited — tools gate on it via ensureReady().
+    const manager = new LifecycleManager(CDP_PORT);
+    setLifecycleManager(manager);
+    setLaunchBroker(manager);
+    manager.start();
 
-    // Health monitor — check Superhuman every 30s, relaunch if down
-    // Update-aware: skips relaunch if installer is active or cooldown hasn't elapsed
-    let lastRelaunchAttemptMs = 0;
-    const healthInterval = setInterval(async () => {
-      try {
-        if (!(await isSuperhumanRunning(CDP_PORT))) {
-          // Check relaunch cooldown
-          const now = Date.now();
-          if (now - lastRelaunchAttemptMs < RELAUNCH_COOLDOWN_MS) {
-            log.debug("Relaunch cooldown active, skipping health check relaunch");
-            return;
-          }
-
-          // Check if updater is running — don't fight the installer
-          if (await isUpdaterRunning()) {
-            log.info("Skipping relaunch — update installer active");
-            return;
-          }
-
-          log.warn("Superhuman not detected, attempting relaunch...");
-          lastRelaunchAttemptMs = now;
-          const ok = await ensureSuperhuman(CDP_PORT);
-          if (ok) {
-            log.info("Superhuman relaunched successfully");
-          } else {
-            log.error("Failed to relaunch Superhuman — tools may fail until it's running");
-          }
-        }
-      } catch (e) {
-        log.error("Health check error:", (e as Error).message);
-      }
-    }, HEALTH_CHECK_INTERVAL_MS);
-
-    // Cleanup on exit
-    const cleanup = () => {
-      clearInterval(healthInterval);
-      process.exit(0);
+    // 3. Shutdown wiring. stdin EOF/close means the MCP client is gone —
+    //    exit instead of lingering as an orphan (manager timers are also
+    //    unref()ed as a second line of defense).
+    const shutdown = (reason: string) => {
+      log.info(`Shutting down (${reason})`);
+      manager.stop();
+      // Drain any in-flight audit write (bounded) — an executed mutation must
+      // not lose its audit record to a racing exit.
+      void Promise.race([
+        flushAuditLog(),
+        new Promise((r) => setTimeout(r, 500)),
+      ]).finally(() => process.exit(0));
     };
-    process.on("SIGINT", cleanup);
-    process.on("SIGTERM", cleanup);
-
-    await serverPromise;
-  })().catch((e) => log.error("Fatal:", e instanceof Error ? e.message : String(e)));
+    process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.stdin.on("end", () => shutdown("stdin EOF"));
+    process.stdin.on("close", () => shutdown("stdin closed"));
+  })().catch((e) => {
+    log.error("Fatal:", e instanceof Error ? e.message : String(e));
+    // A failed startup must not linger as a half-initialized process with no
+    // transport and no shutdown wiring — exit so the client can respawn.
+    process.exit(1);
+  });
 } else {
   // CLI mode - import and run the CLI
   import("./cli").then((cli) => {

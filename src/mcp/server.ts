@@ -32,6 +32,7 @@ import {
   agentSessionsHandler, agentSessionReadHandler, agentSessionDiscardHandler, agentSessionRestoreHandler,
 } from "./tools";
 import { AuditLogSchema, auditLogHandler } from "./tools/audit";
+import { StatusSchema, statusHandler } from "./tools/status";
 import { ConfirmSchema, confirmHandler } from "./tools/confirm";
 import { APP_VERSION } from "../version";
 
@@ -40,13 +41,13 @@ function createMcpServer(): McpServer {
     { name: "superhuman-cli", version: APP_VERSION },
     {
       capabilities: { tools: {} },
-      instructions: `Superhuman email and calendar automation server (46 tools).
+      instructions: `Superhuman email and calendar automation server (47 tools).
 
 WORKFLOW: Use superhuman_accounts first to see available accounts. Use superhuman_inbox or superhuman_search to find emails — these return thread IDs needed by all action tools.
 
 SEARCH: superhuman_search accepts limit (1–50, default 10) and returns totalResults (approximate match count) so you can gauge result coverage without fetching everything. Pass includeDone: true to search all mail (inbox + archive).
 
-READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_download_attachment, superhuman_calendar_list, superhuman_calendar_free_busy, superhuman_audit_log, superhuman_agent_sessions, superhuman_agent_session_read, superhuman_sender_summary, superhuman_collect_thread_ids.
+READ TOOLS (no side effects): superhuman_inbox, superhuman_search, superhuman_read, superhuman_accounts, superhuman_labels, superhuman_get_labels, superhuman_starred, superhuman_snoozed, superhuman_snippets, superhuman_attachments, superhuman_download_attachment, superhuman_calendar_list, superhuman_calendar_free_busy, superhuman_audit_log, superhuman_agent_sessions, superhuman_agent_session_read, superhuman_sender_summary, superhuman_collect_thread_ids, superhuman_status.
 
 WRITE TOOLS (create/modify): superhuman_draft, superhuman_send, superhuman_reply, superhuman_reply_all, superhuman_forward, superhuman_snippet, superhuman_calendar_create, superhuman_calendar_update, superhuman_switch_account, superhuman_mark_read, superhuman_mark_unread, superhuman_star, superhuman_unstar, superhuman_create_label, superhuman_add_label, superhuman_add_label_by_query, superhuman_remove_label, superhuman_snooze, superhuman_unsnooze, superhuman_ask_ai, superhuman_agent_session_restore, superhuman_unarchive.
 
@@ -544,6 +545,18 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     auditLogHandler
+  );
+
+  // ---- Status / diagnostics ----
+
+  server.registerTool(
+    "superhuman_status",
+    {
+      description: "Get MCP server and Superhuman app health/lifecycle status: server version and pid, lifecycle state (leader/follower, launch backoff detail), a live CDP probe, and pending-update info. Use this to diagnose connection issues.",
+      inputSchema: StatusSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    statusHandler
   );
 
   return server;

@@ -84,3 +84,6 @@ export {
 
 // Audit — re-exported directly in server.ts due to barrel resolution quirk
 // export { AuditLogSchema, auditLogHandler } from "./audit";
+
+// Status — imported directly in server.ts (same pattern as audit)
+// export { StatusSchema, statusHandler } from "./status";

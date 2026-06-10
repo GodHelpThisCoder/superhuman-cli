@@ -5,12 +5,8 @@
 import { z } from "zod";
 import { listSnippets, findSnippet, applyVars, parseVars } from "../../snippets";
 import { getUserInfo, getUserInfoFromCache, createDraftWithUserInfo, sendDraftSuperhuman } from "../../draft-api";
-import {
-  connectToSuperhuman,
-  disconnect,
-} from "../../superhuman-api";
 import type { ConnectionProvider } from "../../connection-provider";
-import { successResult, errorResult, actionableError, getMcpProvider, guardMutation, auditMutation, auditDryRun, CDP_PORT, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, getMcpProvider, getCdpConnection, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -41,16 +37,11 @@ async function getUserInfoFromProvider(provider: ConnectionProvider): Promise<im
   if (token.userId && token.idToken) {
     return getUserInfoFromCache(token.userId, token.email, token.idToken);
   }
-  // Fallback: if token lacks userId/idToken, try CDP
-  const conn = await connectToSuperhuman(CDP_PORT);
-  if (!conn) {
-    throw new Error("Cached token missing userId/idToken. Run 'superhuman account auth' to re-authenticate.");
-  }
-  try {
-    return await getUserInfo(conn);
-  } finally {
-    await disconnect(conn);
-  }
+  // Fallback: if token lacks userId/idToken, try CDP via the shared cached
+  // connection (launch policy delegated to the lifecycle manager; do NOT
+  // disconnect — the connection is reused across tool calls).
+  const conn = await getCdpConnection();
+  return getUserInfo(conn);
 }
 
 // ---------------------------------------------------------------------------

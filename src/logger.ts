@@ -114,7 +114,8 @@ function formatLine(level: LogLevelName, module: string, msg: string, args: unkn
   const extra = args.length > 0
     ? " " + args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")
     : "";
-  return `[${ts}] [${tag}] [${module}] ${msg}${extra}`;
+  // pid is essential: multiple concurrent server instances share one log file
+  return `[${ts}] [${tag}] [pid:${process.pid}] [${module}] ${msg}${extra}`;
 }
 
 function emit(level: LogLevelName, module: string, msg: string, args: unknown[]): void {
