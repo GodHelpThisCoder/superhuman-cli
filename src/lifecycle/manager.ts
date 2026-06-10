@@ -67,6 +67,8 @@ export interface ManagerDeps {
 }
 
 export const HEALTH_TICK_MS = 30_000;
+/** Heartbeat cadence — independent of health ticks so a long launch can't starve it. */
+export const HEARTBEAT_MS = 30_000;
 export const BACKOFF_SCHEDULE_MS = [60_000, 120_000, 240_000, 480_000];
 export const MAX_RELAUNCH_FAILURES = 4;
 /** Max time a tool call waits on a leader-side launch before returning a retryable error. */
@@ -96,6 +98,7 @@ export class LifecycleManager {
   private nextAttemptAt = 0;
   private launchInFlight: Promise<boolean> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
   private tickInFlight = false;
   private loggedNoDebugPort = false;
@@ -121,8 +124,15 @@ export class LifecycleManager {
     );
     void this.tick();
     this.timer = setInterval(() => void this.tick(), HEALTH_TICK_MS);
-    // Don't let the health timer keep a dead server's event loop alive
+    // Heartbeat on its OWN timer: leaderTick awaits runLaunch() (up to 120s
+    // during app updates) while holding tickInFlight, so tick-driven
+    // heartbeats starve past the 90s staleness window and followers would
+    // depose a live, mid-launch leader. A dedicated timer keeps the lock
+    // fresh regardless of what the tick is doing.
+    this.heartbeatTimer = setInterval(() => this.heartbeatIfLeader(), HEARTBEAT_MS);
+    // Don't let the timers keep a dead server's event loop alive
     (this.timer as unknown as { unref?: () => void }).unref?.();
+    (this.heartbeatTimer as unknown as { unref?: () => void }).unref?.();
   }
 
   stop(): void {
@@ -131,8 +141,27 @@ export class LifecycleManager {
       clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
     if (this.leader) {
       releaseLock(this.deps.lockDeps);
+      this.leader = false;
+    }
+  }
+
+  /**
+   * Ownership-checked heartbeat (public for tests/diagnostics). Touching the
+   * lock without verifying ownership would freshen a rival's lock after a
+   * takeover, so verify first and demote on mismatch.
+   */
+  heartbeatIfLeader(): void {
+    if (!this.leader || this.stopped) return;
+    if (verifyLockOwnership(this.deps.lockDeps)) {
+      heartbeatLock(this.deps.lockDeps);
+    } else {
+      log.warn("Lost lifecycle lock (heartbeat check) — demoting to follower");
       this.leader = false;
     }
   }
@@ -153,7 +182,7 @@ export class LifecycleManager {
       case "down_no_debug_port":
         return (
           `Superhuman is running but WITHOUT --remote-debugging-port=${this.port}, so it cannot be controlled. ` +
-          `Close Superhuman and run 'superhuman launch', or run 'superhuman doctor --fix-port'.`
+          `Run 'superhuman doctor --fix-port' to restart it with the debug port.`
         );
       case "updating":
         return "Superhuman update is installing. Retry in about a minute.";
@@ -187,8 +216,7 @@ export class LifecycleManager {
    */
   async ensureReady(): Promise<ReadyResult> {
     if (await this.deps.cdpProbe()) {
-      this.setState("ready");
-      this.failures = 0;
+      this.markReady();
       return { ok: true, reason: "" };
     }
 
@@ -202,24 +230,35 @@ export class LifecycleManager {
       }
     }
 
-    // Leader path — classify before launching (never fight the updater or a
-    // debug-port-less instance)
-    if (await this.deps.updaterProbe()) {
-      this.setState("updating");
-      return { ok: false, reason: this.describeUnavailable() };
-    }
-    if (await this.deps.processProbe()) {
-      this.setState("down_no_debug_port");
-      this.logNoDebugPortOnce();
-      return { ok: false, reason: this.describeUnavailable() };
-    }
+    // Leader path. If a launch WE started is already in flight, skip
+    // classification entirely and join it — the spawned process exists in
+    // tasklist before CDP comes up, so probing now would misdiagnose our own
+    // launch as down_no_debug_port (and advise the user to close the app
+    // we're starting).
+    if (!this.launchInFlight) {
+      // Classify before launching (never fight the updater or a
+      // debug-port-less instance)
+      if (await this.deps.updaterProbe()) {
+        this.setState("updating");
+        return { ok: false, reason: this.describeUnavailable() };
+      }
+      if (await this.deps.processProbe()) {
+        this.setState("down_no_debug_port");
+        this.logNoDebugPortOnce();
+        return { ok: false, reason: this.describeUnavailable() };
+      }
 
-    if (this.state === "gave_up") {
-      return { ok: false, reason: this.describeUnavailable() };
-    }
-    this.setState("down");
-    if (this.deps.now() < this.nextAttemptAt) {
-      return { ok: false, reason: this.describeUnavailable() };
+      // Give-up is keyed on the FAILURE COUNTER, not the state label — state
+      // excursions (updating, no-debug-port) must not erase it, and a fresh
+      // leadership term resets the counter in becomeLeader().
+      if (this.failures >= MAX_RELAUNCH_FAILURES) {
+        this.setState("gave_up", `${this.failures} consecutive launch failures`);
+        return { ok: false, reason: this.describeUnavailable() };
+      }
+      this.setState("down");
+      if (this.deps.now() < this.nextAttemptAt) {
+        return { ok: false, reason: this.describeUnavailable() };
+      }
     }
 
     // Launch (coalesced), but never block a tool call longer than the wait cap —
@@ -240,7 +279,7 @@ export class LifecycleManager {
       };
     }
     if (result === true && (await this.deps.cdpProbe())) {
-      this.setState("ready");
+      this.markReady();
       return { ok: true, reason: "" };
     }
     return { ok: false, reason: this.describeUnavailable() };
@@ -296,11 +335,15 @@ export class LifecycleManager {
     heartbeatLock(this.deps.lockDeps);
 
     if (await this.deps.cdpProbe()) {
-      this.setState("ready");
-      this.failures = 0;
-      this.nextAttemptAt = 0;
-      this.loggedNoDebugPort = false;
-      this.loggedGaveUp = false;
+      this.markReady();
+      return;
+    }
+
+    // A launch we started is still in progress — the spawned process shows in
+    // tasklist before CDP opens. Don't misclassify it as down_no_debug_port
+    // and don't start a second launch; let it finish.
+    if (this.launchInFlight) {
+      this.setState("down", "launch in progress");
       return;
     }
 
@@ -315,9 +358,11 @@ export class LifecycleManager {
       return;
     }
 
-    if (this.state === "gave_up") {
-      // Passive probing only (the cdpProbe above) — never spawn again until
-      // recovery or restart
+    // Give-up is keyed on the failure counter (not the state label, which
+    // updating/no-debug-port excursions overwrite). Passive probing only —
+    // the cdpProbe above is the recovery path.
+    if (this.failures >= MAX_RELAUNCH_FAILURES) {
+      this.setState("gave_up", `${this.failures} consecutive launch failures`);
       return;
     }
 
@@ -328,11 +373,18 @@ export class LifecycleManager {
     const ok = await this.runLaunch();
     if (ok) {
       log.info("Superhuman relaunched successfully");
-      this.setState("ready");
-      this.failures = 0;
-      this.nextAttemptAt = 0;
+      this.markReady();
     }
     // Failure accounting happens in runLaunch so ensureReady shares it
+  }
+
+  /** Single ready-transition bookkeeping path — every recovery resets ALL of it. */
+  private markReady(): void {
+    this.setState("ready");
+    this.failures = 0;
+    this.nextAttemptAt = 0;
+    this.loggedNoDebugPort = false;
+    this.loggedGaveUp = false;
   }
 
   private runLaunch(): Promise<boolean> {
@@ -377,12 +429,17 @@ export class LifecycleManager {
     this.failures = 0;
     this.nextAttemptAt = 0;
     this.loggedGaveUp = false;
+    // A fresh leadership term must never inherit the prior term's terminal
+    // state (a re-elected leader stuck in "gave_up" would never launch again).
+    this.setState("starting", "new leadership term");
     log.info(`Took over lifecycle leadership (pid ${process.pid})`);
   }
 
   private setState(state: LifecycleState, detail = ""): void {
     if (this.state !== state) {
       log.info(`Lifecycle state: ${this.state} -> ${state}${detail ? ` (${detail})` : ""}`);
+      // Re-entering gave_up after an excursion should log at full severity again
+      if (this.state === "gave_up") this.loggedGaveUp = false;
       this.state = state;
       this.stateSince = this.deps.now();
       if (state !== "down_no_debug_port") this.loggedNoDebugPort = false;

@@ -22,6 +22,7 @@
  */
 
 import { runMcpServer } from "./mcp/server";
+import { flushAuditLog } from "./audit";
 import { setLogLevel, initFileLogging, createLogger } from "./logger";
 import { LifecycleManager, setLifecycleManager } from "./lifecycle/manager";
 import { setLaunchBroker } from "./cdp/connection";
@@ -66,13 +67,23 @@ if (isMcpMode) {
     const shutdown = (reason: string) => {
       log.info(`Shutting down (${reason})`);
       manager.stop();
-      process.exit(0);
+      // Drain any in-flight audit write (bounded) — an executed mutation must
+      // not lose its audit record to a racing exit.
+      void Promise.race([
+        flushAuditLog(),
+        new Promise((r) => setTimeout(r, 500)),
+      ]).finally(() => process.exit(0));
     };
     process.on("SIGINT", () => shutdown("SIGINT"));
     process.on("SIGTERM", () => shutdown("SIGTERM"));
     process.stdin.on("end", () => shutdown("stdin EOF"));
     process.stdin.on("close", () => shutdown("stdin closed"));
-  })().catch((e) => log.error("Fatal:", e instanceof Error ? e.message : String(e)));
+  })().catch((e) => {
+    log.error("Fatal:", e instanceof Error ? e.message : String(e));
+    // A failed startup must not linger as a half-initialized process with no
+    // transport and no shutdown wiring — exit so the client can respawn.
+    process.exit(1);
+  });
 } else {
   // CLI mode - import and run the CLI
   import("./cli").then((cli) => {

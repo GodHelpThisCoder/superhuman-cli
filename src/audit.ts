@@ -73,10 +73,29 @@ function auditLogPath(): string {
 
 let _rotating = false;
 
+// Tracks the most recent in-flight audit write so shutdown can drain it —
+// callers fire-and-forget, but a mutation that already executed must not
+// lose its audit record to a racing process.exit().
+let _lastWrite: Promise<void> = Promise.resolve();
+
+/**
+ * Wait for any in-flight audit write to settle. Used by the MCP shutdown
+ * path with a bounded race — never throws, never blocks indefinitely.
+ */
+export function flushAuditLog(): Promise<void> {
+  return _lastWrite.catch(() => {});
+}
+
 /**
  * Append an audit entry to the log file. Fire-and-forget — never throws.
  */
-export async function logAudit(entry: Omit<AuditEntry, "timestamp">): Promise<void> {
+export function logAudit(entry: Omit<AuditEntry, "timestamp">): Promise<void> {
+  const write = _logAudit(entry);
+  _lastWrite = write.catch(() => {});
+  return write;
+}
+
+async function _logAudit(entry: Omit<AuditEntry, "timestamp">): Promise<void> {
   try {
     const dir = getConfigDir();
     await mkdir(dir, { recursive: true });

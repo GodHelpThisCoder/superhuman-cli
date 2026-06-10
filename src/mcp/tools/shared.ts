@@ -293,18 +293,21 @@ export async function resolveSuperhumanToken(): Promise<TokenInfo | null> {
  */
 export function actionableError(context: string, error: unknown): ToolResult {
   const msg = error instanceof Error ? error.message : String(error);
-  // Lifecycle-manager errors are already actionable and state-specific
-  // (updating / no-debug-port / backoff / follower) — pass them through
-  // instead of burying them under generic connection advice.
-  if (msg.includes("Retry") || msg.includes("retry") || msg.includes("superhuman doctor")) {
-    return errorResult(`${context}: ${msg}`);
-  }
+  // Auth classification runs FIRST — our own auth-failure messages end in
+  // "...then retry.", so a retry-substring pass-through ahead of this branch
+  // would swallow the re-auth guidance.
   if (msg.includes("401") || msg.includes("auth") || msg.includes("Authentication")) {
     return errorResult(
       `Authentication failed: ${context}. Token may be expired. ` +
       `Use superhuman_accounts to verify account status, or restart Superhuman ` +
       `with --remote-debugging-port=${CDP_PORT} to re-authenticate.`
     );
+  }
+  // Lifecycle-manager errors are already actionable and state-specific
+  // (updating / no-debug-port / backoff / follower) — pass them through
+  // instead of burying them under generic connection advice.
+  if (msg.includes("Retry") || msg.includes("retry") || msg.includes("superhuman doctor")) {
+    return errorResult(`${context}: ${msg}`);
   }
   if (msg.includes("Could not connect") || msg.includes("ECONNREFUSED")) {
     return errorResult(
