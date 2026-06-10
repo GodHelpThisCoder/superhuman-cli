@@ -154,8 +154,8 @@ export async function launchSuperhuman(port = 9333): Promise<boolean> {
   if (await isSuperhumanProcessRunning()) {
     log.warn(
       `Superhuman is already running WITHOUT --remote-debugging-port=${port}. ` +
-      `Not launching a second instance. Close Superhuman and run 'superhuman launch', ` +
-      `or run 'superhuman doctor --fix-port'.`
+      `Not launching a second instance. Run 'superhuman doctor --fix-port' to ` +
+      `restart it with the debug port.`
     );
     return false;
   }

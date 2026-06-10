@@ -24,6 +24,9 @@ import {
 } from "node:fs";
 import { getConfigDir } from "../config";
 import { APP_VERSION } from "../version";
+import { createLogger } from "../logger";
+
+const log = createLogger("lock");
 
 export interface LockInfo {
   pid: number;
@@ -57,11 +60,15 @@ function defaultPidAlive(pid: number): boolean {
 }
 
 export function defaultLockDeps(): LockDeps {
+  // Clamp the env override to a sane floor — a zero/negative value would make
+  // every lock instantly stale and cause continuous leader churn.
+  const envStale = Number(process.env.SUPERHUMAN_LOCK_STALE_MS);
+  const staleAfterMs = Number.isFinite(envStale) && envStale >= 1_000 ? envStale : STALE_AFTER_MS;
   return {
     now: Date.now,
     pidAlive: defaultPidAlive,
     lockPath: () => `${getConfigDir()}/lifecycle.lock`,
-    staleAfterMs: Number(process.env.SUPERHUMAN_LOCK_STALE_MS) || STALE_AFTER_MS,
+    staleAfterMs,
   };
 }
 
@@ -103,15 +110,27 @@ function tryCreate(path: string, content: string): boolean {
       closeSync(fd);
     }
     return true;
-  } catch {
+  } catch (e) {
+    // EEXIST is the expected "someone else holds it" case. Anything else
+    // (EACCES, ELOOP, ENOSPC, ...) means a misconfigured or hostile config
+    // dir — log it, or every instance becomes a silent permanent follower.
+    const code = (e as NodeJS.ErrnoException)?.code;
+    if (code && code !== "EEXIST") {
+      log.warn(`Lock create failed with ${code} at ${path} — this instance cannot become leader`);
+    }
     return false;
   }
 }
 
 /**
  * Try to become the leader. Returns true if this process now holds the lock.
- * If an existing lock is stale, it is removed and re-acquired; when two
- * candidates race, exactly one wins the create-exclusive.
+ *
+ * Stale takeover is unlink-then-create, which has a classic TOCTOU window:
+ * two candidates can both observe the same stale lock, and the slower one's
+ * unlink would delete the faster one's FRESH lock (transient dual leadership
+ * until the next ownership check). We close it with verify-after-create:
+ * after winning the create on the takeover path, re-read the lock and only
+ * claim leadership if it still names this process.
  */
 export function tryAcquireLock(deps: LockDeps = defaultLockDeps()): boolean {
   const path = deps.lockPath();
@@ -133,7 +152,12 @@ export function tryAcquireLock(deps: LockDeps = defaultLockDeps()): boolean {
     // Lock vanished between attempts — retry once
     return tryCreate(path, content);
   }
-  if (existing.info?.pid === process.pid) return true; // already ours
+  if (existing.info?.pid === process.pid) {
+    // Already ours (idempotent re-acquire) — refresh the heartbeat so the
+    // lock doesn't look takeover-eligible while we believe we lead.
+    heartbeatLock(deps);
+    return true;
+  }
   if (!isLockStale(existing, deps)) return false;
 
   try {
@@ -141,7 +165,12 @@ export function tryAcquireLock(deps: LockDeps = defaultLockDeps()): boolean {
   } catch {
     // ENOENT (another candidate removed it first) is fine
   }
-  return tryCreate(path, content);
+  if (!tryCreate(path, content)) return false;
+
+  // Verify-after-create: a racing candidate holding the older stale snapshot
+  // may have unlinked OUR fresh lock and created its own. Only claim
+  // leadership if the file on disk still names this process.
+  return verifyLockOwnership(deps);
 }
 
 /** Leader heartbeat — bump mtime so followers see the lock as live. */

@@ -26,7 +26,11 @@ export async function isSuperhumanProcessRunning(): Promise<boolean> {
       const out = await runCommand(["pgrep", "-x", "Superhuman"]);
       return out !== "";
     }
-    const out = await runCommand(["pgrep", "-if", "superhuman"]);
+    // Exact process-name match only. `-f` (full command line) would match the
+    // MCP server's OWN bun process (its argv contains "superhuman-cli"),
+    // permanently misclassifying the lifecycle as down_no_debug_port; `-i` is
+    // a BSD flag that procps-ng pgrep on Linux doesn't support at all.
+    const out = await runCommand(["pgrep", "-x", "superhuman"]);
     return out !== "";
   } catch {
     return false;

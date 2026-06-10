@@ -138,6 +138,10 @@ export async function getToken(
  */
 export function clearTokenCache(): void {
   tokenCache.clear();
+  // Keep the refresh-failure cooldown in lockstep with the token cache —
+  // a stale negative-cache entry would suppress refresh attempts for a
+  // freshly re-authenticated account (and leak state between tests).
+  refreshFailureAt.clear();
 }
 
 /**
@@ -146,6 +150,7 @@ export function clearTokenCache(): void {
  */
 export function setTokenCacheForTest(email: string, token: TokenInfo): void {
   tokenCache.set(email, token);
+  refreshFailureAt.delete(email);
 }
 
 /**

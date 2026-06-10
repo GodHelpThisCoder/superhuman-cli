@@ -419,7 +419,10 @@ export async function fixPort(port: number): Promise<{ ok: boolean; message: str
         };
   }
 
-  // 3. Graceful close (WM_CLOSE / quit AppleEvent) — never /F, never SIGKILL.
+  // 3. Request a close — taskkill without /F delivers WM_CLOSE to top-level
+  // windows only (tray-minimized or modal-blocked apps may decline; helper
+  // processes are reaped by the main process). If the app declines, we never
+  // escalate to /F — the poll below reports honestly instead.
   if (process.platform === "win32") {
     const proc = Bun.spawn(["taskkill", "/IM", "Superhuman.exe"], { stdout: "ignore", stderr: "ignore" });
     await proc.exited;
@@ -594,6 +597,11 @@ export async function patchShortcuts(
   result.messages.push(
     "Caveat: Superhuman app updates recreate these shortcuts and will revert this change — " +
       "re-run 'superhuman doctor --patch-shortcut' after each app update."
+  );
+  result.messages.push(
+    "Security note: with this flag, every normal launch of Superhuman opens a local " +
+      "CDP debug port — any local process can then read mail and control the app. " +
+      "Only patch shortcuts on machines where that is acceptable."
   );
   return result;
 }

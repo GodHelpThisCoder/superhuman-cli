@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "superhuman-cli",
   "version": "0.15.0",
   "module": "src/index.ts",
