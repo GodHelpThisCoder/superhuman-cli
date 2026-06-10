@@ -423,6 +423,9 @@ async function cmdAuth(options: CliOptions) {
         log("");
         info("You can now use superhuman-cli without Superhuman running.");
         info("Tokens are valid for ~1 hour. Run 'superhuman account auth' again to refresh.");
+        // Close the CDP WebSocket — it pins the event loop and the CLI
+        // would otherwise hang forever after a successful auth.
+        await disconnect(conn);
         return;
       }
       // 0 accounts from Electron path — try Chrome extension

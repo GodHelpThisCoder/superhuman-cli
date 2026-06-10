@@ -273,7 +273,7 @@ export async function getUserInfoFromProvider(provider: ConnectionProvider): Pro
     token.idToken &&
     (token.idTokenExpires == null || token.idTokenExpires > Date.now() + 60_000);
   if (token.userId && idTokenFresh) {
-    return getUserInfoFromCache(token.userId, token.email, token.idToken!);
+    return getUserInfoFromCache(token.userId, token.email, token.idToken!, token.displayName);
   }
   // Fallback: token lacks userId/idToken (or it's stale) — extract via the
   // shared CDP connection

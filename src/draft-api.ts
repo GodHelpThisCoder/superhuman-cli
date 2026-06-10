@@ -94,7 +94,8 @@ export async function getUserInfo(conn: SuperhumanConnection): Promise<UserInfo>
             userId: user?._id,
             email: ga?.emailAddress,
             token: authData.idToken,
-            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            displayName: user?._name || undefined
           };
         } catch (e) {
           return { error: e.message };
