@@ -293,6 +293,7 @@ export async function saveTokensToDisk(): Promise<void> {
         refreshToken: token.refreshToken,
         userPrefix: token.userPrefix,
         clientId: token.clientId,
+        displayName: token.displayName,
         superhumanToken: token.idToken
           ? {
               token: token.idToken,
@@ -416,6 +417,7 @@ function populateCache(data: PersistedTokens): void {
       idTokenExpires: account.superhumanToken?.expires,
       userPrefix: account.userPrefix,
       clientId: account.clientId,
+      displayName: account.displayName,
       superhumanToken: account.superhumanToken
         ? { token: account.superhumanToken.token, expires: account.superhumanToken.expires ?? 0 }
         : undefined,

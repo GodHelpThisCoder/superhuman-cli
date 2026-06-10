@@ -12,6 +12,8 @@ export interface TokenInfo {
   idToken?: string;
   idTokenExpires?: number;
   userPrefix?: string;
+  /** Account display name (renderer `credential.user._name`) — used for draft From headers */
+  displayName?: string;
   superhumanToken?: {
     token: string;
     expires: number;
@@ -31,6 +33,7 @@ export interface PersistedTokens {
       refreshToken?: string;
       userPrefix?: string;
       clientId?: string;
+      displayName?: string;
       superhumanToken?: {
         token: string;
         expires?: number;

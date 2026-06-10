@@ -208,6 +208,18 @@ describe("draftHandler — native draft store via cached credentials", () => {
     expect(init.headers).toHaveProperty("Authorization", "Bearer id-token-xyz");
   });
 
+  test("From header uses the cached token's displayName end-to-end", async () => {
+    setTokenCacheForTest(EMAIL, freshToken({ displayName: "Test Person" }));
+    const mockFetch = createMockFetch({ ok: true });
+
+    const result = await draftHandler({ to: "rcpt@example.com", subject: "Named", body: "Body" });
+
+    expect(result.isError).toBeUndefined();
+    const [, init] = mockFetch.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.writes[0].value.from).toBe(`Test Person <${EMAIL}>`);
+  });
+
   test("backend failure surfaces as an error result, not a fake success", async () => {
     createMockFetch({ ok: false, status: 401, text: "Unauthorized" });
 
@@ -252,6 +264,22 @@ describe("getUserInfoFromProvider — stale idToken falls back to CDP", () => {
 
     expect(info.userId).toBe("u2");
     expect(info.token).toBe("no-expiry-token");
+  });
+
+  test("displayName rides the cached branch into UserInfo (G3 plumbing)", async () => {
+    const token = freshToken({ userId: "u4", displayName: "Shawn Sorrell" });
+
+    const info = await getUserInfoFromProvider(stubProvider(token));
+
+    expect(info.displayName).toBe("Shawn Sorrell");
+  });
+
+  test("absent displayName stays undefined (legacy tokens fall back to local-part From)", async () => {
+    const token = freshToken({ userId: "u5", displayName: undefined });
+
+    const info = await getUserInfoFromProvider(stubProvider(token));
+
+    expect(info.displayName).toBeUndefined();
   });
 
   test("stale idToken: cached branch is SKIPPED and the CDP fallback is attempted", async () => {

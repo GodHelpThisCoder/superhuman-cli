@@ -99,6 +99,7 @@ export async function extractToken(
             idToken: authData.idToken,
             idTokenExpires: authData.expires,
             userPrefix: userPrefix,
+            displayName: user?._name || undefined,
           };
         } catch (e) {
           return { error: e.message };

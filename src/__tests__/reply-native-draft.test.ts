@@ -29,6 +29,8 @@ import type { UserInfo } from "../draft-api";
 import { replyHandler } from "../mcp/tools/email-write";
 import { warmResolvedEmailCache, invalidateCdpProvider } from "../mcp/tools/shared";
 import { setTokenCacheForTest, clearTokenCache, type TokenInfo } from "../token-api";
+import { LifecycleManager, setLifecycleManager } from "../lifecycle/manager";
+import { STALE_AFTER_MS, type LockDeps } from "../lifecycle/lock";
 import type { ConnectionProvider } from "../connection-provider";
 
 const SELF = "shawn-test@example.com";
@@ -295,5 +297,57 @@ describe("replyHandler attachment guard", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain("send:true");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. Honest failure — draft mode with stale credentials and no CDP
+// ---------------------------------------------------------------------------
+
+describe("replyHandler honest failure (stale idToken, CDP down)", () => {
+  test("errors instead of creating an invisible provider draft", async () => {
+    // Stale idToken makes getUserInfoFromProvider skip the cached branch; the
+    // CDP fallback fails fast via an injected always-down LifecycleManager.
+    // Pre-fix behavior would have 'succeeded' with a provider draft the user
+    // can never see — the deliberate trade-off is an actionable error.
+    const calls = installFetchRouter();
+    const dir = mkdtempSync(join(tmpdir(), "shcli-reply-lc-"));
+    const lockDeps: LockDeps = {
+      now: Date.now,
+      pidAlive: () => true,
+      lockPath: () => join(dir, "lifecycle.lock"),
+      staleAfterMs: STALE_AFTER_MS,
+    };
+    const manager = new LifecycleManager(39333, {
+      cdpProbe: async () => false,
+      processProbe: async () => false,
+      updaterProbe: async () => false,
+      launch: async () => false,
+      now: Date.now,
+      lockDeps,
+      readyWaitMs: 50,
+    });
+    setLifecycleManager(manager);
+    invalidateCdpProvider();
+
+    try {
+      setTokenCacheForTest(SELF, { ...gmailToken(), idTokenExpires: Date.now() - 1_000 });
+      warmResolvedEmailCache(SELF);
+
+      const result = await replyHandler({
+        threadId: THREAD_ID,
+        body: "should not become a phantom draft",
+      } as Parameters<typeof replyHandler>[0]);
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]!.text).toContain("Failed to reply");
+      // Neither store was written
+      expect(calls.some((c) => c.url.includes("userdata.writeMessage"))).toBe(false);
+      expect(calls.some((c) => c.url.includes("/drafts"))).toBe(false);
+    } finally {
+      setLifecycleManager(null);
+      manager.stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

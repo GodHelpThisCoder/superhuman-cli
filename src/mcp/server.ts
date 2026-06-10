@@ -476,7 +476,7 @@ Multi-account: Most tools operate on the currently active account. Use superhuma
   server.registerTool(
     "superhuman_ask_ai",
     {
-      description: "Ask Superhuman AI to search emails, answer questions, or compose drafts. Supports natural language queries like 'find emails about the project deadline' or 'what did John say about the budget?'. Optionally provide a thread ID to ask about a specific email thread.",
+      description: "Ask Superhuman AI to search emails, answer questions, or compose drafts. Supports natural language queries like 'find emails about the project deadline' or 'what did John say about the budget?'. Optionally provide a thread ID to ask about a specific email thread. NOTE: the query is granted Superhuman's standard agent skills (filter, schedule, multiMessage, draft, displayThoughts — same set the in-app sidebar uses), so it can create drafts or schedule items, not just answer; every call is staged behind two-phase confirmation.",
       inputSchema: AskAISchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
