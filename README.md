@@ -283,7 +283,7 @@ All other operations (read, reply, forward, draft, archive, delete, labels, star
 - **Offline from CDP**: After initial `account auth`, most operations work without CDP
 - **Multi-account**: Cached tokens enable operating on any linked account
 
-Supports both Gmail and Microsoft/Outlook accounts.
+Supports both Gmail and Microsoft/Outlook accounts. Note for Outlook accounts: `superhuman_draft` writes to Superhuman's own draft store (drafts appear in the Superhuman app, not in the native Outlook/OWA Drafts folder), and this path has only been live-verified against Gmail accounts.
 
 ## License
 

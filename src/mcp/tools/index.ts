@@ -4,7 +4,7 @@
  * The original 1603-line src/mcp/tools.ts has been split into:
  *
  *   tools/shared.ts       — types, helpers (successResult, errorResult, getMcpProvider)
- *   tools/email-read.ts   — search, inbox, read
+ *   tools/email-read.ts   — search, inbox, read, sender-summary, collect-thread-ids
  *   tools/email-write.ts  — draft, send, reply, reply-all, forward
  *   tools/email-manage.ts — archive/unarchive, archive-by-query, delete, mark read/unread, star/unstar, starred, snooze/unsnooze, snoozed
  *   tools/labels.ts       — list labels, get/create/add/add-by-query/remove label
@@ -13,7 +13,7 @@
  *   tools/accounts.ts     — list/switch accounts
  *   tools/snippets.ts     — list/use snippets
  *   tools/ai.ts           — ask AI
- *   tools/agent-sessions.ts — list/read/discard/restore agent sessions
+ *   tools/agent-sessions.ts — list/read agent sessions (discard/restore dropped in v0.16.0)
  */
 
 // Shared

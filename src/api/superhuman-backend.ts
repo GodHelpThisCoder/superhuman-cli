@@ -1,8 +1,9 @@
 /**
  * Superhuman AI and backend operations.
  *
- * Provides access to Superhuman's AI compose and Ask AI proxy endpoints,
- * including ID generation helpers that match Superhuman's internal format.
+ * Provides access to Superhuman's Ask AI proxy endpoint, including ID
+ * generation helpers that match Superhuman's internal format. (The AI
+ * compose endpoint wrapper was removed in v0.16.0 as dead code.)
  */
 
 import type {

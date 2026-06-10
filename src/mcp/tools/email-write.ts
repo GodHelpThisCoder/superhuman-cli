@@ -1,6 +1,10 @@
 /**
  * MCP tool handlers for composing emails: draft, send, reply, reply-all, forward.
- * Supports optional file attachments via a two-step flow (create draft → add attachments).
+ *
+ * send/reply/reply-all/forward support optional file attachments via a
+ * two-step flow (create provider draft → add attachments → send).
+ * superhuman_draft is the exception: it writes to Superhuman's NATIVE draft
+ * store (so drafts appear in the app) and takes no attachments.
  */
 
 import { z } from "zod";
@@ -176,7 +180,10 @@ export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<T
       return toolResult;
     }
 
-    const toolResult = successResult(`Draft created in Superhuman's Drafts view\nDraft ID: ${result.draftId}\nTo: ${args.to}\nSubject: ${args.subject}`);
+    // threadId is included because it's the only moment it is known — the
+    // Superhuman store addresses drafts by (threadId, draftId), and there is
+    // no programmatic delete/update, so this is the manual-recovery handle.
+    const toolResult = successResult(`Draft created in Superhuman's Drafts view\nDraft ID: ${result.draftId}\nThread ID: ${result.threadId}\nTo: ${args.to}\nSubject: ${args.subject}`);
     auditMutation("superhuman_draft", args as Record<string, unknown>, account, toolResult, { durationMs: Math.round(performance.now() - _t0) });
     return toolResult;
   } catch (error) {

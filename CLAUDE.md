@@ -10,7 +10,7 @@ superhuman-cli (v0.16.0) is a 45-tool MCP server with a diagnostics-only CLI for
 - **Entry points:** `src/cli.ts` (diagnostics CLI), `src/index.ts` (MCP server)
 
 ## Commands
-- `bun test` — Run all tests (288 tests, 23 files)
+- `bun test` — Run all tests (309 tests, 25 files)
 - `bun test src/__tests__/<file>` — Run specific test file
 - `bunx tsc --noEmit` — Type-check without emitting
 - `bun run src/cli.ts` — Diagnostics CLI entry point
