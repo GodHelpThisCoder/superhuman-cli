@@ -264,14 +264,6 @@ function parseArgs(args: string[]): CliOptions {
           options.patchShortcut = true;
           i += 1;
           break;
-        case "fix-port":
-          options.fixPort = true;
-          i += 1;
-          break;
-        case "patch-shortcut":
-          options.patchShortcut = true;
-          i += 1;
-          break;
         default:
           error(`Unknown option: ${arg}`);
           process.exit(1);
