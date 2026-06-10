@@ -257,6 +257,22 @@ export async function getCdpConnection(): Promise<SuperhumanConnection> {
 }
 
 /**
+ * Get UserInfo (Superhuman backend credentials) from a ConnectionProvider —
+ * prefers cached tokens, falls back to live CDP extraction. Used by tools
+ * that talk to Superhuman's own backend (drafts, snippets).
+ */
+export async function getUserInfoFromProvider(provider: ConnectionProvider): Promise<import("../../draft-api").UserInfo> {
+  const { getUserInfo, getUserInfoFromCache } = await import("../../draft-api");
+  const token = await provider.getToken();
+  if (token.userId && token.idToken) {
+    return getUserInfoFromCache(token.userId, token.email, token.idToken);
+  }
+  // Fallback: if token lacks userId/idToken, extract via the shared CDP connection
+  const conn = await getCdpConnection();
+  return getUserInfo(conn);
+}
+
+/**
  * Resolve a cached Superhuman token with idToken + userId.
  * Tries any cached account with Superhuman credentials.
  */

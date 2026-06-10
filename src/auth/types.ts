@@ -87,16 +87,6 @@ export interface ThreadInfoDirect {
   cc: string[];
 }
 
-/** Draft message summary */
-export interface DraftMessage {
-  id: string;
-  subject: string;
-  from: string;
-  to: string[];
-  preview: string;
-  timestamp: string;
-}
-
 /** Calendar event (normalized across Google/Microsoft) */
 export interface CalendarEventDirect {
   id: string;

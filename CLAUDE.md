@@ -1,27 +1,27 @@
 # superhuman-cli — Agent Instructions
 
 ## Project Identity
-superhuman-cli (v0.14.4) is a 46-tool MCP server + CLI for programmatic control of Superhuman email via Chrome DevTools Protocol. Fork of edwinhu/superhuman-cli with safety hardening.
+superhuman-cli (v0.16.0) is a 45-tool MCP server with a diagnostics-only CLI for programmatic control of Superhuman email via Chrome DevTools Protocol. Fork of edwinhu/superhuman-cli with safety hardening. All email/label/calendar/compose operations live in the MCP server; the CLI only covers diagnostics (`status`, `doctor`, `launch`, `logs`, `kill`/`unkill`, `account list|auth`).
 
 ## Key Facts
-- **Runtime:** Bun 1.3.5 (not Node.js)
+- **Runtime:** Bun (not Node.js)
 - **CDP port:** 9333 (default)
 - **Accounts:** Two Gmail accounts configured (primary + secondary)
-- **Entry points:** `src/cli.ts` (CLI), `src/index.ts` (MCP server)
+- **Entry points:** `src/cli.ts` (diagnostics CLI), `src/index.ts` (MCP server)
 
 ## Commands
-- `bun test` — Run all tests (307 tests, 29 files)
+- `bun test` — Run all tests (288 tests, 23 files)
 - `bun test src/__tests__/<file>` — Run specific test file
 - `bunx tsc --noEmit` — Type-check without emitting
-- `bun run src/cli.ts` — CLI entry point
+- `bun run src/cli.ts` — Diagnostics CLI entry point
 - `bun run src/index.ts --mcp` — MCP server mode
 - `bun run src/index.ts --mcp --verbose` — MCP server with debug logging
 - `SUPERHUMAN_LOG_LEVEL=debug bun run src/index.ts --mcp` — Same via env var
 
 ## Testing
 - **Unit tests:** Mock CDP responses, run without live Superhuman (`src/__tests__/*.test.ts`)
-- **Integration tests:** 9 tests require live Superhuman instance with CDP on port 9333
-- Run single test: `bun test src/__tests__/compose.test.ts`
+- **Integration tests:** `cdp-integration.test.ts` requires a live Superhuman instance with CDP on port 9333 (skips otherwise)
+- Run single test: `bun test src/__tests__/accounts.test.ts`
 
 ## Do / Don't
 - **Do** use `response.text()` + `JSON.parse()` for authFetch responses (not `.json()`)

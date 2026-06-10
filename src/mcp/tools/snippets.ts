@@ -4,9 +4,9 @@
 
 import { z } from "zod";
 import { listSnippets, findSnippet, applyVars, parseVars } from "../../snippets";
-import { getUserInfo, getUserInfoFromCache, createDraftWithUserInfo, sendDraftSuperhuman } from "../../draft-api";
+import { createDraftWithUserInfo, sendDraftSuperhuman } from "../../draft-api";
 import type { ConnectionProvider } from "../../connection-provider";
-import { successResult, errorResult, actionableError, getMcpProvider, getCdpConnection, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
+import { successResult, errorResult, actionableError, getMcpProvider, getUserInfoFromProvider, guardMutation, auditMutation, auditDryRun, type ToolResult } from "./shared";
 import { isConfirmedExecution, stageOperation, buildStagedResponse } from "../confirmation";
 
 // ---------------------------------------------------------------------------
@@ -24,25 +24,6 @@ export const UseSnippetSchema = z.object({
   send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
   dryRun: z.boolean().optional().describe("Preview what would happen without executing"),
 }).strict();
-
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Get UserInfo from a ConnectionProvider (prefers cached tokens, falls back to CDP).
- */
-async function getUserInfoFromProvider(provider: ConnectionProvider): Promise<import("../../draft-api").UserInfo> {
-  const token = await provider.getToken();
-  if (token.userId && token.idToken) {
-    return getUserInfoFromCache(token.userId, token.email, token.idToken);
-  }
-  // Fallback: if token lacks userId/idToken, try CDP via the shared cached
-  // connection (launch policy delegated to the lifecycle manager; do NOT
-  // disconnect — the connection is reused across tool calls).
-  const conn = await getCdpConnection();
-  return getUserInfo(conn);
-}
 
 // ---------------------------------------------------------------------------
 // Handlers

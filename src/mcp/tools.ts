@@ -125,13 +125,9 @@ export {
   AskAISchema,
   askAIHandler,
 
-  // Agent Sessions
+  // Agent Sessions (read-only; discard/restore dropped in v0.16.0)
   AgentSessionsSchema,
   AgentSessionReadSchema,
-  AgentSessionDiscardSchema,
-  AgentSessionRestoreSchema,
   agentSessionsHandler,
   agentSessionReadHandler,
-  agentSessionDiscardHandler,
-  agentSessionRestoreHandler,
 } from "./tools/index";

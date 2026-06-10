@@ -20,7 +20,6 @@ import { calendarCreateHandler, calendarUpdateHandler, calendarDeleteHandler } f
 import { switchAccountHandler } from "./accounts";
 import { useSnippetHandler } from "./snippets";
 import { askAIHandler } from "./ai";
-import { agentSessionDiscardHandler, agentSessionRestoreHandler } from "./agent-sessions";
 import { addLabelByQueryHandler } from "./labels";
 
 // ---------------------------------------------------------------------------
@@ -52,8 +51,6 @@ const HANDLER_MAP: Record<string, HandlerFn> = {
   superhuman_switch_account: switchAccountHandler as HandlerFn,
   superhuman_snippet: useSnippetHandler as HandlerFn,
   superhuman_ask_ai: askAIHandler as HandlerFn,
-  superhuman_agent_session_discard: agentSessionDiscardHandler as HandlerFn,
-  superhuman_agent_session_restore: agentSessionRestoreHandler as HandlerFn,
   superhuman_unarchive: unarchiveHandler as HandlerFn,
   superhuman_add_label_by_query: addLabelByQueryHandler as HandlerFn,
 };

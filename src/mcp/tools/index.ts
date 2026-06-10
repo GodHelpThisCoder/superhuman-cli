@@ -72,15 +72,9 @@ export { snippetsHandler, useSnippetHandler } from "./snippets";
 export { AskAISchema } from "./ai";
 export { askAIHandler } from "./ai";
 
-// Agent Sessions
-export {
-  AgentSessionsSchema, AgentSessionReadSchema,
-  AgentSessionDiscardSchema, AgentSessionRestoreSchema,
-} from "./agent-sessions";
-export {
-  agentSessionsHandler, agentSessionReadHandler,
-  agentSessionDiscardHandler, agentSessionRestoreHandler,
-} from "./agent-sessions";
+// Agent Sessions (read-only; discard/restore dropped in v0.16.0 as unused)
+export { AgentSessionsSchema, AgentSessionReadSchema } from "./agent-sessions";
+export { agentSessionsHandler, agentSessionReadHandler } from "./agent-sessions";
 
 // Audit — re-exported directly in server.ts due to barrel resolution quirk
 // export { AuditLogSchema, auditLogHandler } from "./audit";
