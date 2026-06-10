@@ -96,7 +96,13 @@ export async function searchInbox(
       );
 
       if (!response.ok) {
-        return { threads: [] };
+        // Throw (don't return empty): paginateSearchAll reads an empty page
+        // as end-of-results, so swallowing a 401/500 here silently truncates
+        // bulk operations. A 401 message matches isAuthError → retry path.
+        const errorText = await response.text().catch(() => "");
+        throw new Error(
+          `MS Graph API error ${response.status} ${response.statusText}${response.status === 401 ? " Unauthorized" : ""} — ${errorText || "inbox search failed"}`,
+        );
       }
 
       interface MSGraphMessage {
