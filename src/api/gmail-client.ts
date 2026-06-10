@@ -226,8 +226,16 @@ export async function searchGmail(
   if (pageToken) searchPath += `&pageToken=${encodeURIComponent(pageToken)}`;
   const searchResult = await gmailFetch(token.accessToken, searchPath) as GmailMessagesListResponse | null;
 
-  if (!searchResult || !searchResult.messages || searchResult.messages.length === 0) {
-    return { threads: [], totalResults: searchResult?.resultSizeEstimate };
+  // null means 401 from gmailFetch. This MUST throw rather than return
+  // empty: paginateSearchAll treats an empty page as end-of-results, so a
+  // swallowed 401 silently truncates bulk operations (archive_by_query,
+  // add_label_by_query, collect_thread_ids). Throwing an isAuthError-matching
+  // message routes it to the caller's refresh-and-retry path instead.
+  if (searchResult === null) {
+    throw new Error("Gmail API 401 Unauthorized — access token expired or revoked");
+  }
+  if (!searchResult.messages || searchResult.messages.length === 0) {
+    return { threads: [], totalResults: searchResult.resultSizeEstimate };
   }
 
   // Capture totalResults from Gmail's resultSizeEstimate (approximate)
@@ -244,7 +252,12 @@ export async function searchGmail(
     const threadPath = `/threads/${threadId}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`;
     const threadResult = await gmailFetch(token.accessToken, threadPath) as GmailThreadResponse | null;
 
-    if (!threadResult || !threadResult.messages || threadResult.messages.length === 0) {
+    // null = 401 mid-loop (token expired between pages). Throw — a `continue`
+    // here would silently drop this and every remaining thread in the page.
+    if (threadResult === null) {
+      throw new Error("Gmail API 401 Unauthorized — access token expired or revoked");
+    }
+    if (!threadResult.messages || threadResult.messages.length === 0) {
       continue;
     }
 
@@ -302,7 +315,12 @@ export async function searchMSGraph(
   const searchPath = `/me/messages?$search="${encodeURIComponent(query)}"&$top=${limit}&$select=id,conversationId,subject,from,receivedDateTime,bodyPreview`;
   const result = await msgraphFetch(token.accessToken, searchPath) as MSGraphMessagesResponse | null;
 
-  if (!result || !result.value || result.value.length === 0) {
+  // null means 401 from msgraphFetch — throw so callers can refresh and
+  // retry (same silent-truncation hazard as searchGmail above).
+  if (result === null) {
+    throw new Error("MS Graph API 401 Unauthorized — access token expired or revoked");
+  }
+  if (!result.value || result.value.length === 0) {
     return { threads: [] };
   }
 
